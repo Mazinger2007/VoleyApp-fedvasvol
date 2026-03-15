@@ -1,0 +1,30 @@
+# ── Cron examples for FedVas scraper ────────────────────────────────────────
+#
+# Run every 5 minutes (Linux/macOS crontab):
+#
+#   */5 * * * * /usr/bin/php /var/www/html/fedbasket/scraper/scraper.php >> /var/log/fedvas-scraper.log 2>&1
+#
+# Run every 5 minutes, debug mode (verbose output):
+#
+#   */5 * * * * /usr/bin/php /var/www/html/fedbasket/scraper/scraper.php --debug >> /var/log/fedvas-scraper.log 2>&1
+#
+# XAMPP on Windows — Task Scheduler example:
+#
+#   Program:  C:\xampp\php\php.exe
+#   Arguments: C:\xampp\htdocs\fedbasket\scraper\scraper.php
+#   Schedule:  Every 5 minutes
+#
+# Manual test run (limit to 3 competitions, verbose):
+#
+#   php scraper/scraper.php --debug --limit=3
+#
+# ── MySQL setup ───────────────────────────────────────────────────────────────
+#
+#   mysql -u root -p < db/schema.sql
+#
+# ── API endpoints ─────────────────────────────────────────────────────────────
+#
+#   GET http://localhost/fedbasket/api/competitions.php
+#   GET http://localhost/fedbasket/api/teams.php?tournament_id=1234
+#   GET http://localhost/fedbasket/api/competition_detail.php?tournament_id=1234
+#   GET http://localhost/fedbasket/api/team_detail.php?tournament_id=1234&team_name=Club%20Voleibol%20Madrid

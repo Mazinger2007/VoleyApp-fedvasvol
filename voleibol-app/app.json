@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Voleibol Vizcaya",
+    "slug": "voleibol-vizcaya",
+    "version": "1.0.0",
+    "jsEngine": "jsc",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.personal.voleibolvizcaya"
+    },
+    "android": {
+      "package": "com.personal.voleibolvizcaya"
+    },
+    "scheme": "voleibolvizcaya",
+    "plugins": [
+      "expo-font",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "La app necesita acceso al calendario para guardar recordatorios de partidos.",
+          "remindersPermission": "La app necesita acceso a recordatorios para guardar alertas de partidos."
+        }
+      ]
+    ]
+  }
+}

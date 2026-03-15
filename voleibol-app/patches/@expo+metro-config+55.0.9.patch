@@ -1,0 +1,963 @@
+diff --git a/node_modules/@expo/metro-config/build/ExpoMetroConfig.d.ts b/node_modules/@expo/metro-config/build/ExpoMetroConfig.d.ts
+index 312a382..a29599f 100644
+--- a/node_modules/@expo/metro-config/build/ExpoMetroConfig.d.ts
++++ b/node_modules/@expo/metro-config/build/ExpoMetroConfig.d.ts
+@@ -1,7 +1,13 @@
+-import type { MixedOutput, Module, ReadOnlyGraph } from '@expo/metro/metro/DeltaBundler/types';
+-import type { ConfigT as MetroConfig } from '@expo/metro/metro-config';
++import { MixedOutput, Module, ReadOnlyGraph, Reporter } from 'metro';
++import { ConfigT as MetroConfig, InputConfigT } from 'metro-config';
+ import { INTERNAL_CALLSITES_REGEX } from './customizeFrame';
+-import { FileStore } from './file-store';
++export interface LoadOptions {
++    config?: string;
++    maxWorkers?: number;
++    port?: number;
++    reporter?: Reporter;
++    resetCache?: boolean;
++}
+ export interface DefaultConfigOptions {
+     /** @deprecated */
+     mode?: 'exotic';
+@@ -26,88 +32,8 @@ export interface DefaultConfigOptions {
+ }
+ export declare function createStableModuleIdFactory(root: string): (path: string, context?: {
+     platform: string;
+-    environment?: string | null;
++    environment?: string;
+ }) => number;
+-export declare function getDefaultConfig(projectRoot: string, { mode, isCSSEnabled, unstable_beforeAssetSerializationPlugins }?: DefaultConfigOptions): MetroConfig & {
+-    reporter: {
+-        update(): void;
+-    };
+-    watchFolders: string[];
+-    resolver: {
+-        unstable_conditionsByPlatform: {
+-            ios: string[];
+-            android: string[];
+-            web: string[];
+-        };
+-        resolverMainFields: string[];
+-        platforms: string[];
+-        assetExts: string[];
+-        sourceExts: string[];
+-        nodeModulesPaths: string[];
+-        blockList: RegExp[];
+-    };
+-    cacheStores: FileStore<any>[];
+-    watcher: {
+-        unstable_workerThreads: false;
+-        additionalExts: string[];
+-    };
+-    serializer: {
+-        isThirdPartyModule(module: {
+-            readonly path: string;
+-        }): boolean;
+-        createModuleIdFactory: () => (path: string, context?: {
+-            platform: string;
+-            environment?: string | null;
+-        }) => number;
+-        getModulesRunBeforeMainModule: () => string[];
+-        getPolyfills: ({ platform }: {
+-            platform?: null | string;
+-        }) => any;
+-    };
+-    server: {
+-        rewriteRequestUrl: (url: string) => string;
+-        port: number;
+-        unstable_serverRoot: string;
+-    };
+-    symbolicator: {
+-        customizeFrame: ($$PARAM_0$$: {
+-            readonly file?: null | string;
+-            readonly lineNumber?: null | number;
+-            readonly column?: null | number;
+-            readonly methodName?: null | string;
+-        }) => (null | undefined | {
+-            readonly collapse?: boolean;
+-        }) | Promise<null | undefined | {
+-            readonly collapse?: boolean;
+-        }>;
+-    };
+-    transformerPath: string;
+-    transformer: {
+-        unstable_workerThreads: true;
+-        unstable_renameRequire: false;
+-        _expoRouterPath: string | undefined;
+-        postcssHash: string | null;
+-        browserslistHash: string | null;
+-        sassVersion: string | null;
+-        reanimatedVersion: string | null;
+-        workletsVersion: string | null;
+-        _expoRelativeProjectRoot: string;
+-        unstable_allowRequireContext: true;
+-        allowOptionalDependencies: true;
+-        babelTransformerPath: string;
+-        asyncRequireModulePath: string;
+-        assetRegistryPath: string;
+-        enableBabelRuntime: string | undefined;
+-        getTransformOptions: () => Promise<{
+-            transform: {
+-                experimentalImportSupport: true;
+-                inlineRequires: false;
+-            };
+-        }>;
+-    };
+-};
+-/** Use to access the Expo Metro transformer path */
+-export declare const unstable_transformerPath: string;
+-export declare const internal_supervisingTransformerPath: string;
++export declare function getDefaultConfig(projectRoot: string, { mode, isCSSEnabled, unstable_beforeAssetSerializationPlugins }?: DefaultConfigOptions): InputConfigT;
+ export { MetroConfig, INTERNAL_CALLSITES_REGEX };
+ export declare const EXPO_DEBUG: boolean;
+diff --git a/node_modules/@expo/metro-config/build/ExpoMetroConfig.js b/node_modules/@expo/metro-config/build/ExpoMetroConfig.js
+index 780c091..2f6f52c 100644
+--- a/node_modules/@expo/metro-config/build/ExpoMetroConfig.js
++++ b/node_modules/@expo/metro-config/build/ExpoMetroConfig.js
+@@ -1,17 +1,39 @@
+ "use strict";
++var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
++    if (k2 === undefined) k2 = k;
++    var desc = Object.getOwnPropertyDescriptor(m, k);
++    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
++      desc = { enumerable: true, get: function() { return m[k]; } };
++    }
++    Object.defineProperty(o, k2, desc);
++}) : (function(o, m, k, k2) {
++    if (k2 === undefined) k2 = k;
++    o[k2] = m[k];
++}));
++var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
++    Object.defineProperty(o, "default", { enumerable: true, value: v });
++}) : function(o, v) {
++    o["default"] = v;
++});
++var __importStar = (this && this.__importStar) || function (mod) {
++    if (mod && mod.__esModule) return mod;
++    var result = {};
++    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
++    __setModuleDefault(result, mod);
++    return result;
++};
+ var __importDefault = (this && this.__importDefault) || function (mod) {
+     return (mod && mod.__esModule) ? mod : { "default": mod };
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.EXPO_DEBUG = exports.INTERNAL_CALLSITES_REGEX = exports.internal_supervisingTransformerPath = exports.unstable_transformerPath = void 0;
+-exports.createStableModuleIdFactory = createStableModuleIdFactory;
+-exports.getDefaultConfig = getDefaultConfig;
++exports.EXPO_DEBUG = exports.INTERNAL_CALLSITES_REGEX = exports.getDefaultConfig = exports.createStableModuleIdFactory = void 0;
+ // Copyright 2023-present 650 Industries (Expo). All rights reserved.
+ const config_1 = require("@expo/config");
+ const paths_1 = require("@expo/config/paths");
++const runtimeEnv = __importStar(require("@expo/env"));
+ const json_file_1 = __importDefault(require("@expo/json-file"));
+-const metro_cache_1 = require("@expo/metro/metro-cache");
+ const chalk_1 = __importDefault(require("chalk"));
++const metro_cache_1 = require("metro-cache");
+ const os_1 = __importDefault(require("os"));
+ const path_1 = __importDefault(require("path"));
+ const resolve_from_1 = __importDefault(require("resolve-from"));
+@@ -25,21 +47,29 @@ const rewriteRequestUrl_1 = require("./rewriteRequestUrl");
+ const sideEffects_1 = require("./serializer/sideEffects");
+ const withExpoSerializers_1 = require("./serializer/withExpoSerializers");
+ const postcss_1 = require("./transform-worker/postcss");
++const metro_config_1 = require("./traveling/metro-config");
+ const filePath_1 = require("./utils/filePath");
+-const setOnReadonly_1 = require("./utils/setOnReadonly");
+ const debug = require('debug')('expo:metro:config');
++function getAssetPlugins(projectRoot) {
++    const hashAssetFilesPath = resolve_from_1.default.silent(projectRoot, 'expo-asset/tools/hashAssetFiles');
++    if (!hashAssetFilesPath) {
++        throw new Error(`The required package \`expo-asset\` cannot be found`);
++    }
++    return [
++        // Use relative path to ensure maximum cache hits.
++        // This is resolved here https://github.com/facebook/metro/blob/ec584b9cc2b8356356a4deacb7e1d5c83f243c3a/packages/metro/src/Assets.js#L271
++        'expo-asset/tools/hashAssetFiles',
++    ];
++}
+ let hasWarnedAboutExotic = false;
+-let hasWarnedAboutReactNative = false;
+ // Patch Metro's graph to support always parsing certain modules. This enables
+ // things like Tailwind CSS which update based on their own heuristics.
+ function patchMetroGraphToSupportUncachedModules() {
+-    const { Graph, } = require('@expo/metro/metro/DeltaBundler/Graph');
+-    const original_traverseDependencies = Graph.prototype
+-        .traverseDependencies;
++    const { Graph } = require('metro/private/DeltaBundler/Graph');
++    const original_traverseDependencies = Graph.prototype.traverseDependencies;
+     if (!original_traverseDependencies.__patched) {
+         original_traverseDependencies.__patched = true;
+-        // eslint-disable-next-line no-inner-declarations
+-        function traverseDependencies(paths, options) {
++        Graph.prototype.traverseDependencies = function (paths, options) {
+             this.dependencies.forEach((dependency) => {
+                 // Find any dependencies that have been marked as `skipCache` and ensure they are invalidated.
+                 // `skipCache` is set when a CSS module is found by PostCSS.
+@@ -47,7 +77,7 @@ function patchMetroGraphToSupportUncachedModules() {
+                     !paths.includes(dependency.path)) {
+                     // Ensure we invalidate the `unstable_transformResultKey` (input hash) so the module isn't removed in
+                     // the Graph._processModule method.
+-                    (0, setOnReadonly_1.setOnReadonly)(dependency, 'unstable_transformResultKey', dependency.unstable_transformResultKey + '.');
++                    dependency.unstable_transformResultKey = dependency.unstable_transformResultKey + '.';
+                     // Add the path to the list of modified paths so it gets run through the transformer again,
+                     // this will ensure it is passed to PostCSS -> Tailwind.
+                     paths.push(dependency.path);
+@@ -55,10 +85,9 @@ function patchMetroGraphToSupportUncachedModules() {
+             });
+             // Invoke the original method with the new paths to ensure the standard behavior is preserved.
+             return original_traverseDependencies.call(this, paths, options);
+-        }
++        };
+         // Ensure we don't patch the method twice.
+-        Graph.prototype.traverseDependencies = traverseDependencies;
+-        traverseDependencies.__patched = true;
++        Graph.prototype.traverseDependencies.__patched = true;
+     }
+ }
+ function createNumericModuleIdFactory() {
+@@ -85,9 +114,6 @@ function memoize(fn) {
+         return result;
+     });
+ }
+-function asMetroConfigInput(config) {
+-    return config;
+-}
+ function createStableModuleIdFactory(root) {
+     const getModulePath = (modulePath, scope) => {
+         // NOTE: Metro allows this but it can lead to confusing errors when dynamic requires cannot be resolved, e.g. `module 456 cannot be found`.
+@@ -126,8 +152,9 @@ function createStableModuleIdFactory(root) {
+         return memoizedGetModulePath(modulePath, scope);
+     };
+ }
++exports.createStableModuleIdFactory = createStableModuleIdFactory;
+ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_beforeAssetSerializationPlugins } = {}) {
+-    const { getDefaultConfig: getDefaultMetroConfig, mergeConfig, } = require('@expo/metro/metro-config');
++    const { getDefaultConfig: getDefaultMetroConfig, mergeConfig } = (0, metro_config_1.importMetroConfig)(projectRoot);
+     if (isCSSEnabled) {
+         patchMetroGraphToSupportUncachedModules();
+     }
+@@ -136,18 +163,12 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+         hasWarnedAboutExotic = true;
+         console.log(chalk_1.default.gray(`\u203A Feature ${chalk_1.default.bold `EXPO_USE_EXOTIC`} has been removed in favor of the default transformer.`));
+     }
+-    const reactNativePath = path_1.default.dirname(resolve_from_1.default.silent(projectRoot, 'react-native/package.json') ?? 'react-native/package.json');
+-    if (reactNativePath === 'react-native' && !hasWarnedAboutReactNative) {
+-        hasWarnedAboutReactNative = true;
+-        console.log(chalk_1.default.yellow(`\u203A Could not resolve react-native! Is it installed and a project dependency?`));
+-    }
++    const reactNativePath = path_1.default.dirname((0, resolve_from_1.default)(projectRoot, 'react-native/package.json'));
+     const sourceExtsConfig = { isTS: true, isReact: true, isModern: true };
+     const sourceExts = (0, paths_1.getBareExtensions)([], sourceExtsConfig);
+     // Add support for cjs (without platform extensions).
+     sourceExts.push('cjs');
+     const reanimatedVersion = getPkgVersion(projectRoot, 'react-native-reanimated');
+-    const workletsVersion = getPkgVersion(projectRoot, 'react-native-worklets');
+-    const babelRuntimeVersion = getPkgVersion(projectRoot, '@babel/runtime');
+     let sassVersion = null;
+     if (isCSSEnabled) {
+         sassVersion = getPkgVersion(projectRoot, 'sass');
+@@ -155,18 +176,8 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+         // when sass isn't installed.
+         sourceExts.push('scss', 'sass', 'css');
+     }
+-    let pkg;
+-    try {
+-        pkg = (0, config_1.getPackageJson)(projectRoot);
+-    }
+-    catch (error) {
+-        if (error && error.name === 'ConfigError') {
+-            console.log(chalk_1.default.yellow(`\u203A Could not find a package.json at the project root! ("${projectRoot}")`));
+-        }
+-        else {
+-            throw error;
+-        }
+-    }
++    const envFiles = runtimeEnv.getFiles(process.env.NODE_ENV, { silent: true });
++    const pkg = (0, config_1.getPackageJson)(projectRoot);
+     const watchFolders = (0, getWatchFolders_1.getWatchFolders)(projectRoot);
+     const nodeModulesPaths = (0, getModulesPaths_1.getModulesPaths)(projectRoot);
+     if (env_1.env.EXPO_DEBUG) {
+@@ -180,26 +191,22 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+         console.log(`- React Native: ${reactNativePath}`);
+         console.log(`- Watch Folders: ${watchFolders.join(', ')}`);
+         console.log(`- Node Module Paths: ${nodeModulesPaths.join(', ')}`);
++        console.log(`- Env Files: ${envFiles}`);
+         console.log(`- Sass: ${sassVersion}`);
+         console.log(`- Reanimated: ${reanimatedVersion}`);
+-        console.log(`- Worklets: ${workletsVersion}`);
+-        console.log(`- Babel Runtime: ${babelRuntimeVersion}`);
+         console.log();
+     }
+-    const metroDefaultValues = getDefaultMetroConfig.getDefaultValues(projectRoot);
++    const { 
++    // Remove the default reporter which metro always resolves to be the react-native-community/cli reporter.
++    // This prints a giant React logo which is less accessible to users on smaller terminals.
++    reporter, ...metroDefaultValues } = getDefaultMetroConfig.getDefaultValues(projectRoot);
+     const cacheStore = new file_store_1.FileStore({
+         root: path_1.default.join(os_1.default.tmpdir(), 'metro-cache'),
+     });
+     const serverRoot = (0, paths_1.getMetroServerRoot)(projectRoot);
+-    const routerPackageRoot = resolve_from_1.default.silent(projectRoot, 'expo-router');
+-    const expoMetroConfig = asMetroConfigInput({
+-        reporter: {
+-            // Remove the default reporter which metro always resolves to be the react-native-community/cli reporter.
+-            // This prints a giant React logo which is less accessible to users on smaller terminals.
+-            update() {
+-                /*noop*/
+-            },
+-        },
++    // Merge in the default config from Metro here, even though loadConfig uses it as defaults.
++    // This is a convenience for getDefaultConfig use in metro.config.js, e.g. to modify assetExts.
++    const metroConfig = mergeConfig(metroDefaultValues, {
+         watchFolders,
+         resolver: {
+             unstable_conditionsByPlatform: {
+@@ -208,6 +215,7 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+                 // This is removed for server platforms.
+                 web: ['browser'],
+             },
++            unstable_conditionNames: ['require', 'import'],
+             resolverMainFields: ['react-native', 'browser', 'main'],
+             platforms: ['ios', 'android'],
+             assetExts: metroDefaultValues.resolver.assetExts
+@@ -219,17 +227,11 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+                 .filter((assetExt) => !sourceExts.includes(assetExt)),
+             sourceExts,
+             nodeModulesPaths,
+-            blockList: [
+-                // .expo/types contains generated declaration files which are not and should not be processed by Metro.
+-                // This prevents unwanted fast refresh on the declaration files changes.
+-                /\.expo[\\/]types/,
+-            ].concat(metroDefaultValues.resolver.blockList ?? []),
+         },
+         cacheStores: [cacheStore],
+         watcher: {
+-            unstable_workerThreads: false,
+-            // strip starting dot from env files. We only support watching development variants of env files as production is inlined using a different system.
+-            additionalExts: ['env', 'local', 'development'],
++            // strip starting dot from env files
++            additionalExts: envFiles.map((file) => file.replace(/^\./, '')),
+         },
+         serializer: {
+             isThirdPartyModule(module) {
+@@ -251,22 +253,16 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+                     // MUST be first
+                     require.resolve(path_1.default.join(reactNativePath, 'Libraries/Core/InitializeCore')),
+                 ];
+-                const stdRuntime = resolve_from_1.default.silent(projectRoot, 'expo/src/winter/index.ts');
++                const stdRuntime = resolve_from_1.default.silent(projectRoot, 'expo/src/winter');
+                 if (stdRuntime) {
+                     preModules.push(stdRuntime);
+                 }
+-                else {
+-                    debug('"expo/src/winter" not found, this may cause issues');
+-                }
+                 // We need to shift this to be the first module so web Fast Refresh works as expected.
+                 // This will only be applied if the module is installed and imported somewhere in the bundle already.
+-                const metroRuntime = getExpoMetroRuntimeOptional(projectRoot);
++                const metroRuntime = resolve_from_1.default.silent(projectRoot, '@expo/metro-runtime');
+                 if (metroRuntime) {
+                     preModules.push(metroRuntime);
+                 }
+-                else {
+-                    debug('"@expo/metro-runtime" not found, this may cause issues');
+-                }
+                 return preModules;
+             },
+             getPolyfills: ({ platform }) => {
+@@ -274,8 +270,15 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+                 if (!platform) {
+                     return [];
+                 }
++                if (platform === 'web') {
++                    return [
++                        // Ensure that the error-guard polyfill is included in the web polyfills to
++                        // make metro-runtime work correctly.
++                        require.resolve('@react-native/js-polyfills/error-guard'),
++                    ];
++                }
+                 // Native behavior.
+-                return require(path_1.default.join(reactNativePath, 'rn-get-polyfills'))();
++                return require('@react-native/js-polyfills')();
+             },
+         },
+         server: {
+@@ -291,53 +294,39 @@ function getDefaultConfig(projectRoot, { mode, isCSSEnabled = true, unstable_bef
+         transformerPath: require.resolve('./transform-worker/transform-worker'),
+         // NOTE: All of these values are used in the cache key. They should not contain any absolute paths.
+         transformer: {
+-            unstable_workerThreads: true,
+             // Custom: These are passed to `getCacheKey` and ensure invalidation when the version changes.
+             unstable_renameRequire: false,
+-            _expoRouterPath: routerPackageRoot ? path_1.default.relative(serverRoot, routerPackageRoot) : undefined,
++            // @ts-expect-error: not on type.
+             postcssHash: (0, postcss_1.getPostcssConfigHash)(projectRoot),
+-            browserslistHash: pkg?.browserslist
+-                ? (0, metro_cache_1.stableHash)(JSON.stringify(pkg?.browserslist)).toString('hex')
++            browserslistHash: pkg.browserslist
++                ? (0, metro_cache_1.stableHash)(JSON.stringify(pkg.browserslist)).toString('hex')
+                 : null,
+             sassVersion,
+-            // Ensure invalidation when the version changes due to the Reanimated and Worklets Babel plugins.
++            // Ensure invalidation when the version changes due to the Babel plugin.
+             reanimatedVersion,
+-            workletsVersion,
+             // Ensure invalidation when using identical projects in monorepos
+             _expoRelativeProjectRoot: path_1.default.relative(serverRoot, projectRoot),
+             // `require.context` support
+             unstable_allowRequireContext: true,
+             allowOptionalDependencies: true,
+             babelTransformerPath: require.resolve('./babel-transformer'),
+-            // Only apply expo internal asyncRequireModulePath when `expo` is installed
+-            // This must be a module request, rather than an absolute path to keep the cache clean
+-            asyncRequireModulePath: getExpoOptional(projectRoot, 'internal/async-require-module')
+-                ? 'expo/internal/async-require-module'
+-                : metroDefaultValues.transformer.asyncRequireModulePath,
++            // See: https://github.com/facebook/react-native/blob/v0.73.0/packages/metro-config/index.js#L72-L74
++            // TODO: The absolute path breaks invalidates caching across devices.
++            asyncRequireModulePath: (0, resolve_from_1.default)(reactNativePath, metroDefaultValues.transformer.asyncRequireModulePath),
+             assetRegistryPath: '@react-native/assets-registry/registry',
+-            // Determines the minimum version of `@babel/runtime`, so we default it to the project's installed version of `@babel/runtime`
+-            enableBabelRuntime: babelRuntimeVersion ?? undefined,
++            assetPlugins: getAssetPlugins(projectRoot),
+             // hermesParser: true,
+             getTransformOptions: async () => ({
+                 transform: {
+-                    experimentalImportSupport: true,
++                    experimentalImportSupport: false,
+                     inlineRequires: false,
+                 },
+             }),
+         },
+     });
+-    // Merge in the default config from Metro here, even though loadConfig uses it as defaults.
+-    // This is a convenience for getDefaultConfig use in metro.config.js, e.g. to modify assetExts.
+-    const metroConfig = mergeConfig(
+-    // NOTE(@kitten): We neither want ConfigT/MetroConfig here, which is mostly marked as readonly,
+-    // nor InputConfigT which is inexact and partial. Instead, we want an exact type combination of
+-    // the default config and Expo's config
+-    metroDefaultValues, expoMetroConfig);
+     return (0, withExpoSerializers_1.withExpoSerializers)(metroConfig, { unstable_beforeAssetSerializationPlugins });
+ }
+-/** Use to access the Expo Metro transformer path */
+-exports.unstable_transformerPath = require.resolve('./transform-worker/transform-worker');
+-exports.internal_supervisingTransformerPath = require.resolve('./transform-worker/supervising-transform-worker');
++exports.getDefaultConfig = getDefaultConfig;
+ // re-export for legacy cases.
+ exports.EXPO_DEBUG = env_1.env.EXPO_DEBUG;
+ function getPkgVersion(projectRoot, pkgName) {
+@@ -364,25 +353,4 @@ function findUpPackageJson(cwd) {
+     }
+     return findUpPackageJson(path_1.default.dirname(cwd));
+ }
+-function getExpoOptional(projectRoot, subModule = 'package.json') {
+-    return resolve_from_1.default.silent(projectRoot, `expo/${subModule}`);
+-}
+-function getExpoMetroRuntimeOptional(projectRoot) {
+-    const EXPO_METRO_RUNTIME = '@expo/metro-runtime';
+-    const metroRuntime = resolve_from_1.default.silent(projectRoot, EXPO_METRO_RUNTIME);
+-    if (metroRuntime) {
+-        return metroRuntime;
+-    }
+-    // NOTE(@kitten): While `@expo/metro-runtime` is a peer, auto-installing this peer is valid and expected
+-    // When it's auto-installed it may not be hoisted or not accessible from the project root, so we need to
+-    // try to also resolve it via `expo-router`, where it's a required peer
+-    const baseExpoRouter = resolve_from_1.default.silent(projectRoot, 'expo-router/package.json');
+-    if (baseExpoRouter) {
+-        return resolve_from_1.default.silent(baseExpoRouter, EXPO_METRO_RUNTIME);
+-    }
+-    // When expo-router isn't installed, however, we instead try to resolve it from `expo`, where it's an
+-    // optional peer dependency
+-    const baseExpo = getExpoOptional(projectRoot);
+-    return baseExpo ? resolve_from_1.default.silent(baseExpo, EXPO_METRO_RUNTIME) : undefined;
+-}
+ //# sourceMappingURL=ExpoMetroConfig.js.map
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/ExpoMetroConfig.js.map b/node_modules/@expo/metro-config/build/ExpoMetroConfig.js.map
+index 9d738bb..145072c 100644
+--- a/node_modules/@expo/metro-config/build/ExpoMetroConfig.js.map
++++ b/node_modules/@expo/metro-config/build/ExpoMetroConfig.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"ExpoMetroConfig.js","sourceRoot":"","sources":["../src/ExpoMetroConfig.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
++{"version":3,"file":"ExpoMetroConfig.js","sourceRoot":"","sources":["../src/ExpoMetroConfig.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/babel-transformer.d.ts b/node_modules/@expo/metro-config/build/babel-transformer.d.ts
+index 0ff16b5..fd12696 100644
+--- a/node_modules/@expo/metro-config/build/babel-transformer.d.ts
++++ b/node_modules/@expo/metro-config/build/babel-transformer.d.ts
+@@ -1,7 +1,5 @@
+ import type { TransformOptions } from './babel-core';
+ export type ExpoBabelCaller = TransformOptions['caller'] & {
+-    babelRuntimeVersion?: string;
+-    metroSourceType?: 'script' | 'module' | 'asset';
+     supportsReactCompiler?: boolean;
+     isReactServer?: boolean;
+     isHMREnabled?: boolean;
+@@ -16,6 +14,4 @@ export type ExpoBabelCaller = TransformOptions['caller'] & {
+     platform?: string | null;
+     routerRoot?: string;
+     projectRoot: string;
+-    /** When true, indicates this bundle should contain only the loader export */
+-    isLoaderBundle?: boolean;
+ };
+diff --git a/node_modules/@expo/metro-config/build/babel-transformer.js b/node_modules/@expo/metro-config/build/babel-transformer.js
+index 4590792..39e6120 100644
+--- a/node_modules/@expo/metro-config/build/babel-transformer.js
++++ b/node_modules/@expo/metro-config/build/babel-transformer.js
+@@ -65,15 +65,7 @@ function getBabelCaller({ filename, options, }) {
+         // Provide the project root for accurately reading the Expo config.
+         projectRoot: options.projectRoot,
+         isNodeModule,
+-        // TODO(@kitten): Removed and the default; The `hot` parameter is now force-enabled in Metro
+-        // to align caching for `dev` with `hot` being enforced. Hence, we match this by forcing our
+-        // own caller flag to `true` for `babel-preset-expo`. However, `babel-preset-expo` is still
+-        // able to disable the React Refresh transform plugin for other runtimes and uses this flag
+-        // to identify Metro / React Refresh runtime targets
+-        isHMREnabled: true,
+-        // Pass on the input type. Scripts shall be transformed to avoid dependencies (imports/requires),
+-        // for example by polyfills or Babel runtime
+-        metroSourceType: options.type,
++        isHMREnabled: options.hot,
+         // Set the standard Babel flag to disable ESM transformations.
+         supportsStaticESM: isCustomTruthy(options.customTransformOptions?.optimize) || options.experimentalImportSupport,
+         // Enable React compiler support in Babel.
+@@ -81,15 +73,6 @@ function getBabelCaller({ filename, options, }) {
+         supportsReactCompiler: isCustomTruthy(options.customTransformOptions?.reactCompiler)
+             ? true
+             : undefined,
+-        // When true, indicates this bundle should contain only the loader export.
+-        // Used by server-data-loaders-plugin to strip everything except the loader function.
+-        isLoaderBundle: isCustomTruthy(options.customTransformOptions?.isLoaderBundle)
+-            ? true
+-            : undefined,
+-        // This is picked up by `babel-preset-expo` if it's set, and overrides the minimum supported
+-        // `@babel/runtime` version that `@babel/plugin-transform-runtime` can assume is installed
+-        // This option should be set to the project's version of `@babel/runtime`, if it's installed directly
+-        babelRuntimeVersion: typeof options.enableBabelRuntime === 'string' ? options.enableBabelRuntime : undefined,
+     };
+ }
+ function stringOrUndefined(value) {
+diff --git a/node_modules/@expo/metro-config/build/babel-transformer.js.map b/node_modules/@expo/metro-config/build/babel-transformer.js.map
+index 781f842..eaadf32 100644
+--- a/node_modules/@expo/metro-config/build/babel-transformer.js.map
++++ b/node_modules/@expo/metro-config/build/babel-transformer.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"babel-transformer.js","sourceRoot":"","sources":["../src/babel-transformer.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
++{"version":3,"file":"babel-transformer.js","sourceRoot":"","sources":["../src/babel-transformer.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/customizeFrame.d.ts b/node_modules/@expo/metro-config/build/customizeFrame.d.ts
+index 02081ad..4616bb4 100644
+--- a/node_modules/@expo/metro-config/build/customizeFrame.d.ts
++++ b/node_modules/@expo/metro-config/build/customizeFrame.d.ts
+@@ -1,4 +1,4 @@
+-import type { SymbolicatorConfigT } from '@expo/metro/metro-config';
++import { SymbolicatorConfigT } from 'metro-config';
+ type CustomizeFrameFunc = SymbolicatorConfigT['customizeFrame'];
+ export declare const INTERNAL_CALLSITES_REGEX: RegExp;
+ /**
+diff --git a/node_modules/@expo/metro-config/build/customizeFrame.js b/node_modules/@expo/metro-config/build/customizeFrame.js
+index 8849109..3057d7f 100644
+--- a/node_modules/@expo/metro-config/build/customizeFrame.js
++++ b/node_modules/@expo/metro-config/build/customizeFrame.js
+@@ -1,7 +1,6 @@
+ "use strict";
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.INTERNAL_CALLSITES_REGEX = void 0;
+-exports.getDefaultCustomizeFrame = getDefaultCustomizeFrame;
++exports.getDefaultCustomizeFrame = exports.INTERNAL_CALLSITES_REGEX = void 0;
+ const url_1 = require("url");
+ // Import only the types here, the values will be imported from the project, at runtime.
+ exports.INTERNAL_CALLSITES_REGEX = new RegExp([
+@@ -31,7 +30,7 @@ exports.INTERNAL_CALLSITES_REGEX = new RegExp([
+     // Babel helpers that implement language features
+     'node_modules/@babel/runtime/.+\\.js$',
+     // Hide Hermes internal bytecode
+-    '/(?:InternalBytecode/)?InternalBytecode\\.js$',
++    '/InternalBytecode/InternalBytecode\\.js$',
+     // Block native code invocations
+     `\\[native code\\]`,
+     // Hide react-dom (web)
+@@ -41,7 +40,6 @@ exports.INTERNAL_CALLSITES_REGEX = new RegExp([
+     // Block expo's metro-runtime
+     '@expo/metro-runtime/.+\\.ts',
+     '@expo/server/.+\\.ts',
+-    'expo-server/.+\\.ts',
+     // Block upstream metro-runtime
+     '/metro-runtime/.+\\.js$',
+     // Expo's metro-runtime require patch:
+@@ -94,40 +92,13 @@ function getDefaultCustomizeFrame() {
+             // Often this looks like: `__r(0);`.
+             // The URL will also be unactionable in the app and therefore not very useful to the developer.
+             if (frame.column === 3 &&
+-                frame.methodName &&
+-                ['global', 'global code'].includes(frame.methodName) &&
++                frame.methodName === 'global code' &&
+                 frame.file?.match(/^https?:\/\//g)) {
+                 collapse = true;
+             }
+-            else if ((frame.file === 'unknown' || frame.file === '<anonymous>') &&
+-                (frame.column == null || frame.column === -1)) {
+-                // If we definitively don't have a file, as indicated by the invalid column value,
+-                // this frame won't be able to desymbolicate properly
+-                collapse = true;
+-            }
+-            else if (frame.file === '<native>') {
+-                collapse = true;
+-            }
+-            else if (
+-            // Some internal component stacks often don't have a file name.
+-            frame.file === '<anonymous>' &&
+-                frame.methodName &&
+-                [
+-                    // React
+-                    'Suspense',
+-                    // React Native
+-                    'RCTView',
+-                    'RCTScrollView',
+-                    'RCTScrollContentView',
+-                    // React Native Screens
+-                    'RNSScreen',
+-                    'RNSScreenContentWrapper',
+-                    'RNSScreenNavigationContainer',
+-                ].includes(frame.methodName)) {
+-                collapse = true;
+-            }
+         }
+         return { ...(frame || {}), collapse };
+     };
+ }
++exports.getDefaultCustomizeFrame = getDefaultCustomizeFrame;
+ //# sourceMappingURL=customizeFrame.js.map
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/customizeFrame.js.map b/node_modules/@expo/metro-config/build/customizeFrame.js.map
+index 37c18fe..baaa2f0 100644
+--- a/node_modules/@expo/metro-config/build/customizeFrame.js.map
++++ b/node_modules/@expo/metro-config/build/customizeFrame.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"customizeFrame.js","sourceRoot":"","sources":["../src/customizeFrame.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
++{"version":3,"file":"customizeFrame.js","sourceRoot":"","sources":["../src/customizeFrame.ts"],"names":[],"mappings":";;;AAEA,6BAA0B;AAI1B,wFAAwF;AAC3E,QAAA,wBAAwB,GAAG,IAAI,MAAM,CAChD;IACE,8CAA8C;IAC9C,6CAA6C;IAC7C,+BAA+B;IAC/B,4BAA4B;IAC5B,iCAAiC;IACjC,2CAA2C;IAC3C,qCAAqC;IACrC,iCAAiC;IACjC,sDAAsD;IACtD,oDAAoD;IACpD,sCAAsC;IACtC,iCAAiC;IACjC,yCAAyC;IACzC,uCAAuC;IACvC,6DAA6D;IAC7D,qCAAqC;IACrC,8CAA8C;IAC9C,kGAAkG;IAClG,iCAAiC;IACjC,iCAAiC;IACjC,2CAA2C;IAC3C,4CAA4C;IAC5C,4CAA4C;IAC5C,iDAAiD;IACjD,sCAAsC;IACtC,gCAAgC;IAChC,0CAA0C;IAC1C,gCAAgC;IAChC,mBAAmB;IACnB,uBAAuB;IACvB,iCAAiC;IACjC,+BAA+B;IAC/B,2CAA2C;IAC3C,6BAA6B;IAC7B,6BAA6B;IAC7B,sBAAsB;IACtB,+BAA+B;IAC/B,yBAAyB;IACzB,sCAAsC;IACtC,+BAA+B;IAE/B,6BAA6B;IAC7B,8BAA8B;IAC9B,6EAA6E;IAC7E,iCAAiC;IACjC,mBAAmB;IACnB,eAAe;IACf,0CAA0C;IAC1C,sBAAsB;IACtB,+FAA+F;IAC/F,iCAAiC;IACjC,8GAA8G;IAC9G,gDAAgD;IAEhD,0BAA0B;IAC1B,kBAAkB;CACnB,CAAC,IAAI,CAAC,GAAG,CAAC,CACZ,CAAC;AAEF,SAAS,KAAK,CAAC,KAAa;IAC1B,IAAI;QACF,kCAAkC;QAClC,IAAI,SAAG,CAAC,KAAK,CAAC,CAAC;QACf,OAAO,IAAI,CAAC;KACb;IAAC,MAAM;QACN,OAAO,KAAK,CAAC;KACd;AACH,CAAC;AAED;;;;GAIG;AACH,SAAgB,wBAAwB;IACtC,OAAO,CAAC,KAAwC,EAAE,EAAE;QAClD,IAAI,KAAK,CAAC,IAAI,IAAI,KAAK,CAAC,KAAK,CAAC,IAAI,CAAC,EAAE;YACnC,OAAO;gBACL,GAAG,KAAK;gBACR,qFAAqF;gBACrF,UAAU,EAAE,IAAI;gBAChB,MAAM,EAAE,IAAI;gBACZ,+DAA+D;gBAC/D,QAAQ,EAAE,IAAI;aACf,CAAC;SACH;QACD,IAAI,QAAQ,GAAG,OAAO,CAAC,KAAK,CAAC,IAAI,IAAI,gCAAwB,CAAC,IAAI,CAAC,KAAK,CAAC,IAAI,CAAC,CAAC,CAAC;QAEhF,IAAI,CAAC,QAAQ,EAAE;YACb,qDAAqD;YACrD,oCAAoC;YACpC,+FAA+F;YAC/F,IACE,KAAK,CAAC,MAAM,KAAK,CAAC;gBAClB,KAAK,CAAC,UAAU,KAAK,aAAa;gBAClC,KAAK,CAAC,IAAI,EAAE,KAAK,CAAC,eAAe,CAAC,EAClC;gBACA,QAAQ,GAAG,IAAI,CAAC;aACjB;SACF;QAED,OAAO,EAAE,GAAG,CAAC,KAAK,IAAI,EAAE,CAAC,EAAE,QAAQ,EAAE,CAAC;IACxC,CAAC,CAAC;AACJ,CAAC;AA7BD,4DA6BC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/file-store.d.ts b/node_modules/@expo/metro-config/build/file-store.d.ts
+index 3d1965d..8df704a 100644
+--- a/node_modules/@expo/metro-config/build/file-store.d.ts
++++ b/node_modules/@expo/metro-config/build/file-store.d.ts
+@@ -1,4 +1,5 @@
+-import UpstreamFileStore from '@expo/metro/metro-cache/stores/FileStore';
++/// <reference types="node" />
++import UpstreamFileStore from 'metro-cache/src/stores/FileStore';
+ export declare class FileStore<T> extends UpstreamFileStore<T> {
+     set(key: Buffer, value: any): Promise<void>;
+ }
+diff --git a/node_modules/@expo/metro-config/build/file-store.js b/node_modules/@expo/metro-config/build/file-store.js
+index b412fc7..6547c47 100644
+--- a/node_modules/@expo/metro-config/build/file-store.js
++++ b/node_modules/@expo/metro-config/build/file-store.js
+@@ -4,7 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.FileStore = void 0;
+-const FileStore_1 = __importDefault(require("@expo/metro/metro-cache/stores/FileStore"));
++const FileStore_1 = __importDefault(require("metro-cache/private/stores/FileStore"));
+ const debug = require('debug')('expo:metro:cache');
+ class FileStore extends FileStore_1.default {
+     async set(key, value) {
+diff --git a/node_modules/@expo/metro-config/build/file-store.js.map b/node_modules/@expo/metro-config/build/file-store.js.map
+index 3fea9c6..a5c3c87 100644
+--- a/node_modules/@expo/metro-config/build/file-store.js.map
++++ b/node_modules/@expo/metro-config/build/file-store.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"file-store.js","sourceRoot":"","sources":["../src/file-store.ts"],"names":[],"mappings":";;;;;;AAAA,yFAAyE;AAEzE,MAAM,KAAK,GAAG,OAAO,CAAC,OAAO,CAAC,CAAC,kBAAkB,CAAuB,CAAC;AAEzE,MAAa,SAAa,SAAQ,mBAAoB;IACpD,KAAK,CAAC,GAAG,CAAC,GAAW,EAAE,KAAU;QAC/B,iEAAiE;QACjE,IAAI,KAAK,EAAE,MAAM,EAAE,CAAC,CAAC,CAAC,EAAE,IAAI,EAAE,GAAG,EAAE,SAAS,EAAE,CAAC;YAC7C,KAAK,CAAC,gCAAgC,EAAE,KAAK,CAAC,IAAI,CAAC,CAAC;YACpD,OAAO;QACT,CAAC;QACD,OAAO,MAAM,KAAK,CAAC,GAAG,CAAC,GAAG,EAAE,KAAK,CAAC,CAAC;IACrC,CAAC;CACF;AATD,8BASC"}
+\ No newline at end of file
++{"version":3,"file":"file-store.js","sourceRoot":"","sources":["../src/file-store.ts"],"names":[],"mappings":";;;;;;AAAA,iFAAiE;AAEjE,MAAM,KAAK,GAAG,OAAO,CAAC,OAAO,CAAC,CAAC,kBAAkB,CAAuB,CAAC;AAEzE,MAAa,SAAa,SAAQ,mBAAoB;IACpD,KAAK,CAAC,GAAG,CAAC,GAAW,EAAE,KAAU;QAC/B,iEAAiE;QACjE,IAAI,KAAK,EAAE,MAAM,EAAE,CAAC,CAAC,CAAC,EAAE,IAAI,EAAE,GAAG,EAAE,SAAS,EAAE;YAC5C,KAAK,CAAC,gCAAgC,EAAE,KAAK,CAAC,IAAI,CAAC,CAAC;YACpD,OAAO;SACR;QACD,OAAO,MAAM,KAAK,CAAC,GAAG,CAAC,GAAG,EAAE,KAAK,CAAC,CAAC;IACrC,CAAC;CACF;AATD,8BASC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/getModulesPaths.js b/node_modules/@expo/metro-config/build/getModulesPaths.js
+index c2979ed..86a6a0b 100644
+--- a/node_modules/@expo/metro-config/build/getModulesPaths.js
++++ b/node_modules/@expo/metro-config/build/getModulesPaths.js
+@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+     return (mod && mod.__esModule) ? mod : { "default": mod };
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.getModulesPaths = getModulesPaths;
++exports.getModulesPaths = void 0;
+ const paths_1 = require("@expo/config/paths");
+ const path_1 = __importDefault(require("path"));
+ function getModulesPaths(projectRoot) {
+@@ -18,4 +18,5 @@ function getModulesPaths(projectRoot) {
+     }
+     return paths;
+ }
++exports.getModulesPaths = getModulesPaths;
+ //# sourceMappingURL=getModulesPaths.js.map
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/getModulesPaths.js.map b/node_modules/@expo/metro-config/build/getModulesPaths.js.map
+index c7dadd5..1b1abe4 100644
+--- a/node_modules/@expo/metro-config/build/getModulesPaths.js.map
++++ b/node_modules/@expo/metro-config/build/getModulesPaths.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"getModulesPaths.js","sourceRoot":"","sources":["../src/getModulesPaths.ts"],"names":[],"mappings":";;;;;AAGA,0CAaC;AAhBD,8CAAwD;AACxD,gDAAwB;AAExB,SAAgB,eAAe,CAAC,WAAmB;IACjD,MAAM,KAAK,GAAa,EAAE,CAAC;IAE3B,sEAAsE;IACtE,gFAAgF;IAChF,MAAM,mBAAmB,GAAG,cAAI,CAAC,OAAO,CAAC,WAAW,CAAC,CAAC;IACtD,MAAM,aAAa,GAAG,IAAA,0BAAkB,EAAC,mBAAmB,CAAC,CAAC;IAC9D,IAAI,aAAa,KAAK,mBAAmB,EAAE,CAAC;QAC1C,KAAK,CAAC,IAAI,CAAC,cAAI,CAAC,OAAO,CAAC,WAAW,EAAE,cAAc,CAAC,CAAC,CAAC;QACtD,KAAK,CAAC,IAAI,CAAC,cAAI,CAAC,OAAO,CAAC,aAAa,EAAE,cAAc,CAAC,CAAC,CAAC;IAC1D,CAAC;IAED,OAAO,KAAK,CAAC;AACf,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"getModulesPaths.js","sourceRoot":"","sources":["../src/getModulesPaths.ts"],"names":[],"mappings":";;;;;;AAAA,8CAAwD;AACxD,gDAAwB;AAExB,SAAgB,eAAe,CAAC,WAAmB;IACjD,MAAM,KAAK,GAAa,EAAE,CAAC;IAE3B,sEAAsE;IACtE,gFAAgF;IAChF,MAAM,mBAAmB,GAAG,cAAI,CAAC,OAAO,CAAC,WAAW,CAAC,CAAC;IACtD,MAAM,aAAa,GAAG,IAAA,0BAAkB,EAAC,mBAAmB,CAAC,CAAC;IAC9D,IAAI,aAAa,KAAK,mBAAmB,EAAE;QACzC,KAAK,CAAC,IAAI,CAAC,cAAI,CAAC,OAAO,CAAC,WAAW,EAAE,cAAc,CAAC,CAAC,CAAC;QACtD,KAAK,CAAC,IAAI,CAAC,cAAI,CAAC,OAAO,CAAC,aAAa,EAAE,cAAc,CAAC,CAAC,CAAC;KACzD;IAED,OAAO,KAAK,CAAC;AACf,CAAC;AAbD,0CAaC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/getWatchFolders.js b/node_modules/@expo/metro-config/build/getWatchFolders.js
+index 23b23da..4c01b97 100644
+--- a/node_modules/@expo/metro-config/build/getWatchFolders.js
++++ b/node_modules/@expo/metro-config/build/getWatchFolders.js
+@@ -3,9 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+     return (mod && mod.__esModule) ? mod : { "default": mod };
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.globAllPackageJsonPaths = globAllPackageJsonPaths;
+-exports.resolveAllWorkspacePackageJsonPaths = resolveAllWorkspacePackageJsonPaths;
+-exports.getWatchFolders = getWatchFolders;
++exports.getWatchFolders = exports.resolveAllWorkspacePackageJsonPaths = exports.globAllPackageJsonPaths = void 0;
+ const paths_1 = require("@expo/config/paths");
+ const fs_1 = __importDefault(require("fs"));
+ const glob_1 = require("glob");
+@@ -47,6 +45,7 @@ function globAllPackageJsonPaths(workspaceProjectRoot, linkedPackages) {
+         .filter(Boolean)
+         .map((p) => path_1.default.join(p));
+ }
++exports.globAllPackageJsonPaths = globAllPackageJsonPaths;
+ /**
+  * @param workspaceProjectRoot root file path for a yarn workspace.
+  * @returns list of package.json file paths that are linked to the yarn workspace.
+@@ -64,6 +63,7 @@ function resolveAllWorkspacePackageJsonPaths(workspaceProjectRoot) {
+         return [];
+     }
+ }
++exports.resolveAllWorkspacePackageJsonPaths = resolveAllWorkspacePackageJsonPaths;
+ /**
+  * @param projectRoot file path to app's project root
+  * @returns list of node module paths to watch in Metro bundler, ex: `['/Users/me/app/node_modules/', '/Users/me/app/apps/my-app/', '/Users/me/app/packages/my-package/']`
+@@ -84,6 +84,7 @@ function getWatchFolders(projectRoot) {
+         ...packages.map((pkg) => path_1.default.dirname(pkg)),
+     ]);
+ }
++exports.getWatchFolders = getWatchFolders;
+ function uniqueItems(items) {
+     return [...new Set(items)];
+ }
+diff --git a/node_modules/@expo/metro-config/build/getWatchFolders.js.map b/node_modules/@expo/metro-config/build/getWatchFolders.js.map
+index d168788..606ed55 100644
+--- a/node_modules/@expo/metro-config/build/getWatchFolders.js.map
++++ b/node_modules/@expo/metro-config/build/getWatchFolders.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"getWatchFolders.js","sourceRoot":"","sources":["../src/getWatchFolders.ts"],"names":[],"mappings":";;;;;AA2BA,0DAkBC;AAMD,kFAUC;AAMD,0CAiBC;AApFD,8CAAgF;AAChF,4CAAoB;AACpB,+BAAgC;AAChC,gDAAwB;AAExB,SAAS,YAAY,CAAC,QAAgB;IACpC,eAAe;IACf,MAAM,IAAI,GAAG,YAAE,CAAC,YAAY,CAAC,QAAQ,EAAE,MAAM,CAAC,CAAC;IAC/C,wBAAwB;IACxB,OAAO,IAAI,CAAC,KAAK,CAAC,IAAI,CAAC,CAAC;AAC1B,CAAC;AAED,SAAS,eAAe,CAAC,QAAgB;IACvC,IAAI,CAAC;QACH,uCAAuC;QACvC,YAAY,CAAC,QAAQ,CAAC,CAAC;QACvB,OAAO,IAAI,CAAC;IACd,CAAC;IAAC,MAAM,CAAC;QACP,OAAO,KAAK,CAAC;IACf,CAAC;AACH,CAAC;AAED;;;;GAIG;AACH,SAAgB,uBAAuB,CACrC,oBAA4B,EAC5B,cAAwB;IAExB,OAAO,cAAc;SAClB,GAAG,CAAC,CAAC,IAAI,EAAE,EAAE;QACZ,+DAA+D;QAC/D,OAAO,IAAA,eAAQ,EAAC,cAAI,CAAC,KAAK,CAAC,IAAI,CAAC,IAAI,EAAE,cAAc,CAAC,CAAC,OAAO,CAAC,KAAK,EAAE,GAAG,CAAC,EAAE;YACzE,GAAG,EAAE,oBAAoB;YACzB,QAAQ,EAAE,IAAI;YACd,MAAM,EAAE,CAAC,qCAAqC,CAAC;SAChD,CAAC,CAAC,GAAG,CAAC,CAAC,OAAO,EAAE,EAAE;YACjB,OAAO,eAAe,CAAC,OAAO,CAAC,CAAC,CAAC,CAAC,OAAO,CAAC,CAAC,CAAC,IAAI,CAAC;QACnD,CAAC,CAAC,CAAC;IACL,CAAC,CAAC;SACD,IAAI,EAAE;SACN,MAAM,CAAC,OAAO,CAAC;SACf,GAAG,CAAC,CAAC,CAAC,EAAE,EAAE,CAAC,cAAI,CAAC,IAAI,CAAC,CAAW,CAAC,CAAC,CAAC;AACxC,CAAC;AAED;;;GAGG;AACH,SAAgB,mCAAmC,CAAC,oBAA4B;IAC9E,IAAI,CAAC;QACH,6FAA6F;QAC7F,MAAM,cAAc,GAAG,IAAA,8BAAsB,EAAC,oBAAoB,CAAC,CAAC;QACpE,IAAI,CAAC,cAAc,EAAE,MAAM;YAAE,OAAO,EAAE,CAAC;QACvC,sDAAsD;QACtD,OAAO,uBAAuB,CAAC,oBAAoB,EAAE,cAAc,CAAC,CAAC;IACvE,CAAC;IAAC,MAAM,CAAC;QACP,OAAO,EAAE,CAAC;IACZ,CAAC;AACH,CAAC;AAED;;;GAGG;AACH,SAAgB,eAAe,CAAC,WAAmB;IACjD,MAAM,mBAAmB,GAAG,cAAI,CAAC,OAAO,CAAC,WAAW,CAAC,CAAC;IACtD,MAAM,aAAa,GAAG,IAAA,0BAAkB,EAAC,mBAAmB,CAAC,CAAC;IAC9D,iDAAiD;IACjD,IAAI,aAAa,KAAK,mBAAmB,EAAE,CAAC;QAC1C,OAAO,EAAE,CAAC;IACZ,CAAC;IAED,MAAM,QAAQ,GAAG,mCAAmC,CAAC,aAAa,CAAC,CAAC;IACpE,IAAI,CAAC,QAAQ,EAAE,MAAM,EAAE,CAAC;QACtB,OAAO,EAAE,CAAC;IACZ,CAAC;IAED,OAAO,WAAW,CAAC;QACjB,cAAI,CAAC,IAAI,CAAC,aAAa,EAAE,cAAc,CAAC;QACxC,GAAG,QAAQ,CAAC,GAAG,CAAC,CAAC,GAAG,EAAE,EAAE,CAAC,cAAI,CAAC,OAAO,CAAC,GAAG,CAAC,CAAC;KAC5C,CAAC,CAAC;AACL,CAAC;AAED,SAAS,WAAW,CAAC,KAAe;IAClC,OAAO,CAAC,GAAG,IAAI,GAAG,CAAC,KAAK,CAAC,CAAC,CAAC;AAC7B,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"getWatchFolders.js","sourceRoot":"","sources":["../src/getWatchFolders.ts"],"names":[],"mappings":";;;;;;AAAA,8CAAgF;AAChF,4CAAoB;AACpB,+BAAgC;AAChC,gDAAwB;AAExB,SAAS,YAAY,CAAC,QAAgB;IACpC,eAAe;IACf,MAAM,IAAI,GAAG,YAAE,CAAC,YAAY,CAAC,QAAQ,EAAE,MAAM,CAAC,CAAC;IAC/C,wBAAwB;IACxB,OAAO,IAAI,CAAC,KAAK,CAAC,IAAI,CAAC,CAAC;AAC1B,CAAC;AAED,SAAS,eAAe,CAAC,QAAgB;IACvC,IAAI;QACF,uCAAuC;QACvC,YAAY,CAAC,QAAQ,CAAC,CAAC;QACvB,OAAO,IAAI,CAAC;KACb;IAAC,MAAM;QACN,OAAO,KAAK,CAAC;KACd;AACH,CAAC;AAED;;;;GAIG;AACH,SAAgB,uBAAuB,CACrC,oBAA4B,EAC5B,cAAwB;IAExB,OAAO,cAAc;SAClB,GAAG,CAAC,CAAC,IAAI,EAAE,EAAE;QACZ,+DAA+D;QAC/D,OAAO,IAAA,eAAQ,EAAC,cAAI,CAAC,KAAK,CAAC,IAAI,CAAC,IAAI,EAAE,cAAc,CAAC,CAAC,OAAO,CAAC,KAAK,EAAE,GAAG,CAAC,EAAE;YACzE,GAAG,EAAE,oBAAoB;YACzB,QAAQ,EAAE,IAAI;YACd,MAAM,EAAE,CAAC,qCAAqC,CAAC;SAChD,CAAC,CAAC,GAAG,CAAC,CAAC,OAAO,EAAE,EAAE;YACjB,OAAO,eAAe,CAAC,OAAO,CAAC,CAAC,CAAC,CAAC,OAAO,CAAC,CAAC,CAAC,IAAI,CAAC;QACnD,CAAC,CAAC,CAAC;IACL,CAAC,CAAC;SACD,IAAI,EAAE;SACN,MAAM,CAAC,OAAO,CAAC;SACf,GAAG,CAAC,CAAC,CAAC,EAAE,EAAE,CAAC,cAAI,CAAC,IAAI,CAAC,CAAW,CAAC,CAAC,CAAC;AACxC,CAAC;AAlBD,0DAkBC;AAED;;;GAGG;AACH,SAAgB,mCAAmC,CAAC,oBAA4B;IAC9E,IAAI;QACF,6FAA6F;QAC7F,MAAM,cAAc,GAAG,IAAA,8BAAsB,EAAC,oBAAoB,CAAC,CAAC;QACpE,IAAI,CAAC,cAAc,EAAE,MAAM;YAAE,OAAO,EAAE,CAAC;QACvC,sDAAsD;QACtD,OAAO,uBAAuB,CAAC,oBAAoB,EAAE,cAAc,CAAC,CAAC;KACtE;IAAC,MAAM;QACN,OAAO,EAAE,CAAC;KACX;AACH,CAAC;AAVD,kFAUC;AAED;;;GAGG;AACH,SAAgB,eAAe,CAAC,WAAmB;IACjD,MAAM,mBAAmB,GAAG,cAAI,CAAC,OAAO,CAAC,WAAW,CAAC,CAAC;IACtD,MAAM,aAAa,GAAG,IAAA,0BAAkB,EAAC,mBAAmB,CAAC,CAAC;IAC9D,iDAAiD;IACjD,IAAI,aAAa,KAAK,mBAAmB,EAAE;QACzC,OAAO,EAAE,CAAC;KACX;IAED,MAAM,QAAQ,GAAG,mCAAmC,CAAC,aAAa,CAAC,CAAC;IACpE,IAAI,CAAC,QAAQ,EAAE,MAAM,EAAE;QACrB,OAAO,EAAE,CAAC;KACX;IAED,OAAO,WAAW,CAAC;QACjB,cAAI,CAAC,IAAI,CAAC,aAAa,EAAE,cAAc,CAAC;QACxC,GAAG,QAAQ,CAAC,GAAG,CAAC,CAAC,GAAG,EAAE,EAAE,CAAC,cAAI,CAAC,OAAO,CAAC,GAAG,CAAC,CAAC;KAC5C,CAAC,CAAC;AACL,CAAC;AAjBD,0CAiBC;AAED,SAAS,WAAW,CAAC,KAAe;IAClC,OAAO,CAAC,GAAG,IAAI,GAAG,CAAC,KAAK,CAAC,CAAC,CAAC;AAC7B,CAAC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/loadBabelConfig.js b/node_modules/@expo/metro-config/build/loadBabelConfig.js
+index 3d54f8b..9ce4626 100644
+--- a/node_modules/@expo/metro-config/build/loadBabelConfig.js
++++ b/node_modules/@expo/metro-config/build/loadBabelConfig.js
+@@ -37,14 +37,7 @@ exports.loadBabelConfig = (function () {
+         }
+         // Use the default preset for react-native if no babel config file is found
+         if (!babelRC.extends) {
+-            try {
+-                babelRC.presets = [require('expo/internal/babel-preset')];
+-            }
+-            catch {
+-                // TODO(@kitten): Temporary, since our E2E tests don't use monorepo
+-                // packages consistently, including the `expo` package
+-                babelRC.presets = [require('babel-preset-expo')];
+-            }
++            babelRC.presets = [require('babel-preset-expo')];
+         }
+         return babelRC;
+     };
+diff --git a/node_modules/@expo/metro-config/build/loadBabelConfig.js.map b/node_modules/@expo/metro-config/build/loadBabelConfig.js.map
+index 1db8a85..2c5c0b4 100644
+--- a/node_modules/@expo/metro-config/build/loadBabelConfig.js.map
++++ b/node_modules/@expo/metro-config/build/loadBabelConfig.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"loadBabelConfig.js","sourceRoot":"","sources":["../src/loadBabelConfig.ts"],"names":[],"mappings":";;;;;;AAAA;;;;;;GAMG;AACH,sDAAyB;AACzB,0DAA6B;AAI7B;;;;GAIG;AACU,QAAA,eAAe,GAAG,CAAC;IAC9B,IAAI,OAAO,GAAyD,IAAI,CAAC;IAEzE,OAAO,SAAS,WAAW,CAAC,EAAE,WAAW,EAA2B;QAClE,IAAI,OAAO,KAAK,IAAI,EAAE,CAAC;YACrB,OAAO,OAAO,CAAC;QACjB,CAAC;QAED,OAAO,GAAG,EAAE,CAAC;QAEb,IAAI,WAAW,EAAE,CAAC;YAChB,2DAA2D;YAC3D,iHAAiH;YACjH,MAAM,oBAAoB,GAAG,CAAC,UAAU,EAAE,aAAa,EAAE,iBAAiB,CAAC,CAAC;YAE5E,MAAM,gBAAgB,GAAG,oBAAoB,CAAC,IAAI,CAAC,CAAC,cAAc,EAAE,EAAE,CACpE,iBAAE,CAAC,UAAU,CAAC,mBAAI,CAAC,OAAO,CAAC,WAAW,EAAE,cAAc,CAAC,CAAC,CACzD,CAAC;YAEF,oDAAoD;YACpD,IAAI,gBAAgB,EAAE,CAAC;gBACrB,OAAO,CAAC,OAAO,GAAG,mBAAI,CAAC,OAAO,CAAC,WAAW,EAAE,gBAAgB,CAAC,CAAC;YAChE,CAAC;QACH,CAAC;QAED,2EAA2E;QAC3E,IAAI,CAAC,OAAO,CAAC,OAAO,EAAE,CAAC;YACrB,IAAI,CAAC;gBACH,OAAO,CAAC,OAAO,GAAG,CAAC,OAAO,CAAC,4BAA4B,CAAC,CAAC,CAAC;YAC5D,CAAC;YAAC,MAAM,CAAC;gBACP,mEAAmE;gBACnE,sDAAsD;gBACtD,OAAO,CAAC,OAAO,GAAG,CAAC,OAAO,CAAC,mBAAmB,CAAC,CAAC,CAAC;YACnD,CAAC;QACH,CAAC;QAED,OAAO,OAAO,CAAC;IACjB,CAAC,CAAC;AACJ,CAAC,CAAC,EAAE,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"loadBabelConfig.js","sourceRoot":"","sources":["../src/loadBabelConfig.ts"],"names":[],"mappings":";;;;;;AAAA;;;;;;GAMG;AACH,sDAAyB;AACzB,0DAA6B;AAI7B;;;;GAIG;AACU,QAAA,eAAe,GAAG,CAAC;IAC9B,IAAI,OAAO,GAAyD,IAAI,CAAC;IAEzE,OAAO,SAAS,WAAW,CAAC,EAAE,WAAW,EAA2B;QAClE,IAAI,OAAO,KAAK,IAAI,EAAE;YACpB,OAAO,OAAO,CAAC;SAChB;QAED,OAAO,GAAG,EAAE,CAAC;QAEb,IAAI,WAAW,EAAE;YACf,2DAA2D;YAC3D,iHAAiH;YACjH,MAAM,oBAAoB,GAAG,CAAC,UAAU,EAAE,aAAa,EAAE,iBAAiB,CAAC,CAAC;YAE5E,MAAM,gBAAgB,GAAG,oBAAoB,CAAC,IAAI,CAAC,CAAC,cAAc,EAAE,EAAE,CACpE,iBAAE,CAAC,UAAU,CAAC,mBAAI,CAAC,OAAO,CAAC,WAAW,EAAE,cAAc,CAAC,CAAC,CACzD,CAAC;YAEF,oDAAoD;YACpD,IAAI,gBAAgB,EAAE;gBACpB,OAAO,CAAC,OAAO,GAAG,mBAAI,CAAC,OAAO,CAAC,WAAW,EAAE,gBAAgB,CAAC,CAAC;aAC/D;SACF;QAED,2EAA2E;QAC3E,IAAI,CAAC,OAAO,CAAC,OAAO,EAAE;YACpB,OAAO,CAAC,OAAO,GAAG,CAAC,OAAO,CAAC,mBAAmB,CAAC,CAAC,CAAC;SAClD;QAED,OAAO,OAAO,CAAC;IACjB,CAAC,CAAC;AACJ,CAAC,CAAC,EAAE,CAAC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/rewriteRequestUrl.js b/node_modules/@expo/metro-config/build/rewriteRequestUrl.js
+index 473f5bd..06d7281 100644
+--- a/node_modules/@expo/metro-config/build/rewriteRequestUrl.js
++++ b/node_modules/@expo/metro-config/build/rewriteRequestUrl.js
+@@ -3,8 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+     return (mod && mod.__esModule) ? mod : { "default": mod };
+ };
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.getRouterDirectory = getRouterDirectory;
+-exports.getRewriteRequestUrl = getRewriteRequestUrl;
++exports.getRewriteRequestUrl = exports.getRouterDirectory = void 0;
+ // Copyright 2023-present 650 Industries (Expo). All rights reserved.
+ const config_1 = require("@expo/config");
+ const paths_1 = require("@expo/config/paths");
+@@ -32,19 +31,6 @@ function isEnableHermesManaged(expoConfig, platform) {
+             return false;
+     }
+ }
+-function getAsyncRoutesFromExpoConfig(exp, mode, platform) {
+-    let asyncRoutesSetting;
+-    if (exp.extra?.router?.asyncRoutes) {
+-        const asyncRoutes = exp.extra?.router?.asyncRoutes;
+-        if (['boolean', 'string'].includes(typeof asyncRoutes)) {
+-            asyncRoutesSetting = asyncRoutes;
+-        }
+-        else if (typeof asyncRoutes === 'object') {
+-            asyncRoutesSetting = asyncRoutes[platform] ?? asyncRoutes.default;
+-        }
+-    }
+-    return [mode, true].includes(asyncRoutesSetting);
+-}
+ function getRouterDirectoryModuleIdWithManifest(projectRoot, exp) {
+     return exp.extra?.router?.root ?? getRouterDirectory(projectRoot);
+ }
+@@ -57,6 +43,7 @@ function getRouterDirectory(projectRoot) {
+     debug('Using app as the root directory for Expo Router.');
+     return 'app';
+ }
++exports.getRouterDirectory = getRouterDirectory;
+ function getRewriteRequestUrl(projectRoot) {
+     function rewriteExpoRequestUrl(url) {
+         // Like: `/.expo/.virtual-metro-entry.bundle?platform=ios&dev=true&minify=false&modulesOnly=false&runModule=true&app=com.bacon.test-custom-entry`
+@@ -66,7 +53,6 @@ function getRewriteRequestUrl(projectRoot) {
+             const ensured = url.startsWith('/') ? new URL(url, 'https://acme.dev') : new URL(url);
+             // TODO: Maybe this function could be memoized in some capacity?
+             const { searchParams } = ensured;
+-            const isDev = searchParams.has('dev') ? searchParams.get('dev') === 'true' : true;
+             const platform = searchParams.get('platform') ?? 'web';
+             debug('Rewriting magic request url to entry point', { url, platform });
+             const entry = (0, paths_1.resolveEntryPoint)(projectRoot, {
+@@ -84,12 +70,6 @@ function getRewriteRequestUrl(projectRoot) {
+             if (!ensured.searchParams.has('transform.reactCompiler') && exp.experiments?.reactCompiler) {
+                 ensured.searchParams.set('transform.reactCompiler', String(!!exp.experiments?.reactCompiler));
+             }
+-            if (!ensured.searchParams.has('transform.asyncRoutes')) {
+-                const asyncRoutes = getAsyncRoutesFromExpoConfig(exp, isDev ? 'development' : 'production', platform);
+-                if (asyncRoutes) {
+-                    ensured.searchParams.set('transform.asyncRoutes', String(asyncRoutes));
+-                }
+-            }
+             if (!ensured.searchParams.has('transform.engine')) {
+                 const isHermesEnabled = isEnableHermesManaged(exp, platform);
+                 if (isHermesEnabled) {
+@@ -118,4 +98,5 @@ function getRewriteRequestUrl(projectRoot) {
+     }
+     return rewriteExpoRequestUrl;
+ }
++exports.getRewriteRequestUrl = getRewriteRequestUrl;
+ //# sourceMappingURL=rewriteRequestUrl.js.map
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/rewriteRequestUrl.js.map b/node_modules/@expo/metro-config/build/rewriteRequestUrl.js.map
+index c0e839a..aba0377 100644
+--- a/node_modules/@expo/metro-config/build/rewriteRequestUrl.js.map
++++ b/node_modules/@expo/metro-config/build/rewriteRequestUrl.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"rewriteRequestUrl.js","sourceRoot":"","sources":["../src/rewriteRequestUrl.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
++{"version":3,"file":"rewriteRequestUrl.js","sourceRoot":"","sources":["../src/rewriteRequestUrl.ts"],"names":[],"mappings":"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"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/transformSync.js b/node_modules/@expo/metro-config/build/transformSync.js
+index 65352ac..e0f9e39 100644
+--- a/node_modules/@expo/metro-config/build/transformSync.js
++++ b/node_modules/@expo/metro-config/build/transformSync.js
+@@ -15,25 +15,15 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
+ }) : function(o, v) {
+     o["default"] = v;
+ });
+-var __importStar = (this && this.__importStar) || (function () {
+-    var ownKeys = function(o) {
+-        ownKeys = Object.getOwnPropertyNames || function (o) {
+-            var ar = [];
+-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+-            return ar;
+-        };
+-        return ownKeys(o);
+-    };
+-    return function (mod) {
+-        if (mod && mod.__esModule) return mod;
+-        var result = {};
+-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+-        __setModuleDefault(result, mod);
+-        return result;
+-    };
+-})();
++var __importStar = (this && this.__importStar) || function (mod) {
++    if (mod && mod.__esModule) return mod;
++    var result = {};
++    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
++    __setModuleDefault(result, mod);
++    return result;
++};
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.transformSync = transformSync;
++exports.transformSync = void 0;
+ /**
+  * Copyright (c) 650 Industries (Expo). All rights reserved.
+  *
+@@ -63,10 +53,10 @@ function transformSync(src, babelConfig, { hermesParser }) {
+     }
+     return parseWithBabel(src, babelConfig);
+ }
++exports.transformSync = transformSync;
+ function parseWithHermes(src, babelConfig) {
+     const sourceAst = require('hermes-parser').parse(src, {
+         babel: true,
+-        reactRuntimeTarget: '19',
+         sourceType: babelConfig.sourceType,
+     });
+     return babel.transformFromAstSync(sourceAst, src, babelConfig);
+diff --git a/node_modules/@expo/metro-config/build/transformSync.js.map b/node_modules/@expo/metro-config/build/transformSync.js.map
+index 6ca7eaa..5ea4894 100644
+--- a/node_modules/@expo/metro-config/build/transformSync.js.map
++++ b/node_modules/@expo/metro-config/build/transformSync.js.map
+@@ -1 +1 @@
+-{"version":3,"file":"transformSync.js","sourceRoot":"","sources":["../src/transformSync.ts"],"names":[],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;AAiBA,sCAwBC;AAzCD;;;;;GAKG;AACH,oDAAsC;AAEtC,iEAAiE;AACjE,SAAS,kBAAkB,CAAC,QAAgB;IAC1C,OAAO,QAAQ,EAAE,QAAQ,CAAC,KAAK,CAAC,CAAC;AACnC,CAAC;AAED,SAAS,WAAW,CAAC,QAAgB;IACnC,OAAO,QAAQ,EAAE,QAAQ,CAAC,MAAM,CAAC,CAAC;AACpC,CAAC;AAED,SAAgB,aAAa,CAC3B,GAAW,EACX,WAAmC,EACnC,EAAE,YAAY,EAA8B;IAE5C,MAAM,YAAY,GAChB,kBAAkB,CAAC,WAAW,CAAC,QAAS,CAAC,IAAI,WAAW,CAAC,WAAW,CAAC,QAAS,CAAC,CAAC;IAElF,IAAI,YAAY,EAAE,CAAC;QACjB,OAAO,cAAc,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;IAC1C,CAAC;IAED,IACE,CAAC,YAAY;QACb,kJAAkJ;QAClJ,oBAAoB;QACpB,uHAAuH;QACvH,0IAA0I;QAC1I,CAAC,YAAY,IAAI,GAAG,CAAC,QAAQ,CAAC,QAAQ,CAAC,CAAC,EACxC,CAAC;QACD,OAAO,eAAe,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;IAC3C,CAAC;IAED,OAAO,cAAc,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;AAC1C,CAAC;AAED,SAAS,eAAe,CAAC,GAAW,EAAE,WAAmC;IACvE,MAAM,SAAS,GAAG,OAAO,CAAC,eAAe,CAAC,CAAC,KAAK,CAAC,GAAG,EAAE;QACpD,KAAK,EAAE,IAAI;QACX,kBAAkB,EAAE,IAAI;QACxB,UAAU,EAAE,WAAW,CAAC,UAAU;KACnC,CAAC,CAAC;IACH,OAAO,KAAK,CAAC,oBAAoB,CAAC,SAAS,EAAE,GAAG,EAAE,WAAW,CAAC,CAAC;AACjE,CAAC;AAED,SAAS,cAAc,CAAC,GAAW,EAAE,WAAmC;IACtE,OAAO,KAAK,CAAC,aAAa,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;AAC/C,CAAC"}
+\ No newline at end of file
++{"version":3,"file":"transformSync.js","sourceRoot":"","sources":["../src/transformSync.ts"],"names":[],"mappings":";;;;;;;;;;;;;;;;;;;;;;;;;;AAAA;;;;;GAKG;AACH,oDAAsC;AAEtC,iEAAiE;AACjE,SAAS,kBAAkB,CAAC,QAAgB;IAC1C,OAAO,QAAQ,EAAE,QAAQ,CAAC,KAAK,CAAC,CAAC;AACnC,CAAC;AAED,SAAS,WAAW,CAAC,QAAgB;IACnC,OAAO,QAAQ,EAAE,QAAQ,CAAC,MAAM,CAAC,CAAC;AACpC,CAAC;AAED,SAAgB,aAAa,CAC3B,GAAW,EACX,WAAmC,EACnC,EAAE,YAAY,EAA8B;IAE5C,MAAM,YAAY,GAChB,kBAAkB,CAAC,WAAW,CAAC,QAAS,CAAC,IAAI,WAAW,CAAC,WAAW,CAAC,QAAS,CAAC,CAAC;IAElF,IAAI,YAAY,EAAE;QAChB,OAAO,cAAc,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;KACzC;IAED,IACE,CAAC,YAAY;QACb,kJAAkJ;QAClJ,oBAAoB;QACpB,uHAAuH;QACvH,0IAA0I;QAC1I,CAAC,YAAY,IAAI,GAAG,CAAC,QAAQ,CAAC,QAAQ,CAAC,CAAC,EACxC;QACA,OAAO,eAAe,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;KAC1C;IAED,OAAO,cAAc,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;AAC1C,CAAC;AAxBD,sCAwBC;AAED,SAAS,eAAe,CAAC,GAAW,EAAE,WAAmC;IACvE,MAAM,SAAS,GAAG,OAAO,CAAC,eAAe,CAAC,CAAC,KAAK,CAAC,GAAG,EAAE;QACpD,KAAK,EAAE,IAAI;QACX,UAAU,EAAE,WAAW,CAAC,UAAU;KACnC,CAAC,CAAC;IACH,OAAO,KAAK,CAAC,oBAAoB,CAAC,SAAS,EAAE,GAAG,EAAE,WAAW,CAAC,CAAC;AACjE,CAAC;AAED,SAAS,cAAc,CAAC,GAAW,EAAE,WAAmC;IACtE,OAAO,KAAK,CAAC,aAAa,CAAC,GAAG,EAAE,WAAW,CAAC,CAAC;AAC/C,CAAC"}
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/traveling/metro-config.d.ts b/node_modules/@expo/metro-config/build/traveling/metro-config.d.ts
+new file mode 100644
+index 0000000..39277c3
+--- /dev/null
++++ b/node_modules/@expo/metro-config/build/traveling/metro-config.d.ts
+@@ -0,0 +1,3 @@
++export declare function importMetroConfig(projectRoot: string): typeof import('metro-config') & {
++    getDefaultConfig: import('metro-config/src/defaults/index').default;
++};
+diff --git a/node_modules/@expo/metro-config/build/traveling/metro-config.js b/node_modules/@expo/metro-config/build/traveling/metro-config.js
+new file mode 100644
+index 0000000..f5e78f3
+--- /dev/null
++++ b/node_modules/@expo/metro-config/build/traveling/metro-config.js
+@@ -0,0 +1,18 @@
++"use strict";
++// This package needs to be imported from within the project to
++var __importDefault = (this && this.__importDefault) || function (mod) {
++    return (mod && mod.__esModule) ? mod : { "default": mod };
++};
++Object.defineProperty(exports, "__esModule", { value: true });
++exports.importMetroConfig = void 0;
++const resolve_from_1 = __importDefault(require("resolve-from"));
++// ensure that Metro can bundle the project's assets (see: `watchFolders`).
++function importMetroConfig(projectRoot) {
++    const modulePath = resolve_from_1.default.silent(projectRoot, 'metro-config');
++    if (!modulePath) {
++        return require('metro-config');
++    }
++    return require(modulePath);
++}
++exports.importMetroConfig = importMetroConfig;
++//# sourceMappingURL=metro-config.js.map
+\ No newline at end of file
+diff --git a/node_modules/@expo/metro-config/build/traveling/metro-config.js.map b/node_modules/@expo/metro-config/build/traveling/metro-config.js.map
+new file mode 100644
+index 0000000..f4ee888
+--- /dev/null
++++ b/node_modules/@expo/metro-config/build/traveling/metro-config.js.map
+@@ -0,0 +1 @@
++{"version":3,"file":"metro-config.js","sourceRoot":"","sources":["../../src/traveling/metro-config.ts"],"names":[],"mappings":";AAAA,+DAA+D;;;;;;AAE/D,gEAAuC;AAEvC,2EAA2E;AAC3E,SAAgB,iBAAiB,CAAC,WAAmB;IAGnD,MAAM,UAAU,GAAG,sBAAW,CAAC,MAAM,CAAC,WAAW,EAAE,cAAc,CAAC,CAAC;IAEnE,IAAI,CAAC,UAAU,EAAE;QACf,OAAO,OAAO,CAAC,cAAc,CAAC,CAAC;KAChC;IACD,OAAO,OAAO,CAAC,UAAU,CAAC,CAAC;AAC7B,CAAC;AATD,8CASC"}
+\ No newline at end of file
