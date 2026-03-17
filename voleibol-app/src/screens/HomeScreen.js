@@ -38,6 +38,7 @@ export default function HomeScreen({ navigation }) {
     navigation.navigate('TournamentDetail', {
       url: rankingUrl,
       title: tournament.name || 'Clasificación y calendario',
+      defaultTab: 'ranking',
     });
   };
 

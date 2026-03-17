@@ -7,26 +7,62 @@ const DomUtils = require('domutils');
 
 const BASE = 'https://fedvasvol.com';
 const ROOT_TOURNAMENTS = `${BASE}/es/tournaments`;
+const AJAX_TOURNAMENTS = `${BASE}/es/ajax/tournaments`;
 
 const outDir = path.join(process.cwd(), 'data');
 const mapPath = path.join(outDir, 'fedvas-site-map.json');
 const cachePath = path.join(outDir, 'fedvas-cache.json');
 
-async function fetchHtml(url) {
+function defaultHeaders(extra = {}) {
+  return {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml',
+    'Accept-Language': 'es-ES,es;q=0.9',
+    ...extra,
+  };
+}
+
+async function fetchHtml(url, config = {}) {
+  const { headers = {}, ...rest } = config;
   const { data } = await axios.get(url, {
     timeout: 30000,
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml',
-      'Accept-Language': 'es-ES,es;q=0.9',
-    },
+    headers: defaultHeaders(headers),
+    ...rest,
   });
   return data;
 }
 
 function parseDocument(html) {
   return htmlparser2.parseDocument(html);
+}
+
+function buildCookieHeader(setCookie = []) {
+  if (!Array.isArray(setCookie) || !setCookie.length) return '';
+  return setCookie
+    .map((item) => String(item || '').split(';')[0].trim())
+    .filter(Boolean)
+    .join('; ');
+}
+
+function extractHtmlFromResponseData(data) {
+  if (typeof data === 'string') return data;
+  if (!data || typeof data !== 'object') return String(data || '');
+
+  const queue = [data];
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || typeof current !== 'object') continue;
+
+    for (const value of Object.values(current)) {
+      if (typeof value === 'string' && /<\s*(div|table|tr|td|a)\b/i.test(value)) {
+        return value;
+      }
+      if (value && typeof value === 'object') queue.push(value);
+    }
+  }
+
+  return JSON.stringify(data);
 }
 
 function text(node) {
@@ -54,13 +90,39 @@ function seasonOptions(dom) {
     .filter((s) => s.id && /^\d+$/.test(s.id));
 }
 
+function extractCsrfToken(dom) {
+  const tokenInput = DomUtils.findOne(
+    (n) => n.type === 'tag' && n.name === 'input' && n.attribs?.name === 'csrf_token' && n.attribs?.value,
+    dom.children,
+    true
+  );
+  return (tokenInput?.attribs?.value || '').trim();
+}
+
+async function fetchTournamentsContext() {
+  const response = await axios.get(ROOT_TOURNAMENTS, {
+    timeout: 30000,
+    headers: defaultHeaders(),
+  });
+
+  const html = typeof response.data === 'string' ? response.data : String(response.data || '');
+  const dom = parseDocument(html);
+
+  return {
+    html,
+    dom,
+    csrfToken: extractCsrfToken(dom),
+    cookieHeader: buildCookieHeader(response.headers?.['set-cookie'] || []),
+  };
+}
+
 function tableRowsWithTournamentLink(dom) {
   const rows = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'tr', dom.children, true);
 
   const items = [];
   for (const row of rows) {
     const link = DomUtils.findOne(
-      (n) => n.type === 'tag' && n.name === 'a' && /\/es\/tournament\/\d+\/summary/i.test(n.attribs?.href || ''),
+      (n) => n.type === 'tag' && n.name === 'a' && /\/es\/tournament\/\d+\/(summary|information|ranking|calendar)/i.test(n.attribs?.href || ''),
       row.children || [],
       true
     );
@@ -83,10 +145,19 @@ function tableRowsWithTournamentLink(dom) {
       true
     );
 
+    const baseMatch = href.match(/^(https?:\/\/[^/]+\/[a-z]{2}\/tournament\/\d+)/i);
+    const tournamentBaseUrl = baseMatch?.[1] || '';
+    const summaryUrl = tournamentBaseUrl
+      ? `${tournamentBaseUrl}/summary`
+      : href.replace(/\/(ranking|information|calendar)(?:\/.*)?$/i, '/summary');
+    const rankingUrl = tournamentBaseUrl
+      ? `${tournamentBaseUrl}/ranking`
+      : href.replace(/\/(summary|information|calendar)(?:\/.*)?$/i, '/ranking');
+
     items.push({
       tournamentId: id,
-      summaryUrl: href,
-      rankingUrl: href.replace(/\/summary(?:\/.*)?$/i, '/ranking'),
+      summaryUrl,
+      rankingUrl,
       name: cellTexts[1] || cellTexts[0] || `Tournament ${id}`,
       seasonLabel: cellTexts[3] || null,
       category: cellTexts[4] || null,
@@ -140,10 +211,52 @@ function extractGroupLinks(html, tournamentId) {
   };
 }
 
+async function fetchSeasonTournamentsHtml(seasonId) {
+  const seasonUrl = `${ROOT_TOURNAMENTS}?season=${seasonId}`;
+  const html = await fetchHtml(seasonUrl);
+  const dom = parseDocument(html);
+  const tournaments = tableRowsWithTournamentLink(dom).map((t) => ({ ...t, seasonId }));
+  return {
+    sourceUrl: seasonUrl,
+    sourceMethod: 'html',
+    tournaments,
+  };
+}
+
+async function fetchSeasonTournamentsAjax(seasonId, csrfToken, cookieHeader = '') {
+  if (!csrfToken) {
+    throw new Error('Missing csrf_token for ajax discovery');
+  }
+
+  const payload = new URLSearchParams();
+  payload.append('csrf_token', csrfToken);
+  payload.append('season', String(seasonId));
+
+  const { data } = await axios.post(AJAX_TOURNAMENTS, payload.toString(), {
+    timeout: 30000,
+    headers: defaultHeaders({
+      'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+      'X-Requested-With': 'XMLHttpRequest',
+      Referer: ROOT_TOURNAMENTS,
+      Origin: BASE,
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    }),
+  });
+
+  const html = extractHtmlFromResponseData(data);
+  const dom = parseDocument(html);
+  const tournaments = tableRowsWithTournamentLink(dom).map((t) => ({ ...t, seasonId }));
+
+  return {
+    sourceUrl: AJAX_TOURNAMENTS,
+    sourceMethod: 'ajax',
+    tournaments,
+  };
+}
+
 async function discover(options = {}) {
-  const { limitSeasons = 0 } = options;
-  const rootHtml = await fetchHtml(ROOT_TOURNAMENTS);
-  const rootDom = parseDocument(rootHtml);
+  const { limitSeasons = 0, discoveryMethod = 'auto' } = options;
+  const { dom: rootDom, csrfToken, cookieHeader } = await fetchTournamentsContext();
 
   const seasons = seasonOptions(rootDom);
   const targetSeasons = limitSeasons > 0 ? seasons.slice(0, limitSeasons) : seasons;
@@ -156,16 +269,36 @@ async function discover(options = {}) {
   };
 
   for (const season of targetSeasons) {
-    const seasonUrl = `${ROOT_TOURNAMENTS}?season=${season.id}`;
     console.log(`[discover] season ${season.label} (${season.id})`);
-    const html = await fetchHtml(seasonUrl);
-    const dom = parseDocument(html);
-    const tournaments = tableRowsWithTournamentLink(dom).map((t) => ({ ...t, seasonId: season.id }));
+
+    let sourceMethod = 'html';
+    let sourceUrl = `${ROOT_TOURNAMENTS}?season=${season.id}`;
+    let tournaments = [];
+
+    const canUseAjax = discoveryMethod !== 'html' && Boolean(csrfToken);
+    if (canUseAjax) {
+      try {
+        const ajaxResult = await fetchSeasonTournamentsAjax(season.id, csrfToken, cookieHeader);
+        tournaments = ajaxResult.tournaments;
+        sourceMethod = ajaxResult.sourceMethod;
+        sourceUrl = ajaxResult.sourceUrl;
+      } catch (error) {
+        console.warn(`[discover] ajax fallback season ${season.id}: ${error.message}`);
+      }
+    }
+
+    if (!tournaments.length || discoveryMethod === 'html') {
+      const htmlResult = await fetchSeasonTournamentsHtml(season.id);
+      tournaments = htmlResult.tournaments;
+      sourceMethod = htmlResult.sourceMethod;
+      sourceUrl = htmlResult.sourceUrl;
+    }
 
     discovered.seasons.push({
       id: season.id,
       label: season.label,
-      url: seasonUrl,
+      url: sourceUrl,
+      method: sourceMethod,
       tournaments: tournaments.map((t) => t.tournamentId),
     });
 
@@ -229,6 +362,7 @@ async function syncSite(options = {}) {
   const {
     limitSeasons = 0,
     limitTournaments = 0,
+    discoveryMethod = 'auto',
     discoverOnly = false,
     writeFiles = true,
   } = options;
@@ -236,7 +370,7 @@ async function syncSite(options = {}) {
   try {
     if (writeFiles && !fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-    const discovered = await discover({ limitSeasons });
+    const discovered = await discover({ limitSeasons, discoveryMethod });
     if (writeFiles) {
       fs.writeFileSync(mapPath, JSON.stringify(discovered, null, 2), 'utf8');
       console.log(`[ok] site map -> ${mapPath}`);
@@ -296,11 +430,13 @@ async function runCli() {
   const limitSeasons = Number(getArg(args, 'limitSeasons', '0')) || 0;
   const limitTournaments = Number(getArg(args, 'limitTournaments', '0')) || 0;
   const discoverOnly = Boolean(getArg(args, 'discover', false));
+  const discoveryMethod = String(getArg(args, 'method', 'auto')).toLowerCase();
 
   try {
     await syncSite({
       limitSeasons,
       limitTournaments,
+      discoveryMethod,
       discoverOnly,
       writeFiles: true,
     });
@@ -316,6 +452,15 @@ if (require.main === module) {
 module.exports = {
   BASE,
   ROOT_TOURNAMENTS,
+  AJAX_TOURNAMENTS,
+  fetchHtml,
+  parseDocument,
+  seasonOptions,
+  extractCsrfToken,
+  fetchTournamentsContext,
+  tableRowsWithTournamentLink,
+  fetchSeasonTournamentsHtml,
+  fetchSeasonTournamentsAjax,
   discover,
   enrichTournament,
   syncSite,

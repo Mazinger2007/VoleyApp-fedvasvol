@@ -370,7 +370,7 @@ export default function RankingTableScreen({ route, navigation }) {
           </View>
 
           <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.exitButton} activeOpacity={0.85} onPress={() => navigation.goBack()}>
+            <TouchableOpacity style={styles.exitButton} activeOpacity={0.85} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}>
               <MaterialIcons name="fullscreen-exit" size={21} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>

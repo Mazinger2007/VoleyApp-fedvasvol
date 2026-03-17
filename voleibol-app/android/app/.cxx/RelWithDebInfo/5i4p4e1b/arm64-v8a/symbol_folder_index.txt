@@ -1,0 +1,1 @@
+C:\Users\hugog\Documents\Github\Voleibol\voleibol-app\android\app\build\intermediates\cxx\RelWithDebInfo\5i4p4e1b\obj\arm64-v8a

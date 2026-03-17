@@ -4,7 +4,7 @@
 // Cada pestaña corresponde a una pantalla principal.
 
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, Platform, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -24,6 +24,12 @@ import RankingTableScreen from './src/screens/RankingTableScreen';
 // ── Tema ─────────────────────────────────────────────────────────────────────
 import { Typography } from './src/styles/theme';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
+import { hydrateLogoColorCache } from './src/utils/logoColorCache';
+
+// Kick off AsyncStorage → memory hydration of logo colors immediately at module
+// load time, before any React tree renders. This means getCachedLogoColorSync
+// will return instant results for already-seen URLs.
+hydrateLogoColorCache();
 
 const Tab = createMaterialTopTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -70,31 +76,90 @@ const TAB_LABELS = {
   Profile: 'Perfil',
 };
 
+// COMPONENTE PERSONALIZADO PARA WEB
+// Evita el bug de la librería material-top-tabs (react-native-tab-view) 
+// que crashea al intentar usar interpolate() en campos undefined.
+function CustomWebTabBar({ state, descriptors, navigation }) {
+  const { colors: Colors } = useTheme();
+
+  return (
+    <View style={{
+      flexDirection: 'row',
+      backgroundColor: Colors.surface,
+      borderTopColor: Colors.border,
+      borderTopWidth: 1,
+      height: 64,
+      paddingBottom: 8,
+      paddingTop: 8,
+    }}>
+      {state.routes.map((route, index) => {
+        const { options } = descriptors[route.key];
+        const label = options.tabBarLabel !== undefined ? options.tabBarLabel : route.name;
+        const isFocused = state.index === index;
+
+        const onPress = () => {
+          const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+          });
+
+          if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+          }
+        };
+
+        return (
+          <TouchableOpacity
+            key={route.key}
+            onPress={onPress}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
+            activeOpacity={0.7}
+          >
+            <TabIcon routeName={route.name} focused={isFocused} colors={Colors} />
+            <Text style={{
+              color: isFocused ? Colors.primary : Colors.textMuted,
+              fontSize: 10,
+              fontWeight: '500',
+              marginTop: 4
+            }}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
 function MainTabs() {
   const { colors: Colors } = useTheme();
   return (
     <Tab.Navigator
+      tabBar={Platform.OS === 'web' ? (props) => <CustomWebTabBar {...props} /> : undefined}
       tabBarPosition="bottom"
       screenOptions={({ route }) => ({
         headerShown: false,
-        swipeEnabled: true,
-        animationEnabled: true,
+        swipeEnabled: Platform.OS !== 'web',
+        animationEnabled: Platform.OS !== 'web',
         lazy: true,
-        tabBarShowIcon: true,
-        tabBarIcon: ({ focused }) => (
+        // The material-top-tabs library has a bug on web where it crashes trying to animate/interpolate
+        // if certain props like icons or complex styles are present. We simplify for web.
+        tabBarShowIcon: Platform.OS !== 'web',
+        tabBarIcon: Platform.OS === 'web' ? undefined : ({ focused }) => (
           <TabIcon routeName={route.name} focused={focused} colors={Colors} />
         ),
         tabBarStyle: {
           backgroundColor: Colors.surface,
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: 68,
-          paddingBottom: 10,
-          paddingTop: 6,
+          height: Platform.OS === 'web' ? 50 : 68,
+          paddingBottom: Platform.OS === 'web' ? 0 : 10,
+          paddingTop: Platform.OS === 'web' ? 0 : 6,
         },
         tabBarIndicatorStyle: {
-          backgroundColor: 'transparent',
-          height: 0,
+          backgroundColor: Platform.OS === 'web' ? Colors.primary : 'transparent',
+          height: Platform.OS === 'web' ? 2 : 0,
         },
         tabBarPressColor: 'transparent',
         tabBarActiveTintColor: Colors.primary,

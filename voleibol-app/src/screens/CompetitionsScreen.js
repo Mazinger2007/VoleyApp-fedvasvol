@@ -77,6 +77,7 @@ export default function CompetitionsScreen({ navigation }) {
     navigation.navigate('TournamentDetail', {
       url: rankingUrl,
       title: tournament.name || 'ClasificaciÃ³n y calendario',
+      defaultTab: 'ranking',
     });
   };
   const styles = useMemo(() => StyleSheet.create({

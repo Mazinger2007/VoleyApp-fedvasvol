@@ -2,7 +2,8 @@
 // Contexto global de tema (claro / oscuro).
 // Usar useTheme() en cualquier componente para acceder a colors + toggleTheme.
 
-import React, { createContext, useContext, useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Paleta oscura (por defecto) ─────────────────────────────────────────────
 const darkColors = {
@@ -108,10 +109,21 @@ const ThemeContext = createContext({
 export function ThemeProvider({ children }) {
   const [isDark, setIsDark] = useState(true);
 
-  const toggleTheme = () => setIsDark((prev) => !prev);
+  useEffect(() => {
+    AsyncStorage.getItem('@theme_preference').then((val) => {
+      if (val !== null) setIsDark(val === 'dark');
+    });
+  }, []);
+
+  const toggleTheme = () => {
+    setIsDark((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem('@theme_preference', next ? 'dark' : 'light').catch(() => {});
+      return next;
+    });
+  };
 
   const colors = useMemo(() => (isDark ? darkColors : lightColors), [isDark]);
-
   const value = useMemo(() => ({ colors, isDark, toggleTheme }), [colors, isDark]);
 
   return (

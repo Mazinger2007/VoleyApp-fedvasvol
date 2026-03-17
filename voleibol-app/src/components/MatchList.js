@@ -15,6 +15,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getDominantBorderColor } from '../utils/imageColor';
+import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 
 /**
  * Convierte una fila de tabla en un objeto partido.
@@ -69,7 +70,7 @@ function parseMatchDateTime(rawDate) {
   const minutes = parseInt(timeM[2], 10);
 
   // DD/MM/YYYY or MM/DD/YYYY (también con guiones)
-  const fullM = s.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})\b/);
+  const fullM = s.match(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{4})\b/);
   if (fullM) {
     const a = parseInt(fullM[1], 10);
     const b = parseInt(fullM[2], 10);
@@ -158,20 +159,30 @@ function buildLogoCandidates(url = '') {
  * - Si el partido no ha empezado → upcoming
  */
 function computeMatchState(rawDate, explicitState, homeScore, awayScore) {
-  const home = Number(homeScore);
-  const away = Number(awayScore);
+  const home = Number(homeScore || 0);
+  const away = Number(awayScore || 0);
   if (home === 3 || away === 3) return 'finished';
+
+  // Explicit status from HTML icon/text is most reliable
+  const stateStr = String(explicitState || '').toLowerCase();
+  const isExplicitLive = /en\s*curso|live|directo/.test(stateStr);
+  const isExplicitFinal = /final|cerrad|terminad/.test(stateStr);
+
+  if (isExplicitLive) return 'live';
+  if (isExplicitFinal) return 'finished';
 
   const matchStart = parseMatchDateTime(rawDate);
   if (matchStart) {
     const now = new Date();
     if (now < matchStart) return 'upcoming';
+
+    // If it started more than 5 hours ago and we don't have an explicit 'live' status,
+    // we assume it's finished (likely stale data) to avoid showing 'EN CURSO' for old dates.
+    const hoursElapsed = (now - matchStart) / (1000 * 60 * 60);
+    if (hoursElapsed > 5) return 'finished';
+
     return 'live';
   }
-
-  // Fallback al estado explícito del HTML
-  if (/en\s*curso|live|directo/i.test(explicitState || '')) return 'live';
-  if (/final|cerrad|terminad/i.test(explicitState || '')) return 'finished';
 
   return 'upcoming';
 }
@@ -222,8 +233,8 @@ function MatchCard({ match, headers, onPress }) {
   const awayLogoCandidates = useMemo(() => buildLogoCandidates(summary.awayLogo), [summary.awayLogo]);
   const [homeLogoIndex, setHomeLogoIndex] = useState(0);
   const [awayLogoIndex, setAwayLogoIndex] = useState(0);
-  const [homeLogoBgColor, setHomeLogoBgColor] = useState('#ffffff');
-  const [awayLogoBgColor, setAwayLogoBgColor] = useState('#ffffff');
+  const [homeLogoBgColor, setHomeLogoBgColor] = useState(() => getCachedLogoColorSync(homeLogoCandidates[0]) || '#ffffff');
+  const [awayLogoBgColor, setAwayLogoBgColor] = useState(() => getCachedLogoColorSync(awayLogoCandidates[0]) || '#ffffff');
 
   useEffect(() => {
     setHomeLogoIndex(0);
@@ -234,31 +245,29 @@ function MatchCard({ match, headers, onPress }) {
   const awayLogoUri = awayLogoCandidates[awayLogoIndex] || null;
 
   useEffect(() => {
+    if (!homeLogoUri) { setHomeLogoBgColor(Colors.surfaceAlt); return; }
+    // Synchronous lookup first (after hydration this is instant)
+    const cached = getCachedLogoColorSync(homeLogoUri);
+    if (cached) { setHomeLogoBgColor(cached); }
+    // Queue extraction if not yet computed; subscribe for when it arrives
+    requestLogoColorExtraction(homeLogoUri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!homeLogoUri) {
-        if (mounted) setHomeLogoBgColor(Colors.surfaceAlt);
-        return;
-      }
-      const color = await getDominantBorderColor(homeLogoUri);
-      if (mounted) setHomeLogoBgColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
+    const unsubscribe = subscribeToLogoColor(homeLogoUri, (color) => {
+      if (mounted && color) setHomeLogoBgColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
   }, [homeLogoUri, Colors.surfaceAlt]);
 
   useEffect(() => {
+    if (!awayLogoUri) { setAwayLogoBgColor(Colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(awayLogoUri);
+    if (cached) { setAwayLogoBgColor(cached); }
+    requestLogoColorExtraction(awayLogoUri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!awayLogoUri) {
-        if (mounted) setAwayLogoBgColor(Colors.surfaceAlt);
-        return;
-      }
-      const color = await getDominantBorderColor(awayLogoUri);
-      if (mounted) setAwayLogoBgColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
+    const unsubscribe = subscribeToLogoColor(awayLogoUri, (color) => {
+      if (mounted && color) setAwayLogoBgColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
   }, [awayLogoUri, Colors.surfaceAlt]);
 
   const pillStyle = state === 'live'

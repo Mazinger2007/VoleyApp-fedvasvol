@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { fetchHTML, toAbsoluteUrl } from '../utils/htmlParser';
+import { toAbsoluteUrl } from '../utils/htmlParser';
 import { getDominantBorderColor } from '../utils/imageColor';
 import { Colors, Spacing, Typography, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -75,18 +75,6 @@ function extractPlayers(blocks = []) {
     if (players.length > 0) break;
   }
   return players;
-}
-
-function pickProfileImageFromHtml(html = '') {
-  const imgTags = [...String(html).matchAll(/<img[^>]+(?:src|data-src)=['\"]([^'\"]+)['\"][^>]*>/gi)];
-  if (!imgTags.length) return null;
-
-  const urls = imgTags
-    .map((m) => toAbsoluteUrl(m[1] || ''))
-    .filter(Boolean);
-
-  const preferred = urls.find((u) => /player|jugador|profile|avatar|thumbnail/i.test(u));
-  return preferred || urls[0] || null;
 }
 
 function buildImageSizeCandidates(url = '') {
@@ -379,18 +367,7 @@ export default function TeamDetailScreen({ route, navigation }) {
 
                   if (localPhoto || !player.profileUrl) return;
 
-                  try {
-                    setLoadingPlayerImage(true);
-                    const html = await fetchHTML(player.profileUrl);
-                    const remoteImage = pickProfileImageFromHtml(html);
-                    if (remoteImage) {
-                      setPlayerImageCache((prev) => ({ ...prev, [player.name]: remoteImage }));
-                      setSelectedPlayer({ name: player.name, image: remoteImage });
-                    }
-                  } catch (_) {
-                  } finally {
-                    setLoadingPlayerImage(false);
-                  }
+                  setLoadingPlayerImage(false);
                 }}
               >
                 <View style={styles.playerAvatar}>

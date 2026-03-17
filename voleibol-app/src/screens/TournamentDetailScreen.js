@@ -4,6 +4,7 @@ import {
   Linking, Alert, Platform, PanResponder, Animated, Easing, useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import PagerView from '../components/PagerViewWrapper';
 import * as Calendar from 'expo-calendar';
 import { MaterialIcons } from '@expo/vector-icons';
 import CompetitionTable from '../components/CompetitionTable';
@@ -11,12 +12,14 @@ import MatchList from '../components/MatchList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
+import { useLivePolling } from '../hooks/useLivePolling';
 import {
   discoverCalendarUrlFromRanking,
   discoverTournamentSeasonLabel,
   toTournamentRankingUrl,
 } from '../utils/htmlParser';
 import { getDominantBorderColor } from '../utils/imageColor';
+import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -24,15 +27,12 @@ function ensureCalendarAllUrl(value = '') {
   if (!value) return value;
   const clean = value.replace(/\/+$/, '');
   if (/\/calendar\/\d+\/all$/i.test(clean)) return clean;
-  if (/\/calendar\/\d+$/i.test(clean)) return `${clean}/all`;
+  if (/\/calendar\/\d+$/i.test(clean)) return clean;
   return clean;
 }
 
 function getPreferredCalendarUrl(rankingUrl = '', fallback = '') {
   const tournament = rankingUrl.match(/^(https?:\/\/[^/]+\/[a-z]{2}\/tournament\/\d+)/i)?.[1] || '';
-  if (/\/tournament\/1315743$/i.test(tournament)) {
-    return 'https://fedvasvol.com/en/tournament/1315743/calendar/3637244/all';
-  }
   return ensureCalendarAllUrl(fallback || `${tournament}/calendar`);
 }
 
@@ -144,9 +144,18 @@ export default function TournamentDetailScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenWidth } = useWindowDimensions();
-  const { url, title, defaultTab } = route.params || {};
+  const { url, title, defaultTab, season } = route.params || {};
+
+  // Construct URLs with season if present
+  const getUrlWithSeason = (baseUrl) => {
+    if (!season || !baseUrl) return baseUrl;
+    const urlObj = new URL(baseUrl);
+    urlObj.searchParams.set('season', season);
+    return urlObj.toString();
+  };
+
   const [activeTab, setActiveTab] = useState(defaultTab || 'ranking');
-  const [resolvedCalendarUrl, setResolvedCalendarUrl] = useState(null);
+  const pagerRef = useRef(null);
   const [expandedCalendar, setExpandedCalendar] = useState({});
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [modalHomeLogoIndex, setModalHomeLogoIndex] = useState(0);
@@ -157,60 +166,17 @@ export default function TournamentDetailScreen({ route, navigation }) {
   const [reminderSaved, setReminderSaved] = useState(false);
   const [reminderLoading, setReminderLoading] = useState(false);
   const [seasonLabel, setSeasonLabel] = useState(null);
-  const initialMainX = (defaultTab || 'ranking') === 'calendar' ? -screenWidth : 0;
-  const mainSlideX = useRef(new Animated.Value(initialMainX)).current;
+  const [resolvedCalendarUrl, setResolvedCalendarUrl] = useState(null);
   const modalSlideX = useRef(new Animated.Value(0)).current;
-  const mainGestureStartX = useRef(0);
   const modalGestureStartX = useRef(0);
 
   const switchTab = useCallback((nextTab) => {
     if (!nextTab || nextTab === activeTab) return;
     setActiveTab(nextTab);
-    Animated.timing(mainSlideX, {
-      toValue: nextTab === 'calendar' ? -screenWidth : 0,
-      duration: 260,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [activeTab, mainSlideX, screenWidth]);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) =>
-      Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
-    onPanResponderGrant: () => {
-      mainSlideX.stopAnimation((value) => {
-        mainGestureStartX.current = value;
-      });
-    },
-    onPanResponderMove: (_, gesture) => {
-      const minX = -screenWidth;
-      const maxX = 0;
-      const next = Math.max(minX, Math.min(maxX, mainGestureStartX.current + gesture.dx));
-      mainSlideX.setValue(next);
-    },
-    onPanResponderRelease: (_, gesture) => {
-      const shouldGoCalendar = (gesture.dx < -50 || (gesture.dx < -24 && gesture.vx < -0.45)) && activeTab === 'ranking';
-      const shouldGoRanking = (gesture.dx > 50 || (gesture.dx > 24 && gesture.vx > 0.45)) && activeTab === 'calendar';
-      const nextTab = shouldGoCalendar ? 'calendar' : shouldGoRanking ? 'ranking' : activeTab;
-      const targetX = nextTab === 'calendar' ? -screenWidth : 0;
-      Animated.timing(mainSlideX, {
-        toValue: targetX,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-      if (nextTab !== activeTab) setActiveTab(nextTab);
-    },
-    onPanResponderTerminate: () => {
-      const targetX = activeTab === 'calendar' ? -screenWidth : 0;
-      Animated.timing(mainSlideX, {
-        toValue: targetX,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    },
-  }), [activeTab, mainSlideX, screenWidth]);
+    if (pagerRef.current) {
+      pagerRef.current.setPage(nextTab === 'ranking' ? 0 : 1);
+    }
+  }, [activeTab]);
 
   const modalPanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gesture) =>
@@ -250,7 +216,8 @@ export default function TournamentDetailScreen({ route, navigation }) {
     },
   }), [modalSlideX, modalTab, screenWidth]);
 
-  const rankingUrl = useMemo(() => toTournamentRankingUrl(url), [url]);
+  const rankingUrl = useMemo(() => getUrlWithSeason(toTournamentRankingUrl(url)), [url, season]);
+  
   const {
     blocks: rankingBlocks,
     loading: rankingLoading,
@@ -271,27 +238,25 @@ export default function TournamentDetailScreen({ route, navigation }) {
 
     const match = rankingUrl.match(/^(https?:\/\/[^/]+\/[a-z]{2}\/tournament\/\d+)/i);
     return match ? `${match[1]}/calendar` : null;
-  }, [rankingBlocks]);
+  }, [rankingBlocks, rankingUrl]);
 
   useEffect(() => {
     let mounted = true;
 
     async function resolveCalendar() {
       if (calendarUrlFromBlocks && /\/calendar\/\d+/i.test(calendarUrlFromBlocks)) {
-        if (mounted) setResolvedCalendarUrl(getPreferredCalendarUrl(rankingUrl, calendarUrlFromBlocks));
+        if (mounted) setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks));
         return;
       }
 
       try {
         const discovered = await discoverCalendarUrlFromRanking(rankingUrl);
         if (mounted) {
-          const preferred = getPreferredCalendarUrl(rankingUrl, discovered || calendarUrlFromBlocks || null);
-          setResolvedCalendarUrl(preferred || null);
+          setResolvedCalendarUrl(getUrlWithSeason(discovered || calendarUrlFromBlocks || null));
         }
       } catch (_) {
         if (mounted) {
-          const preferred = getPreferredCalendarUrl(rankingUrl, calendarUrlFromBlocks || null);
-          setResolvedCalendarUrl(preferred || null);
+          setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks || null));
         }
       }
     }
@@ -301,11 +266,25 @@ export default function TournamentDetailScreen({ route, navigation }) {
     return () => {
       mounted = false;
     };
-  }, [calendarUrlFromBlocks, rankingUrl]);
+  }, [calendarUrlFromBlocks, rankingUrl, season]);
+
+  const {
+    blocks: calendarBlocksRaw,
+    loading: calendarLoading,
+    error: calendarError,
+    refresh: refreshCalendar,
+  } = useFetch(resolvedCalendarUrl);
+
+  // Live match polling — automatically starts only when EN CURSO matches detected,
+  // updates calendarBlocks in place without full re-render of parent.
+  const [liveCalendarBlocks, setLiveCalendarBlocks] = useState(null);
+  useLivePolling(resolvedCalendarUrl, calendarBlocksRaw, setLiveCalendarBlocks, refreshRanking);
+
+  // Use live-updated blocks if available, else use fetched blocks
+  const calendarBlocks = liveCalendarBlocks || calendarBlocksRaw;
 
   useEffect(() => {
     let mounted = true;
-
     async function resolveSeason() {
       try {
         const discoveredSeason = await discoverTournamentSeasonLabel(rankingUrl);
@@ -314,20 +293,28 @@ export default function TournamentDetailScreen({ route, navigation }) {
         if (mounted) setSeasonLabel(null);
       }
     }
-
     resolveSeason();
-
-    return () => {
-      mounted = false;
-    };
+    return () => { mounted = false; };
   }, [rankingUrl]);
 
-  const {
-    blocks: calendarBlocks,
-    loading: calendarLoading,
-    error: calendarError,
-    refresh: refreshCalendar,
-  } = useFetch(resolvedCalendarUrl);
+  // Cache logo colors directly reading from rankingBlocks once available
+  useEffect(() => {
+    if (!rankingBlocks?.length) return;
+    const logos = [];
+    for (const block of rankingBlocks) {
+      if (block?.rowLogos && Array.isArray(block.rowLogos)) {
+        for (const logo of block.rowLogos) {
+          if (logo && !logos.includes(logo)) logos.push(logo);
+        }
+      }
+      if (block?.rowImages && Array.isArray(block.rowImages)) {
+        for (const logo of block.rowImages) {
+          if (logo && !logos.includes(logo)) logos.push(logo);
+        }
+      }
+    }
+    if (logos.length) ensureLogoColorsCached(logos, getDominantBorderColor);
+  }, [rankingBlocks]);
 
   const rankingTables = useMemo(
     () => (rankingBlocks || []).filter((b) => b.type === 'table'),
@@ -346,7 +333,7 @@ export default function TournamentDetailScreen({ route, navigation }) {
       const next = {};
       calendarTables.forEach((_, i) => {
         const key = `jornada-${i}`;
-        next[key] = prev[key] ?? i === 0;
+        next[key] = prev[key] ?? false;
       });
       return next;
     });
@@ -363,17 +350,38 @@ export default function TournamentDetailScreen({ route, navigation }) {
       }));
   }, [selectedMatch]);
 
-  const toggleCalendarSection = (index) => {
+  const toggleCalendarSection = useCallback((index) => {
     const key = `jornada-${index}`;
     setExpandedCalendar((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  }, []);
 
-  const openMatchModal = (match) => {
+  const openMatchModal = useCallback((match) => {
     if (!match) return;
     setSelectedMatch(match);
     setModalTab('details');
     setReminderSaved(false);
-  };
+  }, []);
+
+  // OPTIMIZACIÓN: Callbacks estables para evitar re-render de tablas
+  const handlePressTeam = useCallback((teamName, teamUrl, teamLogo, leagueStats) => {
+    navigation.navigate('TeamDetail', {
+      teamName,
+      teamUrl,
+      teamLogo,
+      tournamentTitle: title,
+      leagueStats,
+      pointsScoredTotal: sumTeamPointsScored(calendarTables, teamName),
+      calendarUrl: resolvedCalendarUrl,
+    });
+  }, [navigation, title, calendarTables, resolvedCalendarUrl]);
+
+  const handlePressExpand = useCallback((tableBlock, tableTitle) => {
+    navigation.navigate('RankingTable', {
+      tableBlock,
+      title: tableTitle || title || 'Clasificación',
+      subtitle: seasonLabel || 'Datos oficiales de la federación',
+    });
+  }, [navigation, title, seasonLabel]);
 
   const openTeamFromMatch = (side = 'home') => {
     if (!selectedMatch) return;
@@ -454,33 +462,30 @@ export default function TournamentDetailScreen({ route, navigation }) {
     setModalAwayLogoIndex(0);
   }, [selectedMatch?.homeLogo, selectedMatch?.awayLogo]);
 
+  // --- NUEVO: Usar caché persistente para los colores de los logos en el modal ---
   useEffect(() => {
+    if (!modalHomeLogoUri) { setHomeLogoCenterColor(Colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(modalHomeLogoUri);
+    if (cached) setHomeLogoCenterColor(cached);
+    requestLogoColorExtraction(modalHomeLogoUri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!modalHomeLogoUri) {
-        if (mounted) setHomeLogoCenterColor('#ffffff');
-        return;
-      }
-      const color = await getDominantBorderColor(modalHomeLogoUri);
-      if (mounted) setHomeLogoCenterColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
-  }, [modalHomeLogoUri]);
+    const unsubscribe = subscribeToLogoColor(modalHomeLogoUri, (color) => {
+      if (mounted && color) setHomeLogoCenterColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
+  }, [modalHomeLogoUri, Colors.surfaceAlt]);
 
   useEffect(() => {
+    if (!modalAwayLogoUri) { setAwayLogoCenterColor(Colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(modalAwayLogoUri);
+    if (cached) setAwayLogoCenterColor(cached);
+    requestLogoColorExtraction(modalAwayLogoUri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!modalAwayLogoUri) {
-        if (mounted) setAwayLogoCenterColor('#ffffff');
-        return;
-      }
-      const color = await getDominantBorderColor(modalAwayLogoUri);
-      if (mounted) setAwayLogoCenterColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
-  }, [modalAwayLogoUri]);
+    const unsubscribe = subscribeToLogoColor(modalAwayLogoUri, (color) => {
+      if (mounted && color) setAwayLogoCenterColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
+  }, [modalAwayLogoUri, Colors.surfaceAlt]);
 
   // ── Open venue in maps app ─────────────────────────────────────────────
   const openMaps = (venue) => {
@@ -556,84 +561,6 @@ export default function TournamentDetailScreen({ route, navigation }) {
     }
   };
 
-  if (rankingLoading) return <LoadingView message="Cargando clasificación..." />;
-  if (rankingError) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
-
-  const renderRankingContent = () => {
-    if (rankingTables.length > 0) {
-      return rankingTables.map((table, i) => (
-        <CompetitionTable
-          key={`ranking-${i}`}
-          tableBlock={table}
-          title={seasonLabel
-            ? (i > 0 ? `${seasonLabel} · Grupo ${i}` : seasonLabel)
-            : (i > 0 ? `Grupo ${i}` : undefined)}
-          onPressTeam={(teamName, teamUrl, teamLogo, leagueStats) =>
-            navigation.navigate('TeamDetail', {
-              teamName,
-              teamUrl,
-              teamLogo,
-              tournamentTitle: title,
-              leagueStats,
-              pointsScoredTotal: sumTeamPointsScored(calendarTables, teamName),
-              calendarUrl: resolvedCalendarUrl,
-            })
-          }
-          onPressExpand={(tableBlock, tableTitle) =>
-            navigation.navigate('RankingTable', {
-              tableBlock,
-              title: tableTitle || title || 'Clasificación',
-              subtitle: seasonLabel || 'Datos oficiales de la federación',
-            })
-          }
-        />
-      ));
-    }
-
-    return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="emoji-events" size={44} color={Colors.textMuted} />
-        <Text style={styles.emptyText}>No se encontró clasificación para este torneo.</Text>
-      </View>
-    );
-  };
-
-  const renderCalendarContent = () => {
-    if (calendarTables.length > 0) {
-      return calendarTables.map((table, i) => {
-        const jornada = calendarTables.length - i;
-        const sectionKey = `jornada-${i}`;
-        const isOpen = !!expandedCalendar[sectionKey];
-        return (
-          <View key={`calendar-${i}`} style={styles.calendarBlock}>
-            <TouchableOpacity
-              style={styles.calendarTitleBtn}
-              activeOpacity={0.84}
-              onPress={() => toggleCalendarSection(i)}
-            >
-              <Text style={styles.calendarTitle}>Jornada {jornada}</Text>
-              <MaterialIcons name={isOpen ? 'expand-less' : 'expand-more'} size={22} color={Colors.primary} />
-            </TouchableOpacity>
-
-            {isOpen ? (
-              <MatchList
-                tableBlock={table}
-                onPressMatch={openMatchModal}
-              />
-            ) : null}
-          </View>
-        );
-      });
-    }
-
-    return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
-        <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
-      </View>
-    );
-  };
-
   const TABS = [
     { key: 'ranking', label: 'Clasificación' },
     { key: 'calendar', label: 'Calendario' },
@@ -663,6 +590,9 @@ export default function TournamentDetailScreen({ route, navigation }) {
     tabUnderline: { height: 3, width: '100%', borderRadius: 2, backgroundColor: 'transparent' },
     tabUnderlineActive: { backgroundColor: Colors.primary },
     mainPagerClip: { flex: 1, overflow: 'hidden' },
+    tabScene: { ...StyleSheet.absoluteFillObject },
+    tabSceneVisible: { opacity: 1 },
+    tabSceneHidden: { opacity: 0 },
     mainPagerTrack: { flex: 1, flexDirection: 'row' },
     mainPage: { flex: 1 },
     scroll: { flex: 1, backgroundColor: Colors.background },
@@ -731,17 +661,17 @@ export default function TournamentDetailScreen({ route, navigation }) {
       paddingBottom: insets.bottom > 0 ? insets.bottom : Spacing.md,
       borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background,
     },
-    modalFooterBtn: { backgroundColor: Colors.primary, borderRadius: Radius.lg, paddingVertical: Spacing.md + 4, alignItems: 'center', shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4 },
+    modalFooterBtn: { backgroundColor: Colors.primary, borderRadius: Radius.lg, paddingVertical: Spacing.md + 4, alignItems: 'center', shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4, ...(Platform.OS === 'web' && { boxShadow: `0 4px 8px ${Colors.primary}4D` }) },
     modalFooterBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
     // Map tab
     mapPlaceholder: { height: 220, backgroundColor: isDark ? '#0c1929' : '#b8cfe2', margin: Spacing.md, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    mapPinCircle: { width: 64, height: 64, borderRadius: Radius.full, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center', shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6 },
+    mapPinCircle: { width: 64, height: 64, borderRadius: Radius.full, backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center', shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 6, ...(Platform.OS === 'web' && { boxShadow: `0 4px 12px ${Colors.primary}66` }) },
     mapInfoSection: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
     mapTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Spacing.md, marginBottom: Spacing.lg },
     mapVenueTitle: { color: Colors.textPrimary, fontSize: Typography.size.xxl, fontWeight: Typography.weight.bold, letterSpacing: -0.5 },
     mapSportsBadge: { backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.xl, padding: Spacing.md },
     mapBtns: { gap: Spacing.sm },
-    mapPrimaryBtn: { backgroundColor: Colors.primary, borderRadius: Radius.xl, paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 3 },
+    mapPrimaryBtn: { backgroundColor: Colors.primary, borderRadius: Radius.xl, paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, shadowColor: Colors.primary, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 3, ...(Platform.OS === 'web' && { boxShadow: `0 4px 8px ${Colors.primary}40` }) },
     mapPrimaryBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
     mapSecondaryBtn: { backgroundColor: Colors.surfaceAlt, borderRadius: Radius.xl, paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
     mapSecondaryBtnText: { color: Colors.textPrimary, fontWeight: Typography.weight.semiBold, fontSize: Typography.size.md },
@@ -750,13 +680,77 @@ export default function TournamentDetailScreen({ route, navigation }) {
     mapFooterTextBtnText: { color: Colors.textMuted, fontWeight: Typography.weight.bold, fontSize: Typography.size.sm, letterSpacing: 2 },
   });
 
+  // OPTIMIZACIÓN: Memoizar contenido para evitar bloqueo en Android (7s lag)
+  const rankingContent = useMemo(() => {
+    if (rankingTables.length > 0) {
+      return rankingTables.map((table, i) => (
+        <CompetitionTable
+          key={`ranking-${i}`}
+          tableBlock={table}
+          title={seasonLabel
+            ? (rankingTables.length > 1 ? `${seasonLabel} · Grupo ${i + 1}` : seasonLabel)
+            : (rankingTables.length > 1 ? `Grupo ${i + 1}` : undefined)}
+          onPressTeam={handlePressTeam}
+          onPressExpand={handlePressExpand}
+        />
+      ));
+    }
+    return (
+      <View style={styles.emptyWrap}>
+        <MaterialIcons name="emoji-events" size={44} color={Colors.textMuted} />
+        <Text style={styles.emptyText}>No se encontró clasificación para este torneo.</Text>
+      </View>
+    );
+  }, [rankingTables, seasonLabel, handlePressTeam, handlePressExpand, Colors]);
+
+  const calendarContent = useMemo(() => {
+    if (calendarTables.length > 0) {
+      return calendarTables.map((table, i) => {
+        const jornada = calendarTables.length - i;
+        const sectionKey = `jornada-${i}`;
+        const isOpen = !!expandedCalendar[sectionKey];
+
+        return (
+          <View key={`calendar-${i}`} style={styles.calendarBlock}>
+            <TouchableOpacity
+              style={styles.calendarTitleBtn}
+              activeOpacity={0.84}
+              onPress={() => toggleCalendarSection(i)}
+            >
+              <Text style={styles.calendarTitle}>
+                {table.title || `Jornada ${jornada}`}
+              </Text>
+              <MaterialIcons name={isOpen ? 'expand-less' : 'expand-more'} size={22} color={Colors.primary} />
+            </TouchableOpacity>
+
+            {isOpen ? (
+              <MatchList
+                tableBlock={table}
+                onPressMatch={openMatchModal}
+              />
+            ) : null}
+          </View>
+        );
+      });
+    }
+    return (
+      <View style={styles.emptyWrap}>
+        <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
+        <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
+      </View>
+    );
+  }, [calendarTables, expandedCalendar, Colors, openMatchModal, toggleCalendarSection]);
+
+  if (rankingLoading) return <LoadingView message="Cargando clasificación..." />;
+  if (rankingError) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
 
       {/* Header with back + title */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
           <MaterialIcons name="arrow-back" size={22} color={Colors.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -783,60 +777,61 @@ export default function TournamentDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         ))}
       </View>
-      <View style={styles.mainPagerClip} {...panResponder.panHandlers}>
-        <Animated.View
-          style={[
-            styles.mainPagerTrack,
-            {
-              width: screenWidth * 2,
-              transform: [{ translateX: mainSlideX }],
-            },
-          ]}
-        >
-          <View style={[styles.mainPage, { width: screenWidth }]}>
-            <ScrollView
-              style={styles.scroll}
-              refreshControl={
-                <RefreshControl
-                  refreshing={rankingLoading}
-                  onRefresh={refreshRanking}
-                  colors={[Colors.primary]}
-                  tintColor={Colors.primary}
-                />
-              }
-            >
-              {renderRankingContent()}
-              <View style={{ height: Spacing.xxxl }} />
-            </ScrollView>
-          </View>
+      <PagerView
+        ref={pagerRef}
+        style={{ flex: 1 }}
+        initialPage={defaultTab === 'calendar' ? 1 : 0}
+        onPageSelected={(e) => {
+          setActiveTab(e.nativeEvent.position === 0 ? 'ranking' : 'calendar');
+        }}
+      >
+        <View key="0" style={styles.mainPage}>
+          <ScrollView
+            style={styles.scroll}
+            refreshControl={
+              <RefreshControl
+                refreshing={rankingLoading}
+                onRefresh={refreshRanking}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
+              />
+            }
+          >
+            {rankingContent}
+            <View style={{ height: Spacing.xxxl }} />
+          </ScrollView>
+        </View>
 
-          <View style={[styles.mainPage, { width: screenWidth }]}>
-            <ScrollView
-              style={styles.scroll}
-              refreshControl={
-                <RefreshControl
-                  refreshing={calendarLoading}
-                  onRefresh={refreshCalendar}
-                  colors={[Colors.primary]}
-                  tintColor={Colors.primary}
-                />
-              }
-            >
-              {calendarError ? (
-                <View style={styles.emptyWrap}>
-                  <Text style={styles.emptyText}>{calendarError}</Text>
-                  <TouchableOpacity style={styles.retryBtn} onPress={refreshCalendar}>
-                    <Text style={styles.retryText}>Reintentar</Text>
-                  </TouchableOpacity>
-                </View>
-              ) : (
-                renderCalendarContent()
-              )}
-              <View style={{ height: Spacing.xxxl }} />
-            </ScrollView>
-          </View>
-        </Animated.View>
-      </View>
+        <View key="1" style={styles.mainPage}>
+          <ScrollView
+            style={styles.scroll}
+            refreshControl={
+              <RefreshControl
+                refreshing={calendarLoading}
+                onRefresh={refreshCalendar}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
+              />
+            }
+          >
+            {calendarLoading ? (
+              <View style={styles.emptyWrap}>
+                <LoadingView message="Cargando calendario..." />
+              </View>
+            ) : calendarError ? (
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>{calendarError}</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={refreshCalendar}>
+                  <Text style={styles.retryText}>Reintentar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              calendarContent
+            )}
+            <View style={{ height: Spacing.xxxl }} />
+          </ScrollView>
+        </View>
+      </PagerView>
 
       {selectedMatch ? (
         <View style={styles.modalRoot}>

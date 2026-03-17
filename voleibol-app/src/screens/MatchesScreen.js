@@ -36,10 +36,24 @@ export default function MatchesScreen({ navigation }) {
   const { colors: Colors } = useTheme();
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [selectedSeason, setSelectedSeason] = useState(null);
+  const [availableSeasons, setAvailableSeasons] = useState([]);
 
-  const { blocks, loading, error, refresh } = useFetch(URLS.home);
+  const fetchUrl = useMemo(() => {
+    if (!selectedSeason) return URLS.home;
+    return `${URLS.home}?season=${selectedSeason}`;
+  }, [selectedSeason]);
+
+  const { blocks, loading, error, refresh } = useFetch(fetchUrl);
 
   const tournamentTable = useMemo(() => {
+    // Extract seasons metadata if present
+    const seasonsBlock = blocks.find(b => b.type === 'seasons');
+    if (seasonsBlock && availableSeasons.length === 0) {
+      setAvailableSeasons(seasonsBlock.items);
+      if (!selectedSeason) setSelectedSeason(seasonsBlock.current);
+    }
+
     const tables = blocks.filter((b) => b.type === 'table');
     return tables[0] || null;
   }, [blocks]);
@@ -78,6 +92,7 @@ export default function MatchesScreen({ navigation }) {
       url: rankingUrl,
       title: leagueName,
       defaultTab: 'ranking',
+      season: selectedSeason,
     });
   };
 
@@ -169,6 +184,21 @@ export default function MatchesScreen({ navigation }) {
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
+          {availableSeasons.length > 0 && (
+            <View style={{ flexDirection: 'row', borderRightWidth: 1, borderRightColor: Colors.border, paddingRight: Spacing.sm, marginRight: Spacing.sm }}>
+              {availableSeasons.map((s) => (
+                <TouchableOpacity
+                  key={s.value}
+                  style={[styles.chip, selectedSeason === s.value && { backgroundColor: Colors.primaryDark }]}
+                  activeOpacity={0.85}
+                  onPress={() => setSelectedSeason(s.value)}
+                >
+                  <Text style={[styles.chipText, selectedSeason === s.value && styles.chipTextActive]}>{s.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           {FILTERS.map((f) => (
             <TouchableOpacity
               key={f.key}

@@ -9,6 +9,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getDominantBorderColor } from '../utils/imageColor';
+import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 
 function getInitials(name = '') {
   return name
@@ -93,21 +94,19 @@ function buildLogoCandidates(url = '') {
 function TeamLogo({ teamLogo, initials, Colors }) {
   const candidates = useMemo(() => buildLogoCandidates(teamLogo), [teamLogo]);
   const [index, setIndex] = useState(0);
-  const [bgColor, setBgColor] = useState('#ffffff');
+  const [bgColor, setBgColor] = useState(() => getCachedLogoColorSync(candidates[0]) || '#ffffff');
   const uri = candidates[index] || null;
 
   useEffect(() => {
+    if (!uri) { setBgColor(Colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(uri);
+    if (cached) { setBgColor(cached); }
+    requestLogoColorExtraction(uri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!uri) {
-        if (mounted) setBgColor(Colors.surfaceAlt);
-        return;
-      }
-      const color = await getDominantBorderColor(uri);
-      if (mounted) setBgColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
+    const unsubscribe = subscribeToLogoColor(uri, (color) => {
+      if (mounted && color) setBgColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
   }, [uri, Colors.surfaceAlt]);
 
   return (
