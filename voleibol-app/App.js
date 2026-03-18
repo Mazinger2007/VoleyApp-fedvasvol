@@ -38,42 +38,44 @@ const Stack = createNativeStackNavigator();
 function TabIcon({ routeName, focused, colors }) {
   const iconColor = focused ? colors.primary : colors.textMuted;
 
-  if (routeName === 'Matches') {
-    return (
-      <View style={[iconStyles.wrap, focused && { backgroundColor: colors.primaryAlpha15 }]}>
-        <MaterialCommunityIcons name="volleyball" size={22} color={iconColor} />
-      </View>
-    );
-  }
-
   const iconByRoute = {
-    Competitions: 'emoji-events',
-    Teams: 'groups',
-    Profile: 'person',
+    Matches: 'emoji-events',
+    Competitions: 'beach-access',
+    Teams: 'newspaper',
+    Profile: 'settings',
   };
 
   return (
-    <View style={[iconStyles.wrap, focused && { backgroundColor: colors.primaryAlpha15 }]}>
-      <MaterialIcons name={iconByRoute[routeName] || 'circle'} size={22} color={iconColor} />
+    <View style={iconStyles.wrap}>
+      <MaterialIcons name={iconByRoute[routeName] || 'circle'} size={24} color={iconColor} />
+      {focused && <View style={[iconStyles.dot, { backgroundColor: colors.primary }]} />}
     </View>
   );
 }
 
 const iconStyles = StyleSheet.create({
   wrap: {
-    width: 32,
+    width: 48,
     height: 32,
-    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
+    marginBottom: 2,
+  },
+  dot: {
+    position: 'absolute',
+    bottom: -6,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
   },
 });
 
 const TAB_LABELS = {
-  Matches: 'Partidos',
-  Competitions: 'Ligas',
-  Teams: 'Equipos',
-  Profile: 'Perfil',
+  Matches: 'LIGAS',
+  Competitions: 'VOLEY PLAYA',
+  Teams: 'NOTICIAS',
+  Profile: 'AJUSTES',
 };
 
 // COMPONENTE PERSONALIZADO PARA WEB
@@ -133,7 +135,7 @@ function CustomWebTabBar({ state, descriptors, navigation }) {
 }
 
 function MainTabs() {
-  const { colors: Colors } = useTheme();
+  const { colors: Colors, isDark } = useTheme();
   return (
     <Tab.Navigator
       tabBar={Platform.OS === 'web' ? (props) => <CustomWebTabBar {...props} /> : undefined}
@@ -150,12 +152,17 @@ function MainTabs() {
           <TabIcon routeName={route.name} focused={focused} colors={Colors} />
         ),
         tabBarStyle: {
-          backgroundColor: Colors.surface,
+          backgroundColor: isDark ? 'rgba(15,25,35,0.95)' : 'rgba(255,255,255,0.95)',
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: Platform.OS === 'web' ? 50 : 68,
-          paddingBottom: Platform.OS === 'web' ? 0 : 10,
-          paddingTop: Platform.OS === 'web' ? 0 : 6,
+          height: Platform.OS === 'web' ? 60 : 76,
+          paddingBottom: Platform.OS === 'web' ? 0 : 24,
+          paddingTop: Platform.OS === 'web' ? 0 : 8,
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          elevation: 0,
         },
         tabBarIndicatorStyle: {
           backgroundColor: Platform.OS === 'web' ? Colors.primary : 'transparent',
@@ -231,11 +238,16 @@ function AppContent() {
 
 const styles = StyleSheet.create({
   tabLabel: {
-    fontSize: Typography.size.xs,
-    fontWeight: Typography.weight.medium,
-    marginTop: 2,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 6,
+    textTransform: 'uppercase',
+    letterSpacing: -0.5,
+    textAlign: 'center',
   },
   tabItem: {
-    paddingTop: 4,
+    paddingTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

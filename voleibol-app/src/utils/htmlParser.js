@@ -238,7 +238,7 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
     return extractHtmlFromAjaxData(response.data);
   } catch (error) {
     const elapsed = Date.now() - start;
-    console.error('[AJAX] ✗ FAILED in', `${elapsed}ms`, {
+    console.log('[AJAX] ✗ FAILED in', `${elapsed}ms`, {
       type: params.type,
       error: error.message,
       status: error.response?.status,
@@ -616,7 +616,7 @@ export async function fetchHTML(url) {
     return response.data;
   } catch (error) {
     const elapsed = Date.now() - start;
-    console.error('[HTML] ✗ FAILED in', `${elapsed}ms`, {
+    console.log('[HTML] ✗ FAILED in', `${elapsed}ms`, {
       error: error.message,
     });
     throw new Error(`Error descargando ${url}: ${error.message}`);

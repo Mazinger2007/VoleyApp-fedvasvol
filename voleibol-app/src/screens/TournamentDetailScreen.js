@@ -571,24 +571,19 @@ export default function TournamentDetailScreen({ route, navigation }) {
     header: {
       flexDirection: 'row', alignItems: 'center',
       paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
-      borderBottomWidth: 1, borderBottomColor: Colors.border,
       backgroundColor: Colors.background,
     },
     backBtn: {
-      width: 38, height: 38, borderRadius: Radius.full,
+      width: 40, height: 40,
       justifyContent: 'center', alignItems: 'center',
-      backgroundColor: Colors.surfaceAlt,
-      borderWidth: 1,
-      borderColor: Colors.border,
+      backgroundColor: 'transparent',
     },
-    backIcon: { color: Colors.textPrimary, fontSize: 24, fontWeight: Typography.weight.bold, lineHeight: 28, textAlign: 'center' },
-    headerTitle: { flex: 1, color: Colors.textPrimary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', paddingHorizontal: Spacing.sm, letterSpacing: -0.2 },
+    headerTitle: { flex: 1, color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', paddingHorizontal: Spacing.sm, letterSpacing: -0.2 },
     tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: 0, alignItems: 'center' },
-    tabLabel: { color: Colors.textMuted, fontSize: Typography.size.md, fontWeight: Typography.weight.bold, paddingBottom: Spacing.sm },
-    tabLabelActive: { color: Colors.primary, fontWeight: Typography.weight.bold },
-    tabUnderline: { height: 3, width: '100%', borderRadius: 2, backgroundColor: 'transparent' },
-    tabUnderlineActive: { backgroundColor: Colors.primary },
+    tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: 'transparent' },
+    tabItemActive: { borderBottomColor: Colors.primary },
+    tabLabel: { color: Colors.textMuted, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
+    tabLabelActive: { color: isDark ? Colors.textOnPrimary : Colors.primary, fontWeight: Typography.weight.bold },
     mainPagerClip: { flex: 1, overflow: 'hidden' },
     tabScene: { ...StyleSheet.absoluteFillObject },
     tabSceneVisible: { opacity: 1 },
@@ -751,13 +746,13 @@ export default function TournamentDetailScreen({ route, navigation }) {
       {/* Header with back + title */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
-          <MaterialIcons name="arrow-back" size={22} color={Colors.textPrimary} />
+          <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title || 'Torneo'}
         </Text>
         <TouchableOpacity style={styles.backBtn} activeOpacity={0.7}>
-          <MaterialIcons name="search" size={22} color={Colors.textPrimary} />
+          <MaterialIcons name="search" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
       </View>
 
@@ -766,14 +761,13 @@ export default function TournamentDetailScreen({ route, navigation }) {
         {TABS.map((tab) => (
           <TouchableOpacity
             key={tab.key}
-            style={styles.tabItem}
+            style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
             onPress={() => switchTab(tab.key)}
             activeOpacity={0.8}
           >
             <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
               {tab.label}
             </Text>
-            <View style={[styles.tabUnderline, activeTab === tab.key && styles.tabUnderlineActive]} />
           </TouchableOpacity>
         ))}
       </View>

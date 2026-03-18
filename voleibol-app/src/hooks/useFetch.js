@@ -67,7 +67,7 @@ export function useFetch(url) {
     } catch (err) {
       if (latestRequestTokenRef.current === nextToken) {
         const elapsed = Date.now() - start;
-        console.error('[useFetch] ✗ Failed in', `${elapsed}ms`, { error: err.message });
+        console.log('[useFetch] ✗ Failed in', `${elapsed}ms`, { error: err.message });
         setError(err.message || 'Error desconocido');
       }
     } finally {
