@@ -20,6 +20,8 @@ import ProfileScreen from './src/screens/ProfileScreen';
 import TournamentDetailScreen from './src/screens/TournamentDetailScreen';
 import TeamDetailScreen from './src/screens/TeamDetailScreen';
 import RankingTableScreen from './src/screens/RankingTableScreen';
+import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
+import MatchDetailScreen from './src/screens/MatchDetailScreen';
 
 // ── Tema ─────────────────────────────────────────────────────────────────────
 import { Typography } from './src/styles/theme';
@@ -230,6 +232,8 @@ function AppContent() {
           <Stack.Screen name="TournamentDetail" component={TournamentDetailScreen} />
           <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
           <Stack.Screen name="RankingTable" component={RankingTableScreen} />
+          <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
+          <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
@@ -246,6 +250,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   tabItem: {
+    flex: 1,
     paddingTop: 8,
     alignItems: 'center',
     justifyContent: 'center',

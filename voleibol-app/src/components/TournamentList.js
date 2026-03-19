@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Image } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Spacing, Typography, Radius, Shadow } from '../styles/theme';
+import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
 import { toTournamentRankingUrl } from '../utils/htmlParser';
@@ -124,7 +124,11 @@ function TournamentCard({ item, onPress }) {
         padding: Spacing.xl,
         borderWidth: 1,
         borderColor: 'rgba(13,143,242,0.05)',
-        ...Shadow.sm,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        elevation: 2,
       }}
       activeOpacity={0.8}
       onPress={onPress}
@@ -139,8 +143,38 @@ function TournamentCard({ item, onPress }) {
           </View>
           
           {!!status && (
-            <View style={{ backgroundColor: isDark ? '#334155' : '#f8fafc', paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.sm, borderWidth: 1, borderColor: isDark ? '#475569' : '#e2e8f0' }}>
-              <Text style={{ color: isDark ? '#cbd5e1' : '#64748b', fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }}>
+            <View style={{
+              backgroundColor: /curso|activo|activado/i.test(status) 
+                ? 'rgba(34,197,94,0.1)' 
+                : /finalizad|terminad|fin$|^fin\s/i.test(status) 
+                  ? 'rgba(148,163,184,0.1)' 
+                  : /configurando/i.test(status)
+                    ? 'rgba(59,130,246,0.1)'
+                    : isDark ? '#334155' : '#f8fafc',
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: Radius.sm,
+              borderWidth: 1,
+              borderColor: /curso|activo|activado/i.test(status)
+                ? 'rgba(34,197,94,0.2)'
+                : /finalizad|terminad|fin$|^fin\s/i.test(status)
+                  ? 'rgba(148,163,184,0.2)'
+                  : /configurando/i.test(status)
+                    ? 'rgba(59,130,246,0.2)'
+                    : isDark ? '#475569' : '#e2e8f0'
+            }}>
+              <Text style={{
+                color: /curso|activo|activado/i.test(status)
+                  ? '#22c55e'
+                : /finalizad|terminad|fin$|^fin\s|finalizada/i.test(status)
+                  ? '#94a3b8'
+                    : /configurando/i.test(status)
+                      ? '#3b82f6'
+                      : isDark ? '#cbd5e1' : '#64748b',
+                fontSize: 10,
+                fontWeight: '800',
+                textTransform: 'uppercase'
+              }}>
                 {status.replace(/^Estado:\s*/i, '')}
               </Text>
             </View>

@@ -126,11 +126,11 @@ let processingScheduled = false;
 function scheduleProcessing() {
   if (processingScheduled || isProcessingQueue) return;
   processingScheduled = true;
-  // Wait 1.5s before starting so the UI has finished its first render
+  // Wait 200ms before starting so the UI has finished its first render
   setTimeout(() => {
     processingScheduled = false;
     processExtractionQueue();
-  }, 1500);
+  }, 200);
 }
 
 async function processExtractionQueue() {
@@ -158,9 +158,9 @@ async function processExtractionQueue() {
         }
       }
 
-      // Yield 600ms between each extraction to keep the JS thread free for touches
+      // Yield 100ms between each extraction to keep the JS thread free for touches
       if (extractionQueue.length > 0) {
-        await new Promise((resolve) => setTimeout(resolve, 600));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
   } finally {

@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   Image,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -23,7 +24,7 @@ import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColo
  * @param {string[]} row    - Celdas de la fila
  * @param {string[]} headers - Cabeceras de la tabla
  */
-function rowToMatch(row, headers) {
+export function rowToMatch(row, headers) {
   const obj = {};
   headers.forEach((h, i) => {
     obj[h.toLowerCase().trim()] = row[i] || '';
@@ -55,26 +56,21 @@ function getMatchField(match, ...keys) {
  * Intenta construir un objeto Date a partir de la cadena de fecha raw.
  * Admite: DD/MM/YYYY, DD-MM-YYYY, DD/MM (año actual) y prefijos de día.
  */
-function parseMatchDateTime(rawDate) {
+export function parseMatchDateTime(rawDate) {
   if (!rawDate) return null;
   const s = String(rawDate);
 
-  const nativeParsed = new Date(s);
-  if (!Number.isNaN(nativeParsed.getTime())) {
-    return nativeParsed;
-  }
+  const timeM = s.match(/(\d{1,2}):(\d{2})/);
+  const hours = timeM ? parseInt(timeM[1], 10) : 0;
+  const minutes = timeM ? parseInt(timeM[2], 10) : 0;
 
-  const timeM = s.match(/\b(\d{1,2}):(\d{2})\b/);
-  if (!timeM) return null;
-  const hours = parseInt(timeM[1], 10);
-  const minutes = parseInt(timeM[2], 10);
-
-  // DD/MM/YYYY or MM/DD/YYYY (también con guiones)
-  const fullM = s.match(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{4})\b/);
+  // DD/MM/YYYY o DD/MM/YY
+  const fullM = s.match(/(\d{1,2})\s*[\/-]\s*(\d{1,2})\s*[\/-]\s*(\d{2,4})/);
   if (fullM) {
     const a = parseInt(fullM[1], 10);
     const b = parseInt(fullM[2], 10);
-    const year = parseInt(fullM[3], 10);
+    let year = parseInt(fullM[3], 10);
+    if (year < 100) year += 2000;
 
     let day = a;
     let month = b;
@@ -91,8 +87,8 @@ function parseMatchDateTime(rawDate) {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // DD/MM (no year → current year)
-  const shortM = s.match(/\b(\d{1,2})[\/-](\d{1,2})\b/);
+  // DD/MM (sin año → año actual)
+  const shortM = s.match(/(\d{1,2})[\/-](\d{1,2})/);
   if (shortM) {
     const now = new Date();
     const d = new Date(now.getFullYear(), parseInt(shortM[2], 10) - 1, parseInt(shortM[1], 10), hours, minutes);
@@ -100,17 +96,18 @@ function parseMatchDateTime(rawDate) {
   }
 
   // Solo hora (ej: "20:00") -> hoy
-  const today = new Date();
-  const d = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-    hours,
-    minutes,
-    0,
-    0
-  );
-  return isNaN(d.getTime()) ? null : d;
+  if (timeM) {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hours, minutes);
+  }
+
+  // Fallback a parseo nativo (ISO u otros)
+  const nativeParsed = new Date(s);
+  if (!Number.isNaN(nativeParsed.getTime())) {
+    return nativeParsed;
+  }
+
+  return null;
 }
 
 function pad2(value) {
@@ -145,6 +142,7 @@ function buildLogoCandidates(url = '') {
   if (!url) return [];
   const base = stripLogoResolution(url);
   return [
+    withLogoResolution(base, 200),
     base,
     withLogoResolution(base, 120),
     withLogoResolution(base, 60),
@@ -158,7 +156,7 @@ function buildLogoCandidates(url = '') {
  * - Si el partido ya empezó y nadie tiene 3 → live
  * - Si el partido no ha empezado → upcoming
  */
-function computeMatchState(rawDate, explicitState, homeScore, awayScore) {
+export function computeMatchState(rawDate, explicitState, homeScore, awayScore) {
   const home = Number(homeScore || 0);
   const away = Number(awayScore || 0);
   if (home === 3 || away === 3) return 'finished';
@@ -176,44 +174,79 @@ function computeMatchState(rawDate, explicitState, homeScore, awayScore) {
     const now = new Date();
     if (now < matchStart) return 'upcoming';
 
-    // If it started more than 5 hours ago and we don't have an explicit 'live' status,
-    // we assume it's finished (likely stale data) to avoid showing 'EN CURSO' for old dates.
-    const hoursElapsed = (now - matchStart) / (1000 * 60 * 60);
-    if (hoursElapsed > 5) return 'finished';
+    // If it's today, it's live until 3 sets are reached
+    const sameDay = matchStart.getFullYear() === now.getFullYear() &&
+                    matchStart.getMonth() === now.getMonth() &&
+                    matchStart.getDate() === now.getDate();
+    
+    if (sameDay) return 'live';
 
-    return 'live';
+    // For past days, we assume it's finished even if sets aren't 3 (to avoid stale 'live')
+    return 'finished';
   }
 
   return 'upcoming';
 }
 
-function getMatchSummary(match = {}) {
+const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+export function formatMatchDisplayDate(rawDate, isLive = false) {
+  if (isLive) return 'EN DIRECTO';
+  const dateObj = parseMatchDateTime(rawDate);
+  if (!dateObj) return rawDate || 'Por definir';
+  const day = dateObj.getDate();
+  const month = SPANISH_MONTHS[dateObj.getMonth()];
+  return `${day} ${month}`;
+}
+
+export function formatMatchTime(rawDate, timeStr) {
+  const d = parseMatchDateTime(rawDate);
+  if (!d) return timeStr || '--:--';
+  if (timeStr) {
+    const parts = String(timeStr).split(':').map(Number);
+    if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
+      d.setHours(parts[0], parts[1], 0);
+    }
+  }
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+export function getMatchSummary(match = {}) {
+  if (match.dateLabel !== undefined && match.state !== undefined) {
+    return match;
+  }
+
   const structured = match.homeTeam && match.awayTeam;
   const homeTeam = structured ? match.homeTeam : getMatchField(match, 'local', 'equipo a', 'home');
-  const awayTeam = structured ? match.awayTeam : getMatchField(match, 'visitante', 'equipo b', 'away', 'visit');
-  const homeLogo = structured ? (match.homeLogo || null) : null;
-  const awayLogo = structured ? (match.awayLogo || null) : null;
-  const dateRaw = structured ? match.date : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
+  const awayTeam = structured ? match.awayTeam : getMatchField(match, 'visitante', 'equipo b', 'away');
+  
+  const rawDate = structured ? match.date : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
   const venue = structured ? match.venue : getMatchField(match, 'pabell', 'pista', 'lugar', 'sede', 'venue');
   const explicitState = getMatchField(match, 'estado', 'status');
+  
   const resultRaw = structured
     ? [match.matchScore?.home, match.matchScore?.away].every((v) => v !== null && v !== undefined && v !== '')
       ? `${match.matchScore.home}-${match.matchScore.away}`
       : null
     : getMatchField(match, 'resultado', 'marcador', 'result', 'sets');
 
-  const score = resultRaw ? parseNumericScore(resultRaw) : null;
-  const timeMatch = String(dateRaw || '').match(/\b\d{1,2}:\d{2}\b/);
-  const time = timeMatch?.[0] || null;
-  const state = computeMatchState(dateRaw, explicitState, score?.home ?? null, score?.away ?? null);
-  const dateLabel = formatDateDMY(dateRaw);
-  const weekdayLabel = formatWeekdayEs(dateRaw);
+  const score = resultRaw ? parseNumericScore(resultRaw) : { home: null, away: null };
+  const timeMatch = String(rawDate || '').match(/\b\d{1,2}:\d{2}\b/);
+  const rawTime = structured ? (match.time || timeMatch?.[0] || null) : (timeMatch?.[0] || null);
+  
+  const state = computeMatchState(rawDate, explicitState, score?.home ?? null, score?.away ?? null);
+  const isLive = state === 'live';
+  
+  // Use formatting helpers
+  const time = formatMatchTime(rawDate, rawTime);
+  const dateLabel = isLive ? 'EN DIRECTO' : formatMatchDisplayDate(rawDate);
+  const weekdayLabel = formatWeekdayEs(rawDate);
 
   return {
     homeTeam: homeTeam || 'Local',
     awayTeam: awayTeam || 'Visitante',
-    homeLogo,
-    awayLogo,
+    homeLogo: match.homeLogo || null,
+    awayLogo: match.awayLogo || null,
     time,
     venue: venue || 'Sede por confirmar',
     state,
@@ -221,12 +254,14 @@ function getMatchSummary(match = {}) {
     weekdayLabel,
     homeScore: score?.home ?? null,
     awayScore: score?.away ?? null,
-    rawDate: dateRaw || null,
+    rawDate: rawDate || null,
+    sets: match.sets || [],
   };
 }
 
 function MatchCard({ match, headers, onPress }) {
-  const { colors: Colors } = useTheme();
+  const navigation = useNavigation();
+  const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);
   const { state } = summary;
   const homeLogoCandidates = useMemo(() => buildLogoCandidates(summary.homeLogo), [summary.homeLogo]);
@@ -293,14 +328,21 @@ function MatchCard({ match, headers, onPress }) {
 
   return (
     <TouchableOpacity
-      style={{ backgroundColor: Colors.surface, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden', ...Shadow.sm }}
+      style={{ 
+        backgroundColor: state === 'live' ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : Colors.surface, 
+        borderRadius: Radius.lg, 
+        borderWidth: 1, 
+        borderColor: state === 'live' ? 'rgba(239, 68, 68, 0.3)' : Colors.border,
+        borderLeftWidth: state === 'live' ? 6 : 0,
+        borderLeftColor: '#ef4444',
+        overflow: 'hidden', 
+        ...Shadow.sm 
+      }}
       activeOpacity={0.88}
-      onPress={() => onPress?.({
-        ...match,
-        ...summary,
-        homeLogo: summary.homeLogo || match.homeLogo || null,
-        awayLogo: summary.awayLogo || match.awayLogo || null,
-      })}
+      onPress={() => {
+        if (onPress) onPress(match);
+        navigation.navigate('MatchDetail', { match: { ...match, ...summary } });
+      }}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.md, paddingTop: Spacing.md, paddingBottom: Spacing.sm }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, flexWrap: 'wrap', flex: 1, paddingRight: Spacing.sm }}>
@@ -311,7 +353,7 @@ function MatchCard({ match, headers, onPress }) {
             </Text>
           </View>
           <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.medium }} numberOfLines={1}>
-            {summary.dateLabel || 'Fecha pendiente'}{summary.time ? `, ${summary.time}` : ''}
+            {summary.time}{summary.time && summary.dateLabel ? ' · ' : ''}{summary.dateLabel || 'Fecha pendiente'}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, maxWidth: '42%' }}>

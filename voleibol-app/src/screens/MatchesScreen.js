@@ -217,7 +217,7 @@ export default function MatchesScreen({ navigation }) {
       <View style={styles.headerWrap}>
         <View style={styles.topRow}>
           <View style={styles.leftGroup}>
-            <Text style={styles.headerTitle}><Text style={{ fontWeight: 'bold' }}>Federación Vasca de Voleibol</Text></Text>
+            <Text style={styles.headerTitle}><Text style={{ fontWeight: 'bold' }}>Ligas</Text></Text>
           </View>
 
           <TouchableOpacity style={styles.calendarBtn} activeOpacity={0.8} onPress={() => setShowSeasons(!showSeasons)}>

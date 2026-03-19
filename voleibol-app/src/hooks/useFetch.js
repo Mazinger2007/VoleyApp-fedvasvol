@@ -41,7 +41,6 @@ export function useFetch(url) {
       return;
     }
 
-    console.log('[useFetch] → Loading', url);
     const start = Date.now();
     setLoading(true);
     setError(null);
@@ -60,14 +59,12 @@ export function useFetch(url) {
       const result = await pending;
       if (latestRequestTokenRef.current === nextToken) {
         const elapsed = Date.now() - start;
-        console.log('[useFetch] ✓ Loaded in', `${elapsed}ms`, { blocks: result.length });
         resultCache.set(url, result);
         setBlocks(result);
       }
     } catch (err) {
       if (latestRequestTokenRef.current === nextToken) {
         const elapsed = Date.now() - start;
-        console.log('[useFetch] ✗ Failed in', `${elapsed}ms`, { error: err.message });
         setError(err.message || 'Error desconocido');
       }
     } finally {

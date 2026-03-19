@@ -49,33 +49,6 @@ function dedup(s = '') {
  * Extrae jugadores de los bloques parseados.
  * Busca tablas que tengan columnas de nombre y partidos jugados.
  */
-function extractPlayers(blocks = []) {
-  const players = [];
-  for (const block of blocks) {
-    if (block.type !== 'table') continue;
-    const headers = block.headers || [];
-    const nameIdx = headers.findIndex((h) =>
-      /(nombre|jugadora|jugador|player)/i.test(h)
-    );
-    const pjIdx = headers.findIndex((h) =>
-      /(pj|jugados|played|partidos)/i.test(h)
-    );
-    if (nameIdx < 0) continue;
-
-    for (const [idx, row] of (block.rows || []).entries()) {
-      const raw = row[nameIdx] || '';
-      const name = dedup(raw.replace(/^Ver\s*/i, '').trim());
-      if (!name || name.length < 2) continue;
-
-      const pj = pjIdx >= 0 ? (parseInt(row[pjIdx], 10) || 0) : null;
-      const photo = block.rowImages?.[idx] || null;
-      const profileUrl = block.rowLinks?.[idx] || null;
-      players.push({ name, played: pj, photo, profileUrl });
-    }
-    if (players.length > 0) break;
-  }
-  return players;
-}
 
 function buildImageSizeCandidates(url = '') {
   const raw = String(url || '').trim();
@@ -155,13 +128,8 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   const { blocks, loading, error, refresh } = useFetch(teamUrl || null);
   const { blocks: calendarBlocks } = useFetch(calendarUrl || null);
-  const [selectedPlayer, setSelectedPlayer] = useState(null);
-  const [loadingPlayerImage, setLoadingPlayerImage] = useState(false);
-  const [playerImageCache, setPlayerImageCache] = useState({});
-  const [imageStepByKey, setImageStepByKey] = useState({});
   const [teamLogoBgColor, setTeamLogoBgColor] = useState('#ffffff');
 
-  const players = useMemo(() => extractPlayers(blocks), [blocks]);
 
   const initials = useMemo(() => getInitials(teamName), [teamName]);
   const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogo), [teamLogo]);
@@ -190,22 +158,6 @@ export default function TeamDetailScreen({ route, navigation }) {
     pointsScored: Number.isFinite(pointsScoredTotal) ? pointsScoredTotal : pointsFromCalendar,
   }), [leagueStatsFromRoute, pointsScoredTotal, pointsFromCalendar]);
 
-  const getImageUriForKey = (baseUrl, key) => {
-    const candidates = buildImageSizeCandidates(baseUrl);
-    if (!candidates.length) return null;
-    const step = imageStepByKey[key] || 0;
-    return candidates[Math.min(step, candidates.length - 1)] || null;
-  };
-
-  const moveToNextImageSize = (baseUrl, key) => {
-    const candidates = buildImageSizeCandidates(baseUrl);
-    if (candidates.length <= 1) return;
-    setImageStepByKey((prev) => {
-      const current = prev[key] || 0;
-      if (current >= candidates.length - 1) return prev;
-      return { ...prev, [key]: current + 1 };
-    });
-  };
 
   if (loading) return <LoadingView message={`Cargando ${teamName}…`} />;
 
@@ -232,23 +184,7 @@ export default function TeamDetailScreen({ route, navigation }) {
     errorBanner: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: Spacing.lg, marginBottom: Spacing.md, backgroundColor: 'rgba(220,50,50,0.12)', borderRadius: Radius.md, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, borderWidth: 1, borderColor: 'rgba(220,50,50,0.25)' },
     errorText: { color: '#f87171', fontSize: Typography.size.sm, flex: 1 },
     retryText: { color: Colors.primary, fontSize: Typography.size.sm, fontWeight: Typography.weight.semiBold, marginLeft: Spacing.md },
-    section: { marginHorizontal: Spacing.sm, marginBottom: Spacing.xl, backgroundColor: Colors.surface, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderBottomLeftRadius: Radius.xl, borderBottomRightRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
-    sectionTitle: { color: Colors.textPrimary, fontSize: Typography.size.md, fontWeight: Typography.weight.bold, padding: Spacing.lg, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    tableHeaderRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, backgroundColor: Colors.surfaceAlt, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    thCell: { color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 0.5 },
-    playerRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, gap: Spacing.md, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: Colors.border },
-    playerRowAlt: { backgroundColor: Colors.surfaceAlt },
-    playerAvatar: { width: 32, height: 32, borderRadius: Radius.full, backgroundColor: Colors.surfaceAlt, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: Colors.border },
-    playerAvatarText: { color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold },
-    playerName: { flex: 1, color: Colors.textSecondary, fontSize: Typography.size.sm, fontWeight: Typography.weight.medium },
-    playerPj: { width: 56, textAlign: 'center', color: Colors.textMuted, fontSize: Typography.size.sm },
-    selectedPlayerCard: { marginHorizontal: Spacing.sm, marginBottom: Spacing.md, backgroundColor: Colors.surface, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, padding: Spacing.md, flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
-    selectedPlayerPhoto: { width: 56, height: 56, borderRadius: Radius.full, backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border },
-    selectedPlayerName: { color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
-    selectedPlayerMeta: { color: Colors.textMuted, fontSize: Typography.size.xs, marginTop: 2 },
-    emptyWrap: { padding: Spacing.xxxl, alignItems: 'center', gap: Spacing.md },
-    emptyIcon: { fontSize: 44 },
-    emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
+    section: { marginHorizontal: Spacing.sm, marginBottom: Spacing.xl, backgroundColor: Colors.surface, borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
   });
 
   return (
@@ -317,84 +253,6 @@ export default function TeamDetailScreen({ route, navigation }) {
           </View>
         ) : null}
 
-        {/* Players roster */}
-        {players.length > 0 ? (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Plantilla ({players.length})</Text>
-
-            {selectedPlayer ? (
-              <View style={styles.selectedPlayerCard}>
-                {getImageUriForKey(selectedPlayer.image, `selected:${selectedPlayer.name}`) ? (
-                  <Image
-                    source={{ uri: getImageUriForKey(selectedPlayer.image, `selected:${selectedPlayer.name}`) }}
-                    style={styles.selectedPlayerPhoto}
-                    resizeMode="cover"
-                    onError={() => moveToNextImageSize(selectedPlayer.image, `selected:${selectedPlayer.name}`)}
-                  />
-                ) : (
-                  <View style={[styles.selectedPlayerPhoto, { justifyContent: 'center', alignItems: 'center' }]}>
-                    <Text style={styles.playerAvatarText}>{getInitials(selectedPlayer.name)}</Text>
-                  </View>
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.selectedPlayerName} numberOfLines={1}>{selectedPlayer.name}</Text>
-                  <Text style={styles.selectedPlayerMeta} numberOfLines={1}>
-                    {loadingPlayerImage ? 'Cargando imagen…' : selectedPlayer.image ? 'Imagen cargada' : 'Sin imagen disponible'}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
-
-            {/* Header row */}
-            <View style={styles.tableHeaderRow}>
-              <Text style={[styles.thCell, { flex: 1 }]}>Jugadora / Jugador</Text>
-              {players[0]?.played !== null && (
-                <Text style={[styles.thCell, { width: 56, textAlign: 'center' }]}>PJ</Text>
-              )}
-            </View>
-
-            {players.map((player, i) => (
-              <TouchableOpacity
-                key={i}
-                style={[styles.playerRow, i % 2 === 0 && styles.playerRowAlt]}
-                activeOpacity={0.72}
-                onPress={async () => {
-                  const cached = playerImageCache[player.name] || null;
-                  const localPhoto = player.photo || cached;
-
-                  setSelectedPlayer({ name: player.name, image: localPhoto || null });
-                  setImageStepByKey((prev) => ({ ...prev, [`selected:${player.name}`]: 0 }));
-
-                  if (localPhoto || !player.profileUrl) return;
-
-                  setLoadingPlayerImage(false);
-                }}
-              >
-                <View style={styles.playerAvatar}>
-                  {getImageUriForKey(player.photo || playerImageCache[player.name] || null, `row:${player.name}:${i}`) ? (
-                    <Image
-                      source={{ uri: getImageUriForKey(player.photo || playerImageCache[player.name] || null, `row:${player.name}:${i}`) }}
-                      style={{ width: 26, height: 26, borderRadius: Radius.full }}
-                      resizeMode="cover"
-                      onError={() => moveToNextImageSize(player.photo || playerImageCache[player.name] || null, `row:${player.name}:${i}`)}
-                    />
-                  ) : (
-                    <Text style={styles.playerAvatarText}>{getInitials(player.name)}</Text>
-                  )}
-                </View>
-                <Text style={styles.playerName} numberOfLines={1}>{player.name}</Text>
-                {player.played !== null && (
-                  <Text style={styles.playerPj}>{player.played}</Text>
-                )}
-              </TouchableOpacity>
-            ))}
-          </View>
-        ) : !error ? (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyIcon}>👤</Text>
-            <Text style={styles.emptyText}>No se encontró plantilla para este equipo.</Text>
-          </View>
-        ) : null}
 
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>

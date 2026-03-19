@@ -8,7 +8,7 @@ import PagerView from '../components/PagerViewWrapper';
 import * as Calendar from 'expo-calendar';
 import { MaterialIcons } from '@expo/vector-icons';
 import CompetitionTable from '../components/CompetitionTable';
-import MatchList from '../components/MatchList';
+import MatchList, { parseMatchDateTime, getMatchSummary, formatMatchDisplayDate } from '../components/MatchList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
@@ -51,6 +51,7 @@ function buildLogoCandidates(url = '') {
   if (!url) return [];
   const base = stripLogoResolution(url);
   return [
+    withLogoResolution(base, 200),
     base,
     withLogoResolution(base, 120),
     withLogoResolution(base, 60),
@@ -138,6 +139,77 @@ function sumTeamPointsScored(calendarTables = [], teamName = '') {
       return sum + (isHome ? score.home : score.away);
     }, 0);
   }, 0);
+}
+
+
+function FeaturedMatch({ match, onPress }) {
+  if (!match) return null;
+  const { colors: Colors, isDark } = useTheme();
+  const summary = getMatchSummary(match);
+  const { state, homeTeam, awayTeam, homeScore, awayScore, venue, time, dateLabel } = summary;
+
+  return (
+    <View style={{ padding: Spacing.lg, paddingBottom: 0 }}>
+      <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, marginBottom: Spacing.md }}>
+        Partido Destacado
+      </Text>
+      <TouchableOpacity
+        activeOpacity={0.9}
+        onPress={() => onPress(match)}
+        style={{
+          backgroundColor: isDark ? '#1e293b' : '#ffffff',
+          borderRadius: Radius.xl,
+          overflow: 'hidden',
+          borderWidth: 1,
+          borderColor: 'rgba(13,143,242,0.1)',
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
+          elevation: 5,
+        }}
+      >
+        <View style={{ height: 160, backgroundColor: Colors.surfaceAlt, overflow: 'hidden' }}>
+          <Image
+            source={{ uri: 'https://images.unsplash.com/photo-1592659762303-90081d34b277?q=80&w=1000&auto=format&fit=crop' }}
+            style={{ width: '100%', height: '100%', opacity: 0.8 }}
+            resizeMode="cover"
+          />
+          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,31,61,0.4)' }} />
+          {state === 'live' && (
+            <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: '#ef4444', paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.sm, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
+              <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>EN VIVO</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={{ padding: Spacing.lg }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>
+              {homeTeam} vs {awayTeam}
+            </Text>
+            {homeScore !== null && (
+               <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
+                 {homeScore} - {awayScore}
+               </Text>
+            )}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 16 }}>
+            <MaterialIcons name="location-on" size={14} color="#e2e8f0" />
+            <Text style={{ color: '#e2e8f0', fontSize: 13 }}>{venue || 'Sede por confirmar'}</Text>
+            <Text style={{ color: '#e2e8f0', fontSize: 13, marginLeft: 4 }}>
+              • {time}{time && dateLabel ? ' · ' : ''}{dateLabel}
+            </Text>
+          </View>
+
+          <View style={{ backgroundColor: '#fff', paddingVertical: 12, borderRadius: Radius.lg, alignItems: 'center' }}>
+            <Text style={{ color: Colors.primary, fontWeight: 'bold', fontSize: 14 }}>Ver detalles del partido</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    </View>
+  );
 }
 
 export default function TournamentDetailScreen({ route, navigation }) {
@@ -699,42 +771,133 @@ export default function TournamentDetailScreen({ route, navigation }) {
   }, [rankingTables, seasonLabel, handlePressTeam, handlePressExpand, Colors]);
 
   const calendarContent = useMemo(() => {
-    if (calendarTables.length > 0) {
-      return calendarTables.map((table, i) => {
-        const jornada = calendarTables.length - i;
-        const sectionKey = `jornada-${i}`;
-        const isOpen = !!expandedCalendar[sectionKey];
-
-        return (
-          <View key={`calendar-${i}`} style={styles.calendarBlock}>
-            <TouchableOpacity
-              style={styles.calendarTitleBtn}
-              activeOpacity={0.84}
-              onPress={() => toggleCalendarSection(i)}
-            >
-              <Text style={styles.calendarTitle}>
-                {table.title || `Jornada ${jornada}`}
-              </Text>
-              <MaterialIcons name={isOpen ? 'expand-less' : 'expand-more'} size={22} color={Colors.primary} />
-            </TouchableOpacity>
-
-            {isOpen ? (
-              <MatchList
-                tableBlock={table}
-                onPressMatch={openMatchModal}
-              />
-            ) : null}
-          </View>
-        );
-      });
+    if (calendarTables.length === 0) {
+      return (
+        <View style={styles.emptyWrap}>
+          <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
+          <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
+        </View>
+      );
     }
+
+    // Find all matches to pick a featured one (live first, then next upcoming)
+    const allMatches = [];
+    calendarTables.forEach(table => {
+      const tableMatches = table.matches || [];
+      allMatches.push(...tableMatches);
+    });
+
+    const liveMatch = allMatches.find(m => m.state === 'live');
+    const featuredMatch = liveMatch || null;
+
     return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
-        <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
+      <View style={{ paddingBottom: Spacing.xxxl }}>
+        {featuredMatch && (
+          <FeaturedMatch match={featuredMatch} onPress={openMatchModal} />
+        )}
+
+        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.lg }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: Spacing.md }}>
+            <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold }}>
+              Jornadas
+            </Text>
+            <Text style={{ color: Colors.textMuted, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1 }}>
+              Temporada {(() => {
+                const yearPattern = /\b(20\d{2})\s*[\/\-]\s*(\d{2,4})\b/;
+                for (const src of [seasonLabel, season, title]) {
+                  const m = (src || '').match(yearPattern);
+                  if (m) return `${m[1]}/${m[2].length === 2 ? m[2] : m[2].slice(-2)}`;
+                }
+                return seasonLabel || season || '--/--';
+              })()}
+            </Text>
+          </View>
+
+          <View style={{ gap: 12 }}>
+            {calendarTables.map((table, i) => {
+              const jornada = calendarTables.length - i;
+              const sectionKey = `jornada-${i}`;
+              const isOpen = !!expandedCalendar[sectionKey];
+              
+              const matches = table.matches || [];
+              const hasMatches = matches.length > 0;
+              const summaries = matches.map(m => getMatchSummary(m));
+              const hasLive = summaries.some(s => s.state === 'live');
+              const allFinished = hasMatches && summaries.every(s => s.state === 'finished');
+              
+              const status = hasLive ? 'live' : allFinished ? 'finished' : 'upcoming';
+
+              return (
+                <View key={sectionKey} style={{
+                  backgroundColor: isDark ? '#1e293b' : '#ffffff',
+                  borderRadius: Radius.xl,
+                  borderWidth: 1,
+                  borderColor: 'rgba(13,143,242,0.1)',
+                  overflow: 'hidden',
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 1 },
+                  shadowOpacity: 0.08,
+                  shadowRadius: 4,
+                  elevation: 2,
+                }}>
+                  <TouchableOpacity
+                    activeOpacity={0.8}
+                    onPress={() => navigation.navigate('JornadaDetail', { 
+                      tableBlock: table, 
+                      title: table.title || `Jornada ${jornada}`,
+                      subtitle: seasonLabel
+                    })}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: 16,
+                      borderLeftWidth: (hasMatches && status === 'live') ? 6 : 0,
+                      borderLeftColor: '#ef4444',
+                      backgroundColor: (hasMatches && status === 'live') ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : 'transparent',
+                    }}
+                  >
+                    <View>
+                      <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: 16, fontWeight: 'bold' }}>
+                        {table.title || `Jornada ${jornada}`}
+                      </Text>
+                      <Text style={{ color: Colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                        {!hasMatches ? 'Sin información' : status === 'live' ? 'Esta semana' : status === 'finished' ? 'Finalizada' : 'Próxima'}
+                      </Text>
+                    </View>
+
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                      <View style={{
+                        backgroundColor: !hasMatches ? Colors.surfaceAlt : status === 'live' ? 'rgba(34,197,94,0.1)' : status === 'finished' ? 'rgba(148,163,184,0.1)' : 'rgba(59,130,246,0.1)',
+                        paddingHorizontal: 10,
+                        paddingVertical: 4,
+                        borderRadius: Radius.sm,
+                        borderWidth: 1,
+                        borderColor: !hasMatches ? Colors.border : status === 'live' ? 'rgba(34,197,94,0.2)' : status === 'finished' ? 'rgba(148,163,184,0.2)' : 'rgba(59,130,246,0.2)',
+                      }}>
+                        <Text style={{
+                          color: !hasMatches ? Colors.textMuted : status === 'live' ? '#22c55e' : status === 'finished' ? '#94a3b8' : '#3b82f6',
+                          fontSize: 10,
+                          fontWeight: 'bold',
+                        }}>
+                          {!hasMatches ? 'SIN INFORMACIÓN' : status === 'live' ? 'EN CURSO' : status === 'finished' ? 'FINALIZADA' : 'PRÓXIMA'}
+                        </Text>
+                      </View>
+                      <MaterialIcons 
+                        name="chevron-right" 
+                        size={24} 
+                        color={isDark ? Colors.textMuted : 'rgba(15, 23, 42, 0.3)'} 
+                      />
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              );
+            })}
+          </View>
+        </View>
       </View>
     );
-  }, [calendarTables, expandedCalendar, Colors, openMatchModal, toggleCalendarSection]);
+  }, [calendarTables, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel]);
 
   if (rankingLoading) return <LoadingView message="Cargando clasificación..." />;
   if (rankingError) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
@@ -751,9 +914,7 @@ export default function TournamentDetailScreen({ route, navigation }) {
         <Text style={styles.headerTitle} numberOfLines={1}>
           {title || 'Torneo'}
         </Text>
-        <TouchableOpacity style={styles.backBtn} activeOpacity={0.7}>
-          <MaterialIcons name="search" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-        </TouchableOpacity>
+        <View style={styles.backBtn} />
       </View>
 
       {/* Tab bar */}
@@ -911,16 +1072,11 @@ export default function TournamentDetailScreen({ route, navigation }) {
                     </View>
 
                     <View style={styles.metaChipsRow}>
-                      {(selectedMatch?.weekdayLabel || selectedMatch?.dateLabel || selectedMatch?.rawDate) ? (
-                        <View style={styles.metaChip}>
-                          <MaterialIcons name="calendar-today" size={18} color={Colors.primary} />
-                          <Text style={styles.metaChipText}>
-                            {selectedMatch.weekdayLabel
-                              ? `${selectedMatch.weekdayLabel} · ${selectedMatch.dateLabel || selectedMatch.rawDate}`
-                              : (selectedMatch.dateLabel || selectedMatch.rawDate)}
-                          </Text>
-                        </View>
-                      ) : null}
+                      <View style={styles.metaChip}>
+                        <MaterialIcons name="calendar-today" size={18} color={Colors.primary} />
+                        <Text style={styles.metaChipText}>{selectedMatch.dateLabel}</Text>
+                      </View>
+                      
                       {selectedMatch?.time ? (
                         <View style={styles.metaChip}>
                           <MaterialIcons name="schedule" size={18} color={Colors.primary} />

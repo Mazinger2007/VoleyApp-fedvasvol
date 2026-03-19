@@ -80,7 +80,6 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
         if (!hasLiveMatch(newBlocks)) {
           clearInterval(timerRef.current);
           timerRef.current = null;
-          console.log('[LIVE] ⏹ No more live matches — polling stopped');
         }
       }
     } catch (_) {
@@ -97,14 +96,12 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
     if (!hasLiveMatch(currentBlocks)) return;
 
     lastSnapshotRef.current = scoreSnapshot(currentBlocks);
-    console.log('[LIVE] ▶ Live match detected — starting poll every', POLL_INTERVAL_MS / 1000, 's');
 
     timerRef.current = setInterval(poll, POLL_INTERVAL_MS);
 
     // Also handle app coming back to foreground
     const sub = AppState.addEventListener('change', (state) => {
       if (appStateRef.current.match(/inactive|background/) && state === 'active') {
-        console.log('[LIVE] 🔄 App foregrounded — polling immediately');
         poll();
       }
       appStateRef.current = state;

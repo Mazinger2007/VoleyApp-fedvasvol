@@ -117,6 +117,16 @@ function extractSelectedSeason(html = '') {
   return first || '';
 }
 
+function extractSelectedSeasonLabel(html = '') {
+  const selectMatch = String(html || '').match(/<select[^>]*name="season"[\s\S]*?>([\s\S]*?)<\/select>/i);
+  if (!selectMatch) return null;
+
+  const selectedOption = selectMatch[1].match(/<option[^>]*value="[^"]*"[^>]*selected[^>]*>([\s\S]*?)<\/option>/i)
+    || selectMatch[1].match(/<option[^>]*value="[^"]*"[^>]*>([\s\S]*?)<\/option>/i);
+
+  return selectedOption ? stripHtml(selectedOption[1]) : null;
+}
+
 function extractAllSeasons(html = '') {
   const selectMatch = String(html || '').match(/<select[^>]*name="season"[\s\S]*?>([\s\S]*?)<\/select>/i);
   if (!selectMatch) return [];
@@ -205,12 +215,6 @@ function parseCalendarBlocksFromAllHtml(html = '') {
 async function fetchAjaxTableHtml(params = {}, referer = '') {
   // Petición AJAX directa a Fedvas (sin proxy, muy rápido ~400ms)
   const start = Date.now();
-  console.log('[AJAX] → GET /es/ajax/table-search', {
-    type: params.type,
-    id: params.id,
-    rows: params.rows,
-    input: params.input || '(empty)',
-  });
 
   try {
     const response = await axios.get(AJAX_URLS.tableSearch, {
@@ -229,20 +233,10 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
     const elapsed = Date.now() - start;
     const contentLength = response.data?.content?.length || 0;
     
-    console.log('[AJAX] ✓ SUCCESS in', `${elapsed}ms`, {
-      type: params.type,
-      contentLength,
-      code: response.data?.code,
-    });
 
     return extractHtmlFromAjaxData(response.data);
   } catch (error) {
     const elapsed = Date.now() - start;
-    console.log('[AJAX] ✗ FAILED in', `${elapsed}ms`, {
-      type: params.type,
-      error: error.message,
-      status: error.response?.status,
-    });
     throw new Error(`AJAX table-search failed: ${error.message}`);
   }
 }
@@ -265,17 +259,14 @@ async function fetchTournamentContext(inputUrl = '') {
   const cacheKey = normalizeUrlForCache(baseUrl);
   const cached = tournamentContextCache.get(cacheKey);
   if (cached) {
-    console.log('[CTX] ✓ CACHE HIT:', baseUrl);
     return cached;
   }
 
   const pending = tournamentContextInFlight.get(cacheKey);
   if (pending) {
-    console.log('[CTX] ⏳ IN FLIGHT:', baseUrl);
     return pending;
   }
 
-  console.log('[CTX] → LOADING:', baseUrl);
   const start = Date.now();
 
   const loadContextPromise = (async () => {
@@ -286,7 +277,7 @@ async function fetchTournamentContext(inputUrl = '') {
     const rankingInputs = secondaryInputs.find((fields) => fields.type === '12') || null;
     const rankingGroupId = rankingInputs?.id || null;
     const calendarUrl = discoverCalendarUrlFromHtml(html, rankingBaseUrl);
-    const seasonLabel = extractSeasonLabelFromBlocks(blocks);
+    const seasonLabel = extractSeasonLabelFromBlocks(blocks) || extractSelectedSeasonLabel(html);
 
     const context = {
       baseUrl,
@@ -300,11 +291,6 @@ async function fetchTournamentContext(inputUrl = '') {
     };
 
     const elapsed = Date.now() - start;
-    console.log('[CTX] ✓ LOADED in', `${elapsed}ms`, {
-      blocks: blocks.length,
-      groupId: rankingGroupId,
-      hasCalendar: !!calendarUrl,
-    });
 
     tournamentContextCache.set(cacheKey, context);
 
@@ -334,7 +320,6 @@ async function prefetchCalendarContext(calendarUrl = '') {
   const cacheKey = normalizeUrlForCache(currentUrl);
   if (calendarAjaxContextCache.has(cacheKey)) return; // already warm
 
-  console.log('[PREFETCH] → Calendar context', currentUrl);
   const t0 = Date.now();
   try {
     const html = await fetchHTML(currentUrl);
@@ -344,12 +329,9 @@ async function prefetchCalendarContext(calendarUrl = '') {
       const allBlocks = parseBlocksFromHtml(html);
       const metadataBlocks = allBlocks.filter((b) => b.type !== 'table');
       calendarAjaxContextCache.set(cacheKey, { inputs, metadataBlocks });
-      console.log('[PREFETCH] ✓ Calendar context ready in', `${Date.now() - t0}ms`);
     } else {
-      console.log('[PREFETCH] ✗ No type=9 inputs found in', `${Date.now() - t0}ms`);
     }
   } catch (e) {
-    console.log('[PREFETCH] ✗ Failed in', `${Date.now() - t0}ms`, e.message);
   }
 }
 
@@ -385,14 +367,11 @@ function extractSeasonLabelFromBlocks(blocks = []) {
 
 async function fetchRankingBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
-  console.log('[RANKING] → START', inputUrl);
   const context = await fetchTournamentContext(inputUrl);
   if (!context.rankingInputs?.id) {
-    console.log('[RANKING] ✗ No groupId found in context —', `${Date.now() - t0}ms`);
     return context.blocks;
   }
 
-  console.log('[RANKING] → AJAX groupId:', context.rankingInputs.id);
   try {
     const rankingHtml = await fetchAjaxTableHtml({
       ...context.rankingInputs,
@@ -401,7 +380,6 @@ async function fetchRankingBlocksViaAjax(inputUrl = '') {
 
     const ajaxBlocks = parseBlocksFromHtml(rankingHtml);
     const metadataBlocks = context.blocks.filter((block) => block.type !== 'table');
-    console.log('[RANKING] ✓ done in', `${Date.now() - t0}ms`, { ajaxBlocks: ajaxBlocks.length, metadataBlocks: metadataBlocks.length });
     return [...metadataBlocks, ...ajaxBlocks];
   } catch (error) {
     console.warn('[RANKING] ⚠ AJAX failed, falling back to HTML context:', error.message);
@@ -412,20 +390,17 @@ async function fetchRankingBlocksViaAjax(inputUrl = '') {
 
 async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
-  console.log('[CALENDAR] → START', inputUrl);
   const currentUrl = ensureCalendarCurrentUrl(inputUrl); // appends /all
   const cacheKey = normalizeUrlForCache(currentUrl);
 
   // Full-result cache (not just inputs — the whole block array)
   const cached = calendarAjaxContextCache.get(cacheKey);
   if (cached?.fullBlocks) {
-    console.log('[CALENDAR] ✓ CACHE HIT', currentUrl);
     return cached.fullBlocks;
   }
 
   // Fetch the /all page which already contains every matchday in HTML
   const allHtml = await fetchHTML(currentUrl);
-  console.log('[CALENDAR] HTML length:', allHtml?.length);
   const allBlocks = parseBlocksFromHtml(allHtml);
 
   // The /all page has inline tables for every matchday — use them directly.
@@ -433,7 +408,6 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   const tableBlocks = allBlocks.filter((b) => b.type === 'table');
   const metadataBlocks = allBlocks.filter((b) => b.type !== 'table');
 
-  console.log('[CALENDAR] Tables found in HTML:', tableBlocks.length);
 
   if (tableBlocks.length > 1) {
     // Great: multiple matchdays already parsed from HTML.
@@ -444,10 +418,6 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
       else if (b.type === 'table' && lastHeading) b.title = lastHeading;
     }
 
-    console.log('[CALENDAR] ✓ done (html-all) in', `${Date.now() - t0}ms`, {
-      tables: tableBlocks.length,
-      totalBlocks: allBlocks.length,
-    });
     calendarAjaxContextCache.set(cacheKey, { fullBlocks: allBlocks });
     return allBlocks;
   }
@@ -458,7 +428,6 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   const calendarInputs = secondarySets.find((f) => f.type === '9') || null;
 
   if (!calendarInputs?.id) {
-    console.log('[CALENDAR] ✗ Fallback → single table from HTML', { blocks: allBlocks.length });
     const fullBlocks = allBlocks;
     calendarAjaxContextCache.set(cacheKey, { fullBlocks });
     return fullBlocks;
@@ -468,10 +437,6 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
     const ajaxHtml = await fetchAjaxTableHtml({ ...calendarInputs, input: '' }, currentUrl);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
     const fullBlocks = [...metadataBlocks, ...ajaxBlocks];
-    console.log('[CALENDAR] ✓ done (ajax fallback) in', `${Date.now() - t0}ms`, {
-      ajaxBlocks: ajaxBlocks.length,
-      metadataBlocks: metadataBlocks.length,
-    });
     calendarAjaxContextCache.set(cacheKey, { fullBlocks });
     return fullBlocks;
   } catch (error) {
@@ -484,7 +449,6 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
 
 async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
-  console.log('[TOURNAMENTS] → START', inputUrl);
   const tournamentsUrl = toAbsoluteUrl(inputUrl || URLS.home);
   
   // Extract season from URL if present (e.g. ?season=XXXX)
@@ -516,7 +480,6 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
   }
 
   if (!context?.csrfToken) {
-    console.log('[TOURNAMENTS] ✗ Missing CSRF token, fallback HTML context in', `${Date.now() - t0}ms`);
     return context?.contextBlocks || [];
   }
 
@@ -548,10 +511,8 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
       ? [{ type: 'seasons', items: context.allSeasons, current: seasonToFetch }]
       : [];
 
-    console.log('[TOURNAMENTS] ✓ done in', `${Date.now() - t0}ms`, { ajaxBlocks: ajaxBlocks.length, seasons: context.allSeasons?.length });
     return [...seasonMetadata, ...metadataBlocks, ...ajaxBlocks];
   } catch (error) {
-    console.log('[TOURNAMENTS] ✗ AJAX failed, fallback HTML in', `${Date.now() - t0}ms`, { error: error.message });
     return context.contextBlocks || [];
   }
 }
@@ -575,7 +536,27 @@ function extractSeasonFromInformationHtml(html = '') {
 
 export async function discoverTournamentSeasonLabel(inputUrl = '') {
   const context = await fetchTournamentContext(inputUrl);
-  return context.seasonLabel || null;
+  if (context.seasonLabel) return context.seasonLabel;
+
+  // Fallback: try the /information page which usually has "Temporada YYYY/YYYY"
+  try {
+    const infoUrl = toTournamentInformationUrl(inputUrl);
+    if (infoUrl) {
+      const infoHtml = await fetchHTML(infoUrl);
+      const fromInfo = extractSeasonFromInformationHtml(infoHtml);
+      if (fromInfo) return fromInfo;
+      // Also try extracting from the select on the info page
+      const fromSelect = extractSelectedSeasonLabel(infoHtml);
+      if (fromSelect) {
+        const yearMatch = fromSelect.match(/\b\d{4}\s*\/\s*\d{2,4}\b/);
+        return yearMatch ? yearMatch[0].replace(/\s+/g, '') : fromSelect;
+      }
+    }
+  } catch (_) {
+    // ignore
+  }
+
+  return null;
 }
 
 export async function discoverCalendarUrlFromRanking(rankingUrl = '') {
@@ -600,7 +581,6 @@ const INLINE_TAGS = new Set([
 // ─── Descarga el HTML de una URL y lo devuelve como string ──────────────────
 export async function fetchHTML(url) {
   const start = Date.now();
-  console.log('[HTML] → GET', url);
   
   try {
     const response = await axios.get(url, {
@@ -609,16 +589,10 @@ export async function fetchHTML(url) {
     });
     
     const elapsed = Date.now() - start;
-    console.log('[HTML] ✓ SUCCESS in', `${elapsed}ms`, {
-      contentLength: response.data?.length || 0,
-    });
     
     return response.data;
   } catch (error) {
     const elapsed = Date.now() - start;
-    console.log('[HTML] ✗ FAILED in', `${elapsed}ms`, {
-      error: error.message,
-    });
     throw new Error(`Error descargando ${url}: ${error.message}`);
   }
 }
@@ -807,12 +781,12 @@ function normalizeTeamLogoUrl(url = '') {
 
     parsed.pathname = parsed.pathname.replace(
       /\.\d+x\d+(?=\.[a-zA-Z0-9]+$)/,
-      ''
+      '.200x200'
     );
 
     return parsed.toString();
   } catch (_) {
-    return url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '');
+    return url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '.200x200');
   }
 }
 
@@ -913,19 +887,38 @@ function parsePeriodsCell(cellNode) {
 function parseDateCell(cellNode) {
   if (!cellNode) return null;
 
+  // Find the outer span inside the td
   const span = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'span', cellNode.children || []);
-  if (!span) return getTextContent(cellNode).trim() || null;
+  if (!span) {
+    const fallback = getTextContent(cellNode).trim() || null;
+    return { date: fallback, venue: null };
+  }
 
+  // Venue is inside a child span — may have class "ellipsis" or NO class at all.
+  // Structure: <span>Sáb, 04/10/2025 19:00 GMT+1<span>Aranalde</span></span>
   const venueSpan = DomUtils.findOne(
-    (n) => n.type === 'tag' && n.name === 'span' && /\bellipsis\b/i.test(getNodeClass(n)),
+    (n) => n.type === 'tag' && n.name === 'span',
     span.children || []
   );
-  const venue = venueSpan?.attribs?.title?.trim() || null;
+  const venue = venueSpan?.attribs?.title?.trim()
+    || (venueSpan ? getTextContent(venueSpan).trim() : null)
+    || null;
 
-  const dateText = getTextContent(span)
-    .replace(venue || '', '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  // Extract ONLY the direct text nodes of the outer span (excludes child span text)
+  const directTextParts = (span.children || [])
+    .filter((child) => child.type === 'text')
+    .map((child) => (child.data || '').trim())
+    .filter(Boolean);
+
+  const dateText = directTextParts.join(' ').replace(/\s+/g, ' ').trim();
+
+  // If no direct text found, fallback to full cell text minus venue
+  if (!dateText) {
+    const fullText = getTextContent(cellNode).trim();
+    const venueText = venue || (venueSpan ? getTextContent(venueSpan).trim() : '');
+    const cleaned = fullText.replace(venueText, '').replace(/\s+/g, ' ').trim();
+    return { date: cleaned || null, venue };
+  }
 
   return {
     date: dateText || null,
@@ -1017,6 +1010,5 @@ export async function fetchAndParse(url) {
     );
   });
 
-  console.log('[fetchAndParse] ✅ TOTAL', `${Date.now() - t0}ms`, { url: absoluteUrl, blocks: result.length });
   return result;
 }
