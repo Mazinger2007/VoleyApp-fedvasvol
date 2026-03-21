@@ -13,15 +13,17 @@ import {
   StatusBar,
   Modal,
   Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 
-import TournamentList from '../components/TournamentList';
+import CompetitionList from '../components/CompetitionList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { URLS, toTournamentRankingUrl } from '../utils/htmlParser';
+import { URLS } from '../utils/htmlParser';
+import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -97,11 +99,7 @@ export default function MatchesScreen({ navigation }) {
   }, [tournamentTable, search, activeFilter]);
 
   const handleOpenLeague = (url, leagueName) => {
-    const rankingUrl = toTournamentRankingUrl(url);
-    navigation.navigate('TournamentDetail', {
-      url: rankingUrl,
-      title: leagueName,
-      defaultTab: 'ranking',
+    openTournamentDetail(navigation, { href: url, name: leagueName }, {
       season: selectedSeason,
     });
   };
@@ -166,11 +164,15 @@ export default function MatchesScreen({ navigation }) {
       borderTopRightRadius: 32,
       padding: 24,
       paddingBottom: 48,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: -10 },
-      shadowOpacity: 0.1,
-      shadowRadius: 20,
       elevation: 20,
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+      } : {
+        boxShadow: '0 -10px 20px rgba(0,0,0,0.1)'
+      })
     },
     modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
     modalTitle: { fontSize: 20, fontWeight: 'bold', color: isDark ? '#f1f5f9' : '#0f172a' },
@@ -197,16 +199,20 @@ export default function MatchesScreen({ navigation }) {
       paddingVertical: 16,
       borderRadius: 16,
       alignItems: 'center',
-      shadowColor: Colors.primary,
-      shadowOpacity: 0.3,
-      shadowOffset: { width: 0, height: 4 },
-      shadowRadius: 10,
       elevation: 4,
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: Colors.primary,
+        shadowOpacity: 0.3,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 10,
+      } : {
+        boxShadow: `0 4px 10px ${Colors.primary}4D`
+      })
     },
     modalConfirmText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
   }), [Colors, isDark]);
 
-  if (loading) return <LoadingView message="Cargando ligas..." />;
+  if (loading) return <LoadingView message="Cargando ligas y torneos..." />;
   if (error)   return <ErrorView message={error} onRetry={refresh} />;
 
   return (
@@ -252,7 +258,7 @@ export default function MatchesScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         {filteredTable ? (
-          <TournamentList
+          <CompetitionList
             tableBlock={filteredTable}
             onOpenTournament={handleOpenLeague}
           />

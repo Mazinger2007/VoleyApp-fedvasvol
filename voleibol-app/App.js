@@ -16,12 +16,14 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import MatchesScreen from './src/screens/MatchesScreen';
 import CompetitionsScreen from './src/screens/CompetitionsScreen';
 import TeamsScreen from './src/screens/TeamsScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
-import TournamentDetailScreen from './src/screens/TournamentDetailScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import LeagueScreen from './src/screens/LeagueScreen';
+import TournamentScreen from './src/screens/TournamentScreen';
 import TeamDetailScreen from './src/screens/TeamDetailScreen';
 import RankingTableScreen from './src/screens/RankingTableScreen';
 import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
 import MatchDetailScreen from './src/screens/MatchDetailScreen';
+import InfoScreen from './src/screens/InfoScreen';
 
 // ── Tema ─────────────────────────────────────────────────────────────────────
 import { Typography } from './src/styles/theme';
@@ -44,7 +46,7 @@ function TabIcon({ routeName, focused, colors }) {
     Matches: 'emoji-events',
     Competitions: 'beach-access',
     Teams: 'newspaper',
-    Profile: 'settings',
+    Settings: 'settings',
   };
 
   return (
@@ -77,7 +79,7 @@ const TAB_LABELS = {
   Matches: 'LIGAS',
   Competitions: 'VOLEY PLAYA',
   Teams: 'NOTICIAS',
-  Profile: 'AJUSTES',
+  Settings: 'AJUSTES',
 };
 
 // COMPONENTE PERSONALIZADO PARA WEB
@@ -193,9 +195,9 @@ function MainTabs() {
         options={{ tabBarLabel: TAB_LABELS.Teams }}
       />
       <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ tabBarLabel: TAB_LABELS.Profile }}
+        name="Settings"
+        component={SettingsScreen}
+        options={{ tabBarLabel: TAB_LABELS.Settings }}
       />
     </Tab.Navigator>
   );
@@ -229,11 +231,13 @@ function AppContent() {
       >
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="MainTabs" component={MainTabs} />
-          <Stack.Screen name="TournamentDetail" component={TournamentDetailScreen} />
+          <Stack.Screen name="League" component={LeagueScreen} />
+          <Stack.Screen name="Tournament" component={TournamentScreen} />
           <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
           <Stack.Screen name="RankingTable" component={RankingTableScreen} />
           <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
           <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
+          <Stack.Screen name="Info" component={InfoScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>

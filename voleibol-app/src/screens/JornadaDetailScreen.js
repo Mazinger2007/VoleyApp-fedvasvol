@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   StyleSheet,
   useWindowDimensions,
   Platform,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -16,6 +17,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getMatchSummary, formatMatchDisplayDate, rowToMatch } from '../components/MatchList';
+import { fetchAndParse } from '../utils/htmlParser';
 import { 
   getCachedLogoColorSync, 
   requestLogoColorExtraction, 
@@ -26,7 +28,7 @@ import { getDominantBorderColor } from '../utils/imageColor';
 function TeamLogo({ uri, name, isDark, colors }) {
   const [bgColor, setBgColor] = useState(getCachedLogoColorSync(uri) || (isDark ? '#0f172a' : '#f8fafc'));
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!uri) return;
     
     // Check cache again in case it hydrated since component mount
@@ -47,7 +49,11 @@ function TeamLogo({ uri, name, isDark, colors }) {
   return (
     <View style={[styles.logoWrap, { backgroundColor: bgColor }]}>
       {uri ? (
-        <Image source={{ uri }} style={styles.logo} />
+        <Image 
+          source={{ uri }} 
+          style={{ width: '95%', height: '95%' }} 
+          resizeMode="contain"
+        />
       ) : (
         <View style={[styles.logoPlaceholder, { backgroundColor: colors.surfaceAlt }]}>
           <Text style={[styles.logoInitial, { color: colors.textMuted }]}>{name?.[0] || '?'}</Text>
@@ -133,7 +139,7 @@ function MatchCard({ match, isDark, colors, onPress }) {
           <Text style={styles.timeInfo}>
             {time}{time && dateLabel ? ' · ' : ''}{dateLabel}
           </Text>
-          <View standout style={[styles.detailsBtn, { backgroundColor: isDark ? colors.surfaceAlt : colors.primary }]}>
+          <View style={[styles.detailsBtn, { backgroundColor: isDark ? colors.surfaceAlt : colors.primary }]}>
             <Text style={styles.detailsBtnText}>Ver Detalles</Text>
           </View>
         </View>
@@ -144,18 +150,41 @@ function MatchCard({ match, isDark, colors, onPress }) {
 
 export default function JornadaDetailScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { tableBlock, title, subtitle } = route.params || {};
+  const { tableBlock, title, subtitle, calendarUrl } = route.params || {};
+  
+  const [currentTableBlock, setCurrentTableBlock] = useState(tableBlock);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = useCallback(async () => {
+    if (!calendarUrl) return;
+    setRefreshing(true);
+    try {
+      const blocks = await fetchAndParse(calendarUrl);
+      // Find the specific table block that matches the current title or contains matches
+      const newBlock = blocks.find(b => 
+        (b.type === 'table' && (b.title === title || b.title === tableBlock?.title)) ||
+        (b.type === 'table' && b.matches?.length > 0)
+      );
+      if (newBlock) {
+        setCurrentTableBlock(newBlock);
+      }
+    } catch (err) {
+      console.error('Error refreshing jornada:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [calendarUrl, title, tableBlock]);
 
   const matchList = useMemo(() => {
-    if (tableBlock?.matches?.length) return tableBlock.matches;
-    if (tableBlock?.rows?.length) {
-      return tableBlock.rows.map(row => {
-        const m = rowToMatch(row, tableBlock.headers);
+    if (currentTableBlock?.matches?.length) return currentTableBlock.matches;
+    if (currentTableBlock?.rows?.length) {
+      return currentTableBlock.rows.map(row => {
+        const m = rowToMatch(row, currentTableBlock.headers);
         return getMatchSummary(m);
       });
     }
     return [];
-  }, [tableBlock]);
+  }, [currentTableBlock]);
 
   // Sorting/Grouping
   const sortedMatches = useMemo(() => {
@@ -175,7 +204,10 @@ export default function JornadaDetailScreen({ route, navigation }) {
   }, [matchList]);
 
   const handlePressMatch = (match) => {
-    // Navigate or open modal (would need more props passed)
+    navigation.navigate('MatchDetail', { 
+      match: { ...match, ...getMatchSummary(match) },
+      calendarUrl 
+    });
   };
 
   return (
@@ -188,13 +220,22 @@ export default function JornadaDetailScreen({ route, navigation }) {
           <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : '#001f3d'} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: isDark ? Colors.textPrimary : '#001f3d' }]}>{title || 'Jornada'}</Text>
-        <TouchableOpacity style={styles.backBtn}>
-          <MaterialIcons name="calendar-today" size={20} color={isDark ? Colors.textPrimary : '#001f3d'} />
-        </TouchableOpacity>
+        <View style={styles.backBtn} />
       </View>
 
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        contentContainerStyle={styles.scrollContent} 
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl 
+            refreshing={refreshing} 
+            onRefresh={onRefresh} 
+            colors={[Colors.primary]} 
+            tintColor={Colors.primary} 
+          />
+        }
+      >
         {/* LIVE */}
         {sortedMatches.live.length > 0 && (
           <View style={styles.section}>

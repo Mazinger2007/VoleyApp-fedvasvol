@@ -1,13 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Image } from 'react-native';
+import { View, Text, FlatList, TouchableOpacity, Image, Platform } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
-import { toTournamentRankingUrl } from '../utils/htmlParser';
+import { toRankingUrl } from '../utils/htmlParser';
 
 function LeagueShields({ href, isDark, isConfiguring }) {
-  const rankingUrl = (!href || isConfiguring) ? null : toTournamentRankingUrl(href);
+  const rankingUrl = (!href || isConfiguring) ? null : toRankingUrl(href);
   const { blocks, loading } = useFetch(rankingUrl);
   const [imageErrs, setImageErrs] = useState({});
 
@@ -49,7 +49,8 @@ function LeagueShields({ href, isDark, isConfiguring }) {
             <Image 
               source={{ uri: imageErrs[idx] ? logo.fallbackUrl : logo.url }} 
               onError={() => setImageErrs(p => ({...p, [idx]: true}))}
-              style={{ width: '100%', height: '100%' }} resizeMode="cover" 
+              style={{ width: '95%', height: '95%' }} 
+              resizeMode="contain" 
             />
           </View>
         ))}
@@ -111,7 +112,7 @@ function isActive(status) {
   return s.includes('curso') || s.includes('activ') || s.includes('en juego');
 }
 
-function TournamentCard({ item, onPress }) {
+function CompetitionCard({ item, onPress }) {
   const { colors: Colors, isDark } = useTheme();
   const { name, status, season, category, sex, teamCount, organizer } = item;
   const active = isActive(status);
@@ -124,11 +125,15 @@ function TournamentCard({ item, onPress }) {
         padding: Spacing.xl,
         borderWidth: 1,
         borderColor: 'rgba(13,143,242,0.05)',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
         elevation: 2,
+        ...(Platform.OS !== 'web' ? {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 1 },
+          shadowOpacity: 0.08,
+          shadowRadius: 4,
+        } : {
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)'
+        })
       }}
       activeOpacity={0.8}
       onPress={onPress}
@@ -196,9 +201,10 @@ function TournamentCard({ item, onPress }) {
           
           <LeagueShields href={item.href} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
 
-          {/* Button */}
           <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-            <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>Ver Liga</Text>
+            <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>
+              {/txapelketa/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
+            </Text>
             <MaterialIcons name="chevron-right" size={18} color="#ffffff" />
           </View>
 
@@ -208,7 +214,7 @@ function TournamentCard({ item, onPress }) {
   );
 }
 
-export default function TournamentList({ tableBlock, onOpenTournament }) {
+export default function CompetitionList({ tableBlock, onOpenTournament }) {
   const { colors: Colors, isDark } = useTheme();
   if (!tableBlock?.rows?.length) {
     return (
@@ -240,7 +246,7 @@ export default function TournamentList({ tableBlock, onOpenTournament }) {
       contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md }}
       ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
       renderItem={({ item }) => (
-        <TournamentCard
+        <CompetitionCard
           item={item}
           onPress={() => item.href && onOpenTournament?.(item.href, item.name)}
         />

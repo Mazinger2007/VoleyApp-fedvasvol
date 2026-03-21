@@ -14,11 +14,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Header from '../components/Header';
-import TournamentList from '../components/TournamentList';
+import CompetitionList from '../components/CompetitionList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { URLS, toTournamentRankingUrl } from '../utils/htmlParser';
+import { URLS } from '../utils/htmlParser';
+import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -33,13 +34,7 @@ export default function HomeScreen({ navigation }) {
   }, [blocks]);
 
   const handleOpenTournament = (tournament) => {
-    if (!tournament?.href) return;
-    const rankingUrl = toTournamentRankingUrl(tournament.href);
-    navigation.navigate('TournamentDetail', {
-      url: rankingUrl,
-      title: tournament.name || 'Clasificación y calendario',
-      defaultTab: 'ranking',
-    });
+    openTournamentDetail(navigation, tournament);
   };
 
   const styles = useMemo(() => StyleSheet.create({
@@ -95,7 +90,7 @@ export default function HomeScreen({ navigation }) {
       >
         {/* Lista clicable de torneos */}
         {tournamentTable ? (
-          <TournamentList
+          <CompetitionList
             tableBlock={tournamentTable}
             onOpenTournament={handleOpenTournament}
           />

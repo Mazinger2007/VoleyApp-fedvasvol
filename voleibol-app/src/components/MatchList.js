@@ -166,7 +166,16 @@ export function computeMatchState(rawDate, explicitState, homeScore, awayScore) 
   const isExplicitLive = /en\s*curso|live|directo/.test(stateStr);
   const isExplicitFinal = /final|cerrad|terminad/.test(stateStr);
 
-  if (isExplicitLive) return 'live';
+  if (isExplicitLive) {
+    const matchStart = parseMatchDateTime(rawDate);
+    if (matchStart) {
+      const now = new Date();
+      const diffHours = (now - matchStart) / (1000 * 60 * 60);
+      // Si la fecha del partido fue hace más de 12 horas, ignoramos el "En curso" del HTML (probablemente obsoleto)
+      if (diffHours > 12) return 'finished';
+    }
+    return 'live';
+  }
   if (isExplicitFinal) return 'finished';
 
   const matchStart = parseMatchDateTime(rawDate);
@@ -429,9 +438,19 @@ function MatchCard({ match, headers, onPress }) {
  * Lista de partidos a partir de un bloque de tipo 'table'
  * @param {{ headers: string[], rows: string[][] }} tableBlock
  */
-export default function MatchList({ tableBlock, onPressMatch }) {
+export default function MatchList({ tableBlock, matches, onPressMatch }) {
   const { colors: Colors } = useTheme();
-  if (!tableBlock || !tableBlock.rows?.length) {
+  
+  const finalMatches = useMemo(() => {
+    if (matches && matches.length > 0) return matches;
+    if (tableBlock && tableBlock.matches?.length) return tableBlock.matches;
+    if (tableBlock && tableBlock.rows?.length) {
+      return tableBlock.rows.map((row) => rowToMatch(row, tableBlock.headers));
+    }
+    return [];
+  }, [tableBlock, matches]);
+
+  if (finalMatches.length === 0) {
     return (
       <View style={{ padding: Spacing.xxl, alignItems: 'center' }}>
         <Text style={{ color: Colors.textMuted, fontSize: Typography.size.md }}>No hay partidos disponibles</Text>
@@ -439,16 +458,12 @@ export default function MatchList({ tableBlock, onPressMatch }) {
     );
   }
 
-  const matches = tableBlock.matches?.length
-    ? tableBlock.matches
-    : tableBlock.rows.map((row) => rowToMatch(row, tableBlock.headers));
-
   return (
     <FlatList
-      data={matches}
+      data={finalMatches}
       keyExtractor={(_, i) => String(i)}
       renderItem={({ item }) => (
-        <MatchCard match={item} headers={tableBlock.headers} onPress={onPressMatch} />
+        <MatchCard match={item} headers={tableBlock?.headers || []} onPress={onPressMatch} />
       )}
       contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm }}
       showsVerticalScrollIndicator={false}

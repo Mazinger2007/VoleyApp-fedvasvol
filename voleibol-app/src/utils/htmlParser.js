@@ -26,6 +26,10 @@ const tournamentContextCache = new Map();
 const tournamentContextInFlight = new Map();
 const tournamentsAjaxContextCache = new Map();
 const calendarAjaxContextCache = new Map();
+const infoDataCache = new Map();
+const championshipDataCache = new Map();
+
+let globalSessionCookie = '';
 
 // ─── Helpers de URL ─────────────────────────────────────────────────────────
 export function toAbsoluteUrl(href = '') {
@@ -34,7 +38,7 @@ export function toAbsoluteUrl(href = '') {
   return `${BASE_URL}${href.startsWith('/') ? href : `/${href}`}`;
 }
 
-export function toTournamentRankingUrl(inputUrl = '') {
+export function toRankingUrl(inputUrl = '') {
   if (!inputUrl) return '';
 
   const absolute = toAbsoluteUrl(inputUrl);
@@ -52,7 +56,7 @@ export function toTournamentRankingUrl(inputUrl = '') {
   return match ? `${match[1]}/ranking` : normalized;
 }
 
-export function toTournamentInformationUrl(inputUrl = '') {
+export function toInfoUrl(inputUrl = '') {
   if (!inputUrl) return '';
 
   const absolute = toAbsoluteUrl(inputUrl);
@@ -71,17 +75,23 @@ export function toTournamentInformationUrl(inputUrl = '') {
 
 function ensureCalendarAllUrl(value = '') {
   if (!value) return value;
-  const clean = String(value || '').replace(/\/+$/, '');
-  if (/\/calendar\/\d+\/all$/i.test(clean)) return clean;
-  if (/\/calendar\/\d+$/i.test(clean)) return `${clean}/all`;
-  return clean;
+  try {
+    const urlObj = new URL(value);
+    let pathname = urlObj.pathname.replace(/\/+$/, '');
+    if (!/\/all$/i.test(pathname)) {
+      urlObj.pathname = `${pathname}/all`;
+    }
+    return urlObj.toString();
+  } catch (e) {
+    const [path, search] = String(value || '').split('?');
+    const cleanPath = path.replace(/\/+$/, '');
+    if (/\/all$/i.test(cleanPath)) return value;
+    return search ? `${cleanPath}/all?${search}` : `${cleanPath}/all`;
+  }
 }
 
 function ensureCalendarCurrentUrl(value = '') {
-  if (!value) return value;
-  const clean = String(value || '').replace(/\/+$/, '');
-  if (/\/all$/i.test(clean)) return clean;
-  return `${clean}/all`;
+  return ensureCalendarAllUrl(value); // We always want /all in our app to get all matchdays
 }
 
 function stripHtml(value = '') {
@@ -95,8 +105,8 @@ function stripHtml(value = '') {
 function defaultRequestHeaders() {
   return {
     'User-Agent':
-      'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 ' +
-      '(KHTML, like Gecko) Chrome/120 Mobile Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     Accept: 'text/html,application/xhtml+xml',
     'Accept-Language': 'es-ES,es;q=0.9',
   };
@@ -187,11 +197,37 @@ function parseBlocksFromHtml(html = '') {
   const body =
     DomUtils.findOne((n) => n.type === 'tag' && n.name === 'body', dom.children) ||
     null;
-
-  if (body) return domToBlocks(body);
+  const root = body || dom;
 
   const blocks = [];
-  (dom.children || []).forEach((child) => domToBlocks(child, blocks));
+  
+  // ── 1. Parseo genérico de bloques (Metadata, Links de fases, etc) ────────────
+  if (body) {
+    domToBlocks(body, blocks);
+  } else {
+    (dom.children || []).forEach((child) => domToBlocks(child, blocks));
+  }
+
+  // ── 2. Detectar si es una página de bracket (Clupik) ────────────────────────
+  const matchBoxes = DomUtils.findAll(
+    (n) => n.type === 'tag' && (
+      /\b(match-box|box)\b/.test(n.attribs?.class || '') ||
+      // Fallback: cualquier nodo que contenga links con clase 'team' y 'match'
+      (DomUtils.findOne(child => /\bteam\b/.test(child.attribs?.class || ''), [n], true) &&
+       DomUtils.findOne(child => /\bmatch\b/.test(child.attribs?.class || ''), [n], true))
+    ),
+    root.children || [],
+    true
+  );
+
+  if (matchBoxes.length > 0) {
+    // Parsear como bracket
+    const bracketData = parseBracketFromDom(root);
+    if (bracketData && bracketData.columns && bracketData.columns.length > 0) {
+      blocks.push({ type: 'bracket', ...bracketData });
+    }
+  }
+
   return blocks;
 }
 
@@ -227,6 +263,7 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
         ...defaultRequestHeaders(),
         ...(referer ? { Referer: referer } : {}),
         'X-Requested-With': 'XMLHttpRequest',
+        ...(globalSessionCookie ? { Cookie: globalSessionCookie } : {}),
       },
     });
 
@@ -246,7 +283,7 @@ async function fetchTournamentContext(inputUrl = '') {
   if (!baseUrl) {
     return {
       baseUrl: '',
-      rankingBaseUrl: toTournamentRankingUrl(inputUrl),
+      bankingBaseUrl: toRankingUrl(inputUrl),
       html: '',
       blocks: [],
       seasonLabel: null,
@@ -336,7 +373,7 @@ async function prefetchCalendarContext(calendarUrl = '') {
 }
 
 function discoverCalendarUrlFromHtml(html = '', rankingUrl = '') {
-  const baseRanking = toTournamentRankingUrl(rankingUrl);
+  const baseRanking = toRankingUrl(rankingUrl);
   const absoluteAll = html.match(/https?:\/\/[^"'\s]+\/[a-z]{2}\/tournament\/\d+\/calendar\/\d+\/all/i)?.[0];
   if (absoluteAll) return ensureCalendarCurrentUrl(absoluteAll);
 
@@ -400,16 +437,20 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   }
 
   // Fetch the /all page which already contains every matchday in HTML
+  console.log('\n\n[DEBUG CALENDAR] 1. Requesting URL:', currentUrl);
   const allHtml = await fetchHTML(currentUrl);
+  console.log('[DEBUG CALENDAR] 2. Received HTML length:', allHtml?.length);
   const allBlocks = parseBlocksFromHtml(allHtml);
 
   // The /all page has inline tables for every matchday — use them directly.
   // No AJAX needed; we already have the full data.
   const tableBlocks = allBlocks.filter((b) => b.type === 'table');
   const metadataBlocks = allBlocks.filter((b) => b.type !== 'table');
+  console.log('[DEBUG CALENDAR] 3. Initial tables found:', tableBlocks.length);
 
 
   if (tableBlocks.length > 1) {
+    console.log('[DEBUG CALENDAR] 4. Success! Multiple tables found inline. Returning', tableBlocks.length, 'tables.');
     // Great: multiple matchdays already parsed from HTML.
     // We assign titles from previous headings to tables before returning.
     let lastHeading = '';
@@ -422,25 +463,30 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
     return allBlocks;
   }
 
-  // Fallback: The /all page returned only 1 table (some leagues still load
-  // matchdays via AJAX). Try the type=9 AJAX endpoint.
+  // Fallback: The /all page returned only 1 table. Try the type=9 AJAX endpoint.
+  console.log('[DEBUG CALENDAR] 5. Only 1 table found. Attempting AJAX fallback...');
   const secondarySets = findSecondaryInputSets(allHtml);
   const calendarInputs = secondarySets.find((f) => f.type === '9') || null;
 
   if (!calendarInputs?.id) {
+    console.log('[DEBUG CALENDAR] 6. NO inputs found for AJAX fallback! Returning the single table.');
     const fullBlocks = allBlocks;
     calendarAjaxContextCache.set(cacheKey, { fullBlocks });
     return fullBlocks;
   }
 
   try {
+    console.log('[DEBUG CALENDAR] 7. Executing fetchAjaxTableHtml with global Cookie:', !!globalSessionCookie);
     const ajaxHtml = await fetchAjaxTableHtml({ ...calendarInputs, input: '' }, currentUrl);
+    console.log('[DEBUG CALENDAR] 8. AJAX response length:', ajaxHtml?.length);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
+    const ajaxTables = ajaxBlocks.filter(b => b.type === 'table');
+    console.log('[DEBUG CALENDAR] 9. Tables parsed from AJAX:', ajaxTables.length);
     const fullBlocks = [...metadataBlocks, ...ajaxBlocks];
     calendarAjaxContextCache.set(cacheKey, { fullBlocks });
     return fullBlocks;
   } catch (error) {
-    console.warn('[CALENDAR] ⚠ AJAX fallback failed:', error.message);
+    console.error('[CALENDAR] ⚠ AJAX fallback failed:', error.message);
     const fullBlocks = allBlocks;
     calendarAjaxContextCache.set(cacheKey, { fullBlocks });
     return fullBlocks;
@@ -534,13 +580,13 @@ function extractSeasonFromInformationHtml(html = '') {
   return null;
 }
 
-export async function discoverTournamentSeasonLabel(inputUrl = '') {
+export async function discoverSeasonLabel(inputUrl = '') {
   const context = await fetchTournamentContext(inputUrl);
   if (context.seasonLabel) return context.seasonLabel;
 
   // Fallback: try the /information page which usually has "Temporada YYYY/YYYY"
   try {
-    const infoUrl = toTournamentInformationUrl(inputUrl);
+    const infoUrl = toInfoUrl(inputUrl);
     if (infoUrl) {
       const infoHtml = await fetchHTML(infoUrl);
       const fromInfo = extractSeasonFromInformationHtml(infoHtml);
@@ -568,7 +614,6 @@ export async function discoverCalendarUrlFromRanking(rankingUrl = '') {
 const REMOVE_TAGS = new Set([
   'style', 'script', 'link', 'meta', 'head',
   'noscript', 'iframe', 'svg', 'canvas', 'form',
-  'input', 'button', 'select', 'textarea', 'nav',
   'footer', 'aside',
 ]);
 
@@ -588,21 +633,43 @@ export async function fetchHTML(url) {
       headers: defaultRequestHeaders(),
     });
     
-    const elapsed = Date.now() - start;
+    const html = typeof response.data === 'string' ? response.data : '';
     
+    // Detectar si la temporada se está configurando
+    if (
+      /esta temporada se est[áa] configurando/i.test(html) ||
+      /currently being configured/i.test(html) ||
+      /actualmente no existen torneos/i.test(html)
+    ) {
+      throw new Error('SEASON_CONFIGURING');
+    }
+
+    const cookieHeader = (response.headers?.['set-cookie'] || [])
+      .map((item) => String(item || '').split(';')[0].trim())
+      .filter(Boolean)
+      .join('; ');
+    if (cookieHeader) {
+      globalSessionCookie = cookieHeader;
+    }
+
+    const elapsed = Date.now() - start;
     return response.data;
   } catch (error) {
     const elapsed = Date.now() - start;
+    if (error.message === 'SEASON_CONFIGURING') throw error;
     throw new Error(`Error descargando ${url}: ${error.message}`);
   }
 }
 
 // ─── Parsea el HTML y devuelve el DOM raíz (objetos domhandler) ──────────────
-export function parseHTML(html) {
+function parseHTML(html) {
   return htmlparser2.parseDocument(html);
 }
 
-// ─── Elimina nodos que pertenecen a tags prohibidos ──────────────────────────
+const getNodeClass = (node) => node?.attribs?.class || '';
+const getTextContent = (node) => DomUtils.getText(node).trim();
+
+// ─── UTILS DE PARSEO DE BLOQUES ─────────────────────────────────────────────
 function shouldRemoveNode(node) {
   return (
     node.type === 'comment' ||
@@ -611,18 +678,18 @@ function shouldRemoveNode(node) {
 }
 
 // ─── Extrae el texto limpio de un nodo (recursivo) ───────────────────────────
-export function getTextContent(node) {
-  if (!node) return '';
-  if (node.type === 'text') return node.data.replace(/\s+/g, ' ').trim();
-  if (node.children) {
-    return node.children
-      .map(getTextContent)
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-  return '';
-}
+// export function getTextContent(node) { // Old getTextContent, now using DomUtils.getText
+//   if (!node) return '';
+//   if (node.type === 'text') return node.data.replace(/\s+/g, ' ').trim();
+//   if (node.children) {
+//     return node.children
+//       .map(getTextContent)
+//       .join(' ')
+//       .replace(/\s+/g, ' ')
+//       .trim();
+//   }
+//   return '';
+// }
 
 // ─── Convierte el DOM en una lista de bloques de contenido estructurado ──────
 // Cada bloque tiene: { type, content, level?, href?, rows?, headers? }
@@ -645,16 +712,16 @@ export function domToBlocks(node, blocks = []) {
       return blocks;
     }
 
-    // Párrafos
+    // Párrafos: extraemos texto pero seguimos recursando para captar links
     if (tag === 'p') {
       const text = getTextContent(node).trim();
       if (text.length > 3) {
         blocks.push({ type: 'paragraph', content: text });
       }
-      return blocks;
+      // NO retornamos, seguimos para ver si hay links importantes dentro
     }
 
-    // Listas
+    // Listas: extraemos items pero seguimos recursando para captar links
     if (tag === 'ul' || tag === 'ol') {
       const items = DomUtils.findAll(
         (n) => n.type === 'tag' && n.name === 'li',
@@ -664,7 +731,7 @@ export function domToBlocks(node, blocks = []) {
       if (items.length > 0) {
         blocks.push({ type: 'list', ordered: tag === 'ol', items });
       }
-      return blocks;
+      // NO retornamos, seguimos para ver si hay links importantes dentro
     }
 
     // Tablas
@@ -674,9 +741,9 @@ export function domToBlocks(node, blocks = []) {
       return blocks;
     }
 
-    // Artículos y divs: recursar en hijos
+    // Artículos, divs, nav, header: recursar en hijos
     if (
-      ['article', 'section', 'main', 'div', 'body', 'html'].includes(tag) ||
+      ['article', 'section', 'main', 'div', 'body', 'html', 'nav', 'header'].includes(tag) ||
       (node.attribs && (node.attribs.class || node.attribs.id))
     ) {
       (node.children || []).forEach((child) => domToBlocks(child, blocks));
@@ -688,8 +755,11 @@ export function domToBlocks(node, blocks = []) {
       const text = getTextContent(node).trim();
       const href = node.attribs?.href || '';
       const absHref = toAbsoluteUrl(href);
-      const isTournamentRoute = /\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref);
-      if ((text.length > 2 || isTournamentRoute) && href && !href.startsWith('#')) {
+      // Regex más amplia para capturar rutas de torneos independientemente del idioma (/es/ o /en/)
+      const isTournamentRoute = /\/(?:es|en)\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref) ||
+                                /\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref);
+      
+      if ((text.length > 1 || isTournamentRoute) && href && !href.startsWith('#')) {
         blocks.push({
           type: 'link',
           content: text || absHref,
@@ -765,9 +835,9 @@ function parseTable(tableNode) {
   };
 }
 
-function getNodeClass(node) {
-  return (node?.attribs?.class || '').toLowerCase();
-}
+// function getNodeClass(node) { // Moved to global const
+//   return (node?.attribs?.class || '').toLowerCase();
+// }
 
 function normalizeTeamLogoUrl(url = '') {
   if (!url) return null;
@@ -987,11 +1057,11 @@ export async function fetchAndParse(url) {
   const absoluteUrl = toAbsoluteUrl(url);
   let blocks;
 
-  if (/\/es\/tournaments(?:\?.*)?$/i.test(absoluteUrl)) {
+  if (/\/tournaments/i.test(absoluteUrl)) {
     blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl);
-  } else if (/\/tournament\/\d+\/ranking(?:\/\d+)?$/i.test(absoluteUrl)) {
+  } else if (/\/tournament\/\d+\/ranking/i.test(absoluteUrl)) {
     blocks = await fetchRankingBlocksViaAjax(absoluteUrl);
-  } else if (/\/tournament\/\d+\/calendar\/\d+(?:\/all|\/\d+)?$/i.test(absoluteUrl)) {
+  } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
     blocks = await fetchCalendarBlocksViaAjax(absoluteUrl);
   } else {
     const html = await fetchHTML(absoluteUrl);
@@ -1011,4 +1081,443 @@ export async function fetchAndParse(url) {
   });
 
   return result;
+}
+
+// ─── UTILS PARA CAMPEONATOS (TXAPELKETAS) ───────────────────────────────────
+
+/**
+ * Extrae enlaces a fases/grupos de la página de clasificación.
+ */
+export function extractPhaseLinks(blocks = [], currentUrl = '') {
+  const links = (blocks || []).filter(b => b.type === 'link');
+  // Atrapa tanto /ranking/ID como /ranking/ID/algo
+  // Pero excluimos enlaces que parezcan navegación general (login, home, etc)
+  const phasePattern = /\/tournament\/\d+\/ranking\/\d+/i;
+  
+  const normalizedCurrent = toAbsoluteUrl(currentUrl).replace(/\/$/, '').toLowerCase();
+  
+  const seenHrefs = new Set([normalizedCurrent]);
+  const uniquePhases = [];
+
+  links.forEach(l => {
+    if (!l.href) return;
+    const absHref = toAbsoluteUrl(l.href);
+    if (!phasePattern.test(absHref) || absHref.includes('google') || absHref.includes('facebook')) return;
+    
+    const norm = absHref.replace(/\/$/, '').toLowerCase();
+    if (!seenHrefs.has(norm)) {
+      seenHrefs.add(norm);
+      uniquePhases.push({
+        title: l.content || 'Fase',
+        href: absHref
+      });
+    }
+  });
+
+  return uniquePhases;
+}
+
+/**
+ * Descarga y parsea todos los datos de un campeonato (Txapelketa) de forma unificada.
+ * Utiliza scraping HTML directo (sin AJAX) para evitar problemas de CORS y AJAX.
+ */
+export async function fetchChampionshipData(rankingUrl) {
+  const cacheKey = normalizeUrlForCache(rankingUrl);
+  if (championshipDataCache.has(cacheKey)) return championshipDataCache.get(cacheKey);
+
+  // ── Paso 1: Obtener el HTML de la primera fase ──
+  const absoluteUrl = toAbsoluteUrl(rankingUrl);
+  const firstHtml = await fetchHTML(absoluteUrl);
+  const firstBlocks = parseBlocksFromHtml(firstHtml);
+
+  // ── Paso 2: Extraer los enlaces a todas las demás fases ──
+  const phases = extractPhaseLinks(firstBlocks, absoluteUrl);
+  const normalizedCurrent = absoluteUrl.replace(/\/$/, '').toLowerCase();
+
+  // Siempre incluir la primera fase (la que ya tenemos)
+  const firstTitle = guessPhaseTitle(absoluteUrl, firstHtml);
+  const allPhaseUrls = [{ title: firstTitle, href: absoluteUrl, blocks: firstBlocks }];
+
+  // ── Paso 3: Descargar cada fase en paralelo ──
+  const otherPhaseData = await Promise.all(
+    phases.map(async (p) => {
+      try {
+        const normP = toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase();
+        if (normP === normalizedCurrent) return null; // Evitar duplicar la actual
+
+        const html = await fetchHTML(p.href);
+        const blocks = parseBlocksFromHtml(html);
+        return { title: p.title, href: p.href, blocks };
+      } catch (err) {
+        console.warn(`[CHAMPIONSHIP] Error fetching phase ${p.title}:`, err.message);
+        return null;
+      }
+    })
+  );
+
+  const phaseData = [...allPhaseUrls, ...otherPhaseData.filter(Boolean)];
+
+  // ── Paso 4: Clasificar fases ─────────────────────────────────────────────────
+  const placementPatterns = [/puestos?/i, /\d+\s*[ºo°]\s*y\s*\d/i];
+
+  const mainFlow = [];
+  const placementFlow = [];
+
+  phaseData.forEach(p => {
+    const title = (p.title || '').toLowerCase();
+    const isPlacement = placementPatterns.some(re => re.test(title));
+    const hasData = p.blocks && p.blocks.some(b => b.type === 'bracket' || b.type === 'table');
+    
+    // Solo añadir fases con datos (o la principal siempre para no dejarlo vacío)
+    if (hasData || p.href === absoluteUrl) {
+      if (isPlacement) {
+        placementFlow.push(p);
+      } else {
+        mainFlow.push(p);
+      }
+    }
+  });
+
+  // ── Paso 5: Ordenar el flujo principal cronológicamente (Grupos → Semis → Final) ──
+  const getWeight = (t) => {
+    const lower = (t || '').toLowerCase();
+    if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+    if (/semi/.test(lower)) return 80;
+    if (/cuartos/.test(lower)) return 60;
+    if (/octavos/.test(lower)) return 40;
+    if (/grupo\s*a/.test(lower)) return 10;
+    if (/grupo\s*b/.test(lower)) return 11;
+    if (/grupo/.test(lower)) return 15;
+    return 20;
+  };
+  mainFlow.sort((a, b) => getWeight(a.title) - getWeight(b.title));
+
+  const result = { mainFlow, placements: placementFlow };
+  championshipDataCache.set(cacheKey, result);
+  return result;
+}
+
+/**
+ * Intenta adivinar el título de la primera fase a partir de la URL o el HTML.
+ */
+function guessPhaseTitle(url = '', html = '') {
+  const dom = parseHTML(html);
+  const normalizedUrl = toAbsoluteUrl(url).replace(/\/$/, '').toLowerCase();
+
+  // Intentar encontrar el ancla que apunta a la URL actual
+  const allLinks = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
+  
+  // 1. Prioridad: Link que sea active/selected
+  const activeTab = allLinks.find(n => /\b(active|selected|current)\b/i.test(n.attribs?.class || ''));
+  if (activeTab) {
+    const text = getTextContent(activeTab).trim();
+    if (text.length > 1 && text.length < 50) return text;
+  }
+
+  // 2. Prioridad: Link que coincida con la URL actual
+  const matchTab = allLinks.find(n => toAbsoluteUrl(n.attribs?.href || '').replace(/\/$/, '').toLowerCase() === normalizedUrl);
+  if (matchTab) {
+    const text = getTextContent(matchTab).trim();
+    if (text.length > 1 && text.length < 50) return text;
+  }
+
+  // 3. Fallback: Buscar un h1 descriptivo
+  const h1 = DomUtils.findOne(n => n.type === 'tag' && n.name === 'h1', dom.children || [], true);
+  if (h1) {
+    const text = getTextContent(h1)
+      .replace(/clasificaci[oó]n/i, '')
+      .replace(/calendar[ií]o/i, '')
+      .trim();
+    if (text.length > 1 && text.length < 50) return text;
+  }
+
+  return 'Fase';
+}
+
+
+/**
+ * Extrae información detallada del torneo desde la página /information.
+ */
+export async function fetchInfoData(infoUrl) {
+  const cacheKey = normalizeUrlForCache(infoUrl);
+  if (infoDataCache.has(cacheKey)) return infoDataCache.get(cacheKey);
+
+  const html = await fetchHTML(infoUrl);
+  const dom = parseHTML(html);
+  
+  const results = [];
+  
+  // 1. Búsqueda por estructura de rejilla (div.text-light-gray para etiquetas)
+  const infoCols = DomUtils.findAll(
+    (n) => n.type === 'tag' && (
+      /text-light-gray/i.test(getNodeClass(n)) || 
+      n.name === 'strong'
+    ),
+    dom.children,
+    true
+  );
+
+  infoCols.forEach(labelNode => {
+    const labelStr = getTextContent(labelNode).replace(/:$/, '').trim();
+    if (!labelStr) return;
+
+    // El valor suele ser el siguiente nodo de texto o el siguiente <div> hermano
+    let valueStr = '';
+    
+    // Si el labelNode es un strong dentro de un div, buscamos en el div hermano
+    if (labelNode.name === 'strong') {
+      const parentCol = DomUtils.findOne(n => /col-/i.test(getNodeClass(n)), [labelNode], true);
+      if (parentCol) {
+        let nextCol = parentCol.next;
+        while (nextCol && (nextCol.type !== 'tag' || !/col-/i.test(getNodeClass(nextCol)))) {
+          nextCol = nextCol.next;
+        }
+        if (nextCol) valueStr = getTextContent(nextCol).trim();
+      }
+    } else {
+      // Si es un div.text-light-gray, el valor es el siguiente col hermano
+      let nextCol = labelNode.next;
+      while (nextCol && (nextCol.type !== 'tag' || !/col-/i.test(getNodeClass(nextCol)))) {
+        nextCol = nextCol.next;
+      }
+      if (nextCol) valueStr = getTextContent(nextCol).trim();
+    }
+
+    if (labelStr && valueStr && !results.some(r => r.label.toLowerCase() === labelStr.toLowerCase())) {
+      // Evitar meter labels que son solo decorativas o vacías
+      if (labelStr.length > 2 && !labelStr.includes('fa-circle')) {
+        results.push({ label: labelStr, value: valueStr });
+      }
+    }
+  });
+
+  // 2. Búsqueda agresiva por texto de etiquetas conocidas
+  const allTexts = DomUtils.findAll((n) => n.type === 'text', dom.children, true);
+  const labelsToSearch = [
+    'Name', 'Season', 'Category', 'Sport', 'Gender', 'Start date', 'End date', 'Federation', 'Organizer', 'Teams', 'Registered', 'Group',
+    'Nombre', 'Temporada', 'Categoría', 'Deporte', 'Sexo', 'Fecha inicio', 'Fecha fin', 'Género', 'Federación', 'Organiza', 'Equipos', 'Inscritos', 'Año', 'Grupo', 'Participantes'
+  ];
+
+  allTexts.forEach(tNode => {
+    const text = tNode.data.trim();
+    if (!text) return;
+
+    const labelMatch = labelsToSearch.find(l => text.toLowerCase().startsWith(l.toLowerCase()));
+    if (labelMatch) {
+      const label = text.split(':')[0].trim();
+      let value = '';
+      if (text.includes(':')) {
+        value = text.substring(text.indexOf(':') + 1).trim();
+      }
+      
+      if (!value) {
+        let next = tNode.next;
+        while (next && !value) {
+          const val = getTextContent(next).trim();
+          if (val) value = val;
+          next = next.next;
+        }
+      }
+
+      if (label && value && !results.some(r => r.label.toLowerCase() === label.toLowerCase())) {
+        results.push({ label, value });
+      }
+    }
+  });
+
+  infoDataCache.set(cacheKey, results);
+  return results;
+}
+
+/**
+ * Parsea una estructura de Bracket/Eliminatoria desde el DOM.
+ */
+function parseBracketFromDom(dom) {
+  const columns = [];
+  const searchRoot = dom.children || [];
+  
+  // Buscar contenedores de columnas (Clupik fullscreen usa bracket-column, otros usan bracket)
+  let colNodes = DomUtils.findAll(
+    (n) => n.type === 'tag' && /\bbracket-column\b/i.test(n.attribs?.class || ''),
+    searchRoot,
+    true
+  );
+
+  if (colNodes.length === 0) {
+    colNodes = DomUtils.findAll(
+      (n) => n.type === 'tag' && /\bbracket\b/i.test(n.attribs?.class || ''),
+      searchRoot,
+      true
+    );
+  }
+
+  if (colNodes.length === 0) {
+    // Fallback 1: Buscar contenedores genéricos con muchos match-boxes
+    const allMatches = findMatchBoxes(searchRoot);
+    if (allMatches.length >= 2) {
+      // Agrupar matches por proximidad o simplemente meterlos en una columna
+      return { columns: [{ header: '', matches: allMatches }] };
+    }
+    // Fallback 2: Si hay al menos un partido (ej: Final), lo damos como bueno
+    if (allMatches.length === 1) {
+      return { columns: [{ header: 'Final', matches: allMatches }] };
+    }
+    return null;
+  }
+
+  colNodes.forEach(colNode => {
+    // Buscar cabecera de ronda
+    const headerNode = DomUtils.findOne(n => /\bbracket-header\b/i.test(n.attribs?.class || ''), [colNode], true);
+    let header = headerNode ? getTextContent(headerNode) : '';
+    
+    const matches = findMatchBoxes([colNode]);
+
+    // Si no hay cabecera explícita, buscar en la primera caja del bracket (bracket-data)
+    if (!header && matches.length > 0) {
+      const firstMatchNode = DomUtils.findOne(
+        (n) => n.type === 'tag' && /\b(match-box|box)\b/.test(n.attribs?.class || ''),
+        [colNode],
+        true
+      );
+      if (firstMatchNode) {
+        const dataNode = DomUtils.findOne(n => /\bbracket-data\b/i.test(n.attribs?.class || ''), [firstMatchNode], true);
+        if (dataNode) header = getTextContent(dataNode);
+      }
+    }
+
+    if (matches.length > 0) {
+      columns.push({ header, matches });
+    }
+  });
+
+  return columns.length > 0 ? { columns } : null;
+}
+
+/**
+ * Helper para encontrar cajas de partidos dentro de un nodo o array de nodos.
+ * La estructura Clupik es:
+ *   div.match-box
+ *     a.team (x2)        -> logo img + span nombre
+ *     a.match            -> span score1 + span score2
+ *     a.next-match       -> fecha/hora
+ */
+function findMatchBoxes(rootOrArray) {
+  const matches = [];
+  const searchIn = Array.isArray(rootOrArray) ? rootOrArray : (rootOrArray.children || [rootOrArray]);
+
+  const matchNodes = DomUtils.findAll(
+    (n) => {
+      if (n.type !== 'tag') return false;
+      const cls = (n.attribs?.class || '').toLowerCase();
+      const style = n.attribs?.style || '';
+      
+      // 1. Clase explícita de Clupik
+      if (/\b(match-box|box|match-data|bracket-data)\b/.test(cls)) return true;
+      
+      // 2. Heurística de contenido: 2 enlaces a equipo + 1 enlace a partido
+      const links = DomUtils.findAll(c => c.name === 'a', [n], true);
+      const teamLinks = links.filter(l => /\b(team|equipo)\b/i.test(l.attribs?.class || '') || /\/team\//i.test(l.attribs?.href || ''));
+      const matchLinks = links.filter(l => /\bmatch\b/i.test(l.attribs?.class || '') || /\/match\//i.test(l.attribs?.href || ''));
+      
+      if (teamLinks.length === 2 && matchLinks.length >= 1) return true;
+
+      // 3. Nodos con data-match
+      if (n.attribs?.['data-match']) return true;
+
+      return false;
+    },
+    searchIn,
+    true
+  );
+
+  matchNodes.forEach(mNode => {
+    const hasNestedMatch = DomUtils.findOne(n => n !== mNode && matchNodes.includes(n), [mNode], true);
+    if (hasNestedMatch) return;
+
+    // Equipos: links con clase 'team/equipo', data-team, o ruta /team/
+    const teamNodes = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'a' && (
+        /\b(team|equipo|club)\b/i.test(n.attribs?.class || '') || 
+        /\/team\//i.test(n.attribs?.href || '') ||
+        'data-team' in (n.attribs || {})
+      ),
+      [mNode],
+      true
+    );
+
+    // Marcador: links con clase 'match', data-match, o ruta /match/
+    const matchLinkNode = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'a' && (
+        /\bmatch\b/i.test(n.attribs?.class || '') || 
+        /\/match\//i.test(n.attribs?.href || '') ||
+        'data-match' in (n.attribs || {})
+      ) && !/\b(team|equipo|club)\b/i.test(n.attribs?.class || ''),
+      [mNode],
+      true
+    );
+
+    // Fecha: clase 'next-match' o 'date/time'
+    const scheduleNode = DomUtils.findOne(
+      n => n.type === 'tag' && (/\b(next-match|match-schedule)\b/.test(n.attribs?.class || '')),
+      [mNode],
+      true
+    );
+
+    const homeTeamNode = teamNodes[0];
+    const awayTeamNode = teamNodes[1];
+
+    if (!homeTeamNode && !awayTeamNode && !matchLinkNode) return;
+
+    const getTeamName = (node) => {
+      if (!node) return 'TBD';
+      // Prioridad 1: el span nombre o clase name/nombre
+      const span = DomUtils.findOne(n => n.name === 'span' || /\b(name|nombre)\b/i.test(n.attribs?.class || ''), [node], true);
+      const text = (span ? getTextContent(span) : getTextContent(node)).trim();
+      if (text && text.length > 1) return text;
+      // Prioridad 2: data-team
+      if (node.attribs?.['data-team']) return node.attribs['data-team'];
+      return 'TBD';
+    };
+
+    const getLogo = (node) => {
+      if (!node) return '';
+      const img = DomUtils.findOne(n => n.name === 'img' || /\b(logo|escudo)\b/i.test(n.attribs?.class || ''), [node], true);
+      return img?.attribs?.src || img?.attribs?.['data-src'] || img?.attribs?.['data-logo'] || '';
+    };
+
+    const homeTeam = getTeamName(homeTeamNode);
+    const awayTeam = getTeamName(awayTeamNode);
+    const homeLogo = getLogo(homeTeamNode);
+    const awayLogo = getLogo(awayTeamNode);
+
+    let scoreText = '- -';
+    if (matchLinkNode) {
+      const scoreSpans = DomUtils.findAll(n => n.name === 'span' || /\b(result|score)\b/i.test(n.attribs?.class || ''), [matchLinkNode], true);
+      const vals = scoreSpans
+        .map(s => getTextContent(s).replace(/\s+/g, '').replace(/[‐\-–—]/g, '-'))
+        .filter(s => s === '-' || /^\d+$/.test(s));
+      
+      if (vals.length >= 2) scoreText = `${vals[0]} - ${vals[1]}`;
+      else if (vals.length === 1) scoreText = vals[0];
+      else {
+        const rawText = getTextContent(matchLinkNode).trim();
+        if (rawText && rawText.length < 15 && /[\d\-]/.test(rawText)) scoreText = rawText;
+      }
+    }
+
+    const dateTime = scheduleNode ? getTextContent(scheduleNode).replace(/\s+/g, ' ').trim() : '';
+
+    matches.push({
+      title: '',
+      homeTeam,
+      awayTeam,
+      homeLogo: toAbsoluteUrl(homeLogo),
+      awayLogo: toAbsoluteUrl(awayLogo),
+      scoreText,
+      href: toAbsoluteUrl(matchLinkNode?.attribs?.href || scheduleNode?.attribs?.href || ''),
+      dateTime,
+    });
+  });
+
+  return matches;
 }

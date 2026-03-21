@@ -1,4 +1,4 @@
-﻿// src/screens/CompetitionsScreen.js
+// src/screens/CompetitionsScreen.js
 // Pantalla de Ligas â€” lista de torneos con bÃºsqueda y filtros.
 
 import React, { useMemo, useState } from 'react';
@@ -14,11 +14,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import TournamentList from '../components/TournamentList';
+import CompetitionList from '../components/CompetitionList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { URLS, toTournamentRankingUrl } from '../utils/htmlParser';
+import { URLS } from '../utils/htmlParser';
+import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -72,13 +73,7 @@ export default function CompetitionsScreen({ navigation }) {
   }, [tournamentTable, search, activeFilter]);
 
   const handleOpenTournament = (tournament) => {
-    if (!tournament?.href) return;
-    const rankingUrl = toTournamentRankingUrl(tournament.href);
-    navigation.navigate('TournamentDetail', {
-      url: rankingUrl,
-      title: tournament.name || 'ClasificaciÃ³n y calendario',
-      defaultTab: 'ranking',
-    });
+    openTournamentDetail(navigation, tournament);
   };
   const styles = useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
@@ -137,7 +132,7 @@ export default function CompetitionsScreen({ navigation }) {
     emptyIcon: { fontSize: 44 },
     emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
   }), [Colors]);
-  if (loading) return <LoadingView message="Cargando ligas..." />;
+  if (loading) return <LoadingView message="Cargando ligas y torneos..." />;
   if (error) return <ErrorView message={error} onRetry={refresh} />;
 
   return (
@@ -200,7 +195,7 @@ export default function CompetitionsScreen({ navigation }) {
         }
       >
         {filteredTable ? (
-          <TournamentList
+          <CompetitionList
             tableBlock={filteredTable}
             onOpenTournament={handleOpenTournament}
           />
