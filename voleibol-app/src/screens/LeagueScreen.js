@@ -256,6 +256,8 @@ export default function LeagueScreen({ route, navigation }) {
   const [activeTab, setActiveTab] = useState(defaultTab || 'ranking');
   const pagerRef = useRef(null);
   const [expandedCalendar, setExpandedCalendar] = useState({});
+  // Track the last selected jornada index
+  const [selectedJornadaIndex, setSelectedJornadaIndex] = useState(null);
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [modalHomeLogoIndex, setModalHomeLogoIndex] = useState(0);
   const [modalAwayLogoIndex, setModalAwayLogoIndex] = useState(0);
@@ -496,10 +498,18 @@ export default function LeagueScreen({ route, navigation }) {
     let result = [...flattenedMatches];
     
     if (searchTeams.length > 0) {
-      result = result.filter(m => 
-        searchTeams.includes(m.homeTeam) || 
-        searchTeams.includes(m.awayTeam)
-      );
+      if (searchTeams.length === 2) {
+        const [teamA, teamB] = searchTeams;
+        result = result.filter((m) =>
+          (m.homeTeam === teamA && m.awayTeam === teamB) ||
+          (m.homeTeam === teamB && m.awayTeam === teamA)
+        );
+      } else {
+        result = result.filter((m) =>
+          searchTeams.includes(m.homeTeam) ||
+          searchTeams.includes(m.awayTeam)
+        );
+      }
     }
     
     if (searchLocations.length > 0) {
@@ -544,11 +554,36 @@ export default function LeagueScreen({ route, navigation }) {
       const next = {};
       calendarTables.forEach((_, i) => {
         const key = `jornada-${i}`;
-        next[key] = prev[key] ?? false;
+        // Restore expanded state for selected jornada after refresh
+        if (selectedJornadaIndex !== null && i === selectedJornadaIndex) {
+          next[key] = true;
+        } else {
+          next[key] = prev[key] ?? false;
+        }
       });
       return next;
     });
-  }, [calendarTables]);
+
+    // Si estamos en JornadaDetail y hay selectedJornadaIndex, navegar a la jornada correcta tras refresh
+    if (
+      selectedJornadaIndex !== null &&
+      navigation &&
+      navigation.getState &&
+      calendarTables[selectedJornadaIndex]
+    ) {
+      const navState = navigation.getState();
+      const currentRoute = navState.routes[navState.index];
+      if (currentRoute && currentRoute.name === 'JornadaDetail') {
+        // Navegar a la jornada seleccionada con el bloque actualizado
+        navigation.replace('JornadaDetail', {
+          tableBlock: calendarTables[selectedJornadaIndex],
+          title: calendarTables[selectedJornadaIndex].title || `Jornada ${calendarTables.length - selectedJornadaIndex}`,
+          subtitle: seasonLabel,
+          calendarUrl: resolvedCalendarUrl
+        });
+      }
+    }
+  }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, resolvedCalendarUrl]);
 
   const selectedSets = useMemo(() => {
     if (!selectedMatch?.sets?.length) return [];
@@ -564,6 +599,8 @@ export default function LeagueScreen({ route, navigation }) {
   const toggleCalendarSection = useCallback((index) => {
     const key = `jornada-${index}`;
     setExpandedCalendar((prev) => ({ ...prev, [key]: !prev[key] }));
+    // Persist the last selected jornada index
+    setSelectedJornadaIndex(index);
   }, []);
 
   const openMatchModal = useCallback((match) => {
@@ -827,8 +864,10 @@ export default function LeagueScreen({ route, navigation }) {
   const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
     header: {
-      flexDirection: 'row', alignItems: 'center',
-      paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
+      flexDirection: 'row', 
+      alignItems: 'center',
+      paddingHorizontal: Spacing.md, 
+      paddingVertical: Spacing.sm,
       backgroundColor: Colors.background,
     },
     backBtn: {
@@ -836,7 +875,17 @@ export default function LeagueScreen({ route, navigation }) {
       justifyContent: 'center', alignItems: 'center',
       backgroundColor: 'transparent',
     },
-    headerTitle: { flex: 1, color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', paddingHorizontal: Spacing.sm, letterSpacing: -0.2 },
+    headerTitle: {
+      flex: 1,
+      color: isDark ? Colors.textPrimary : Colors.primary,
+      fontSize: 16,
+      lineHeight: 18,
+      fontWeight: '900',
+      textAlign: 'center',
+      paddingHorizontal: Spacing.sm,
+      letterSpacing: -0.5,
+      textTransform: 'uppercase',
+    },
     tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border },
     tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: 'transparent' },
     tabItemActive: { borderBottomColor: Colors.primary },
@@ -1090,7 +1139,7 @@ export default function LeagueScreen({ route, navigation }) {
   const rankingContent = useMemo(() => {
     const isTournament = /\b(torneo|copa|final|txapelketa|sector)\b/i.test(title || '');
     if (rankingLoading && !rankingTables.length) {
-      return <LoadingView message={isTournament ? "Cargando esquema del torneo..." : "Cargando clasificación..."} />;
+      return <LoadingView variant="clean" message="Cargando clasificación..." />;
     }
 
     const hasData = rankingTables.length > 0 || rankingBrackets.length > 0;
@@ -1207,12 +1256,16 @@ export default function LeagueScreen({ route, navigation }) {
                 }}>
                   <TouchableOpacity
                     activeOpacity={0.8}
-                    onPress={() => navigation.navigate('JornadaDetail', { 
-                      tableBlock: table, 
-                      title: displayTitle,
-                      subtitle: seasonLabel,
-                      calendarUrl: resolvedCalendarUrl
-                    })}
+                    onPress={() => {
+                      setSelectedJornadaIndex(i);
+                      navigation.navigate('JornadaDetail', { 
+                        tableBlock: table, 
+                        title: displayTitle,
+                        subtitle: seasonLabel,
+                        calendarUrl: resolvedCalendarUrl,
+                        jornadaIndex: i
+                      });
+                    }}
                     style={{
                       flexDirection: 'row',
                       alignItems: 'center',
@@ -1223,30 +1276,13 @@ export default function LeagueScreen({ route, navigation }) {
                       backgroundColor: (hasMatches && status === 'live') ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : 'transparent',
                     }}
                   >
-                    <View>
-                      <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: 16, fontWeight: 'bold' }}>
-                        {displayTitle}
-                      </Text>
-                      <Text style={{ color: Colors.textMuted, fontSize: 12, marginTop: 2 }}>
-                        {!hasMatches ? 'Sin información' : status === 'live' ? 'Esta semana' : status === 'finished' ? 'Finalizada' : 'Próxima'}
-                      </Text>
-                    </View>
-
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                      <View style={{
-                        backgroundColor: !hasMatches ? Colors.surfaceAlt : status === 'live' ? 'rgba(34,197,94,0.1)' : status === 'finished' ? 'rgba(148,163,184,0.1)' : 'rgba(59,130,246,0.1)',
-                        paddingHorizontal: 10,
-                        paddingVertical: 4,
-                        borderRadius: Radius.sm,
-                        borderWidth: 1,
-                        borderColor: !hasMatches ? Colors.border : status === 'live' ? 'rgba(34,197,94,0.2)' : status === 'finished' ? 'rgba(148,163,184,0.2)' : 'rgba(59,130,246,0.2)',
-                      }}>
-                        <Text style={{
-                          color: !hasMatches ? Colors.textMuted : status === 'live' ? '#22c55e' : status === 'finished' ? '#94a3b8' : '#3b82f6',
-                          fontSize: 10,
-                          fontWeight: 'bold',
-                        }}>
-                          {!hasMatches ? 'SIN INFORMACIÓN' : status === 'live' ? 'EN CURSO' : status === 'finished' ? 'FINALIZADA' : 'PRÓXIMA'}
+                      <View>
+                        <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: 16, fontWeight: 'bold' }}>
+                          {displayTitle}
+                        </Text>
+                        <Text style={{ color: Colors.textMuted, fontSize: 12, marginTop: 2 }}>
+                          {!hasMatches ? 'Sin información' : status === 'live' ? 'Esta semana' : status === 'finished' ? 'Finalizada' : 'Próxima'}
                         </Text>
                       </View>
                       <MaterialIcons 
@@ -1312,7 +1348,23 @@ export default function LeagueScreen({ route, navigation }) {
     );
   }, [filteredMatches, Colors, hasActiveFilters, openMatchModal, handlePressTeam]);
 
-  if (rankingLoading) return <LoadingView message="Cargando esquema de torneo..." />;
+  if (rankingLoading) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
+            <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={2}>
+            {(title || 'Liga').toUpperCase()}
+          </Text>
+          <View style={styles.backBtn} />
+        </View>
+        <LoadingView variant="clean" message="Cargando clasificación..." />
+      </SafeAreaView>
+    );
+  }
   
   // Manejo de temporada en configuración
   const isConfiguring = rankingError === 'SEASON_CONFIGURING' || calendarError === 'SEASON_CONFIGURING';
@@ -1365,8 +1417,8 @@ export default function LeagueScreen({ route, navigation }) {
         <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
           <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={1}>
-          {title || 'Liga'}
+        <Text style={styles.headerTitle} numberOfLines={2}>
+          {(title || 'Liga').toUpperCase()}
         </Text>
         <TouchableOpacity 
           style={styles.backBtn} 
@@ -1393,7 +1445,8 @@ export default function LeagueScreen({ route, navigation }) {
             <MaterialIcons 
               name={activeTab === 'calendar' ? 'search' : 'info-outline'} 
               size={24} 
-              color={isDark ? Colors.textPrimary : Colors.primary} 
+              color={isDark ? Colors.textPrimary : Colors.primary}
+              style={activeTab === 'calendar' ? { transform: [{ rotate: '-90deg' }] } : undefined}
             />
           </Animated.View>
         </TouchableOpacity>
@@ -1693,7 +1746,7 @@ export default function LeagueScreen({ route, navigation }) {
           >
             {calendarLoading ? (
               <View style={styles.emptyWrap}>
-                <LoadingView message="Cargando calendario..." />
+                <LoadingView variant="clean" message="Cargando calendario..." />
               </View>
             ) : calendarError ? (
               <View style={styles.emptyWrap}>

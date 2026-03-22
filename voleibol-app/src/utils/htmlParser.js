@@ -1,3 +1,72 @@
+// Parser específico para detalle de partido de torneo
+function parseTournamentMatchDetail(html) {
+  // Extraer equipos y sets usando data-original-title
+  // 1. Buscar todas las filas de la tabla de sets
+  const tableMatch = String(html).match(/<div class="match-partials">([\s\S]*?)<\/div>/i);
+  if (!tableMatch) return [];
+  const rows = [...tableMatch[1].matchAll(/<tr>([\s\S]*?)<\/tr>/gi)];
+  if (rows.length < 2) return [];
+
+  // 2. Extraer nombre de equipo de data-original-title y sets de cada fila
+  const teamRows = rows.map((row, idx) => {
+    // Extraer todos los <td>...</td> (incluyendo el primero)
+    const cellMatches = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
+    let teamName = null;
+    let tdRaw = '';
+    if (cellMatches.length > 0) {
+      tdRaw = row[1].match(/<td[^>]*>.*?<\/td>/is)?.[0] || '';
+    }
+    // Loguear el HTML crudo del primer <td>
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
+    }
+    // Buscar el primer <td ... data-original-title="NOMBRE" ...> o title="NOMBRE"
+    let tdMatch = tdRaw.match(/data-original-title=["']([^"']*)["']/i);
+    if (tdMatch && tdMatch[1] && tdMatch[1].trim().length > 0) {
+      teamName = tdMatch[1].trim();
+    } else {
+      tdMatch = tdRaw.match(/title=["']([^"']*)["']/i);
+      if (tdMatch && tdMatch[1] && tdMatch[1].trim().length > 0) {
+        teamName = tdMatch[1].trim();
+      } else if (cellMatches.length > 0) {
+        teamName = cellMatches[0][1].replace(/<[^>]+>/g, '').trim();
+      }
+    }
+    // Los sets están en las celdas a partir de la segunda
+    const setValues = cellMatches.slice(1).map(m => parseInt(m[1].replace(/<[^>]+>/g, '').trim(), 10) || 0);
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
+    }
+    return { teamName, setValues };
+  });
+
+  // 3. Si hay dos equipos y ambos tienen nombre y sets
+  if (teamRows.length === 2 && teamRows[0].teamName && teamRows[1].teamName) {
+    const [home, away] = teamRows;
+    // Calcular sets ganados
+    const homeScore = home.setValues.filter((h, i) => h > (away.setValues[i] || 0)).length;
+    const awayScore = away.setValues.filter((a, i) => a > (home.setValues[i] || 0)).length;
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
+    }
+    return [{
+      homeTeam: home.teamName,
+      awayTeam: away.teamName,
+      sets: home.setValues.map((h, i) => ({ home: h, away: away.setValues[i] || 0 })),
+      homeScore,
+      awayScore,
+      scoreText: `${homeScore} - ${awayScore}`,
+    }];
+  }
+  console.log('[parseTournamentMatchDetail] No se pudieron extraer ambos equipos y sets correctamente:', JSON.stringify(teamRows));
+  return [];
+}
 // src/utils/htmlParser.js
 // Utilidad central para descargar y parsear el HTML de la federación.
 // Usa htmlparser2 + domutils para recorrer el DOM sin ningún CSS original.
@@ -28,6 +97,7 @@ const tournamentsAjaxContextCache = new Map();
 const calendarAjaxContextCache = new Map();
 const infoDataCache = new Map();
 const championshipDataCache = new Map();
+const CHAMPIONSHIP_CACHE_TTL_MS = 30000;
 
 let globalSessionCookie = '';
 
@@ -919,34 +989,89 @@ function parseTeamCell(cellNode) {
 function parsePeriodsCell(cellNode) {
   if (!cellNode) return null;
 
+  // 1. Intentar método clásico (vertical-result/partial-result)
   const verticalResults = DomUtils.findAll(
     (n) => n.type === 'tag' && n.name === 'span' && /\bvertical-result\b/i.test(getNodeClass(n)),
     cellNode.children || []
   );
 
-  if (!verticalResults.length) return null;
-
-  const parsedColumns = verticalResults.map((node) => {
-    const partials = DomUtils.findAll(
-      (n) => n.type === 'tag' && n.name === 'span' && /\bpartial-result\b/i.test(getNodeClass(n)),
-      node.children || []
-    ).map((n) => {
-      const raw = getTextContent(n).replace(/\s+/g, ' ').trim();
-      const value = raw.replace(/[-‐‑‒–—―]+/g, '').trim();
-      return value || null;
+  let parsedColumns = [];
+  if (verticalResults.length) {
+    parsedColumns = verticalResults.map((node) => {
+      const partials = DomUtils.findAll(
+        (n) => n.type === 'tag' && n.name === 'span' && /\bpartial-result\b/i.test(getNodeClass(n)),
+        node.children || []
+      ).map((n) => {
+        const raw = getTextContent(n).replace(/\s+/g, ' ').trim();
+        const value = raw.replace(/[-‐‑‒–—―]+/g, '').trim();
+        return value || null;
+      });
+      return {
+        home: partials[0] ?? null,
+        away: partials[1] ?? null,
+      };
     });
+  }
 
-    return {
-      home: partials[0] ?? null,
-      away: partials[1] ?? null,
-    };
-  });
+  // 2. Fallback: buscar todos los spans o celdas con números tipo set (si no hay verticalResults)
+  if (!parsedColumns.length) {
+    // Buscar todos los spans o td con dos números (ej: 25 12)
+    const setCandidates = DomUtils.findAll(
+      (n) => n.type === 'tag' && (n.name === 'span' || n.name === 'td'),
+      cellNode.children || [],
+      true
+    );
+    const setRegex = /\b(\d{1,2})\s*[-: ]\s*(\d{1,2})\b/;
+    const foundSets = [];
+    setCandidates.forEach((n) => {
+      const txt = getTextContent(n).replace(/\s+/g, ' ').trim();
+      const m = txt.match(setRegex);
+      if (m) {
+        foundSets.push({ home: m[1], away: m[2] });
+      }
+    });
+    if (foundSets.length) {
+      // El primero suele ser el resultado global, el resto los sets
+      parsedColumns = foundSets;
+    }
+  }
 
-  const sets = parsedColumns.slice(1, 6).map((set, index) => ({
+  // 3. Construir sets y resultado global
+  let sets = parsedColumns.slice(1, 6).map((set, index) => ({
     number: index + 1,
     home: set.home,
     away: set.away,
   }));
+
+  // 4. Fallback: buscar secuencia de números en cualquier celda si no hay sets válidos
+  const setsAreEmpty = !sets.length || sets.every(s => (!s.home && !s.away));
+  if (setsAreEmpty && cellNode) {
+    // Buscar la celda con más números
+    const allTexts = DomUtils.findAll(
+      (n) => n.type === 'tag' && (n.name === 'td' || n.name === 'span'),
+      cellNode.children || [],
+      true
+    ).map(n => getTextContent(n).replace(/\s+/g, ' ').trim()).filter(Boolean);
+    let bestNumbers = [];
+    allTexts.forEach(txt => {
+      // Buscar secuencia de números (mínimo 4 para 2 sets)
+      const nums = txt.match(/\d{1,2}/g);
+      if (nums && nums.length > bestNumbers.length && nums.length >= 4) {
+        bestNumbers = nums;
+      }
+    });
+    if (bestNumbers.length >= 4) {
+      // Agrupar de dos en dos
+      sets = [];
+      for (let i = 0; i < bestNumbers.length - 1; i += 2) {
+        sets.push({
+          number: (i / 2) + 1,
+          home: bestNumbers[i],
+          away: bestNumbers[i + 1],
+        });
+      }
+    }
+  }
 
   return {
     matchScore: parsedColumns[0] || { home: null, away: null },
@@ -997,6 +1122,8 @@ function parseDateCell(cellNode) {
 }
 
 function parseMatchRow(rowNode) {
+  // LOG: inicio de parseo de fila
+  try { console.log('[PARSE_MATCH_ROW] Raw rowNode:', JSON.stringify(rowNode, null, 2)); } catch {}
   const cells = DomUtils.findAll(
     (n) => n.type === 'tag' && (n.name === 'th' || n.name === 'td'),
     rowNode.children || []
@@ -1005,14 +1132,48 @@ function parseMatchRow(rowNode) {
   if (!cells.length) return null;
 
   const teamCell = cells.find((cell) => /colstyle-equipo/.test(getNodeClass(cell)));
-  const periodsCell = cells.find((cell) => /colstyle-parciales/.test(getNodeClass(cell)));
+  let periodsCell = cells.find((cell) => /colstyle-parciales/.test(getNodeClass(cell)));
   const dateCell = cells.find((cell) => /colstyle-fecha/.test(getNodeClass(cell)));
+
+  // LOG: mostrar celdas detectadas
+  try {
+    console.log('[PARSE_MATCH_ROW] cells:', cells.map(c => getTextContent(c)));
+    if (!periodsCell) console.log('[PARSE_MATCH_ROW] No periodsCell encontrada, buscando mejor celda de sets/puntos...');
+  } catch {}
+
+  // --- ADAPTACIÓN TORNEOS: Si no hay periodsCell, buscar la celda con más números ---
+  if (!periodsCell) {
+    let maxNums = 0;
+    let bestCell = null;
+    cells.forEach(cell => {
+      const txt = getTextContent(cell).replace(/\s+/g, ' ').trim();
+      const nums = txt.match(/\d{1,2}/g);
+      if (nums && nums.length > maxNums && nums.length >= 4) {
+        maxNums = nums.length;
+        bestCell = cell;
+      }
+    });
+    if (bestCell) {
+      periodsCell = bestCell;
+      try { console.log('[PARSE_MATCH_ROW] Usando celda para sets/puntos:', getTextContent(bestCell)); } catch {}
+    }
+  }
 
   const teams = parseTeamCell(teamCell);
   const periods = parsePeriodsCell(periodsCell);
   const dateData = parseDateCell(dateCell);
 
-  if (!teams || !periods) return null;
+  // LOG: resultado del parseo de sets/puntos
+  try {
+    console.log('[PARSE_MATCH_ROW] Equipos:', teams);
+    console.log('[PARSE_MATCH_ROW] Periodos:', periods);
+    console.log('[PARSE_MATCH_ROW] Fecha:', dateData);
+  } catch {}
+
+  if (!teams || !periods) {
+    try { console.log('[PARSE_MATCH_ROW] Fila descartada por falta de datos.'); } catch {}
+    return null;
+  }
 
   return {
     ...teams,
@@ -1060,24 +1221,33 @@ export async function fetchAndParse(url) {
   if (/\/tournaments/i.test(absoluteUrl)) {
     blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl);
   } else if (/\/tournament\/\d+\/ranking/i.test(absoluteUrl)) {
-    blocks = await fetchRankingBlocksViaAjax(absoluteUrl);
+    // SOLO HTML: NO AJAX PARA TORNEOS
+    const html = await fetchHTML(absoluteUrl);
+    blocks = parseBlocksFromHtml(html);
   } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
     blocks = await fetchCalendarBlocksViaAjax(absoluteUrl);
   } else {
     const html = await fetchHTML(absoluteUrl);
     blocks = parseBlocksFromHtml(html);
+    // Si no se extrajo ningún partido válido, intenta el parser específico
+    const hasValidMatch = blocks.some(b => b.type === 'table' && Array.isArray(b.matches) && b.matches.length > 0);
+    if (!hasValidMatch) {
+      const matches = parseTournamentMatchDetail(html);
+      if (matches.length > 0) {
+        console.log('[fetchAndParse] Parser torneo devolvió:', JSON.stringify(matches));
+        blocks.push({ type: 'table', matches });
+      } else {
+        console.log('[fetchAndParse] Parser torneo no devolvió ningún partido válido');
+      }
+    }
   }
 
   // Elimina bloques duplicados consecutivos
   const result = blocks.filter((block, i) => {
     if (i === 0) return true;
     const prev = blocks[i - 1];
-    if (block.type === 'table') return true;
-    return !(
-      prev.type === block.type &&
-      prev.content === block.content &&
-      block.content !== undefined
-    );
+    if (block.type === block.type && block.content === prev.content && block.content !== undefined) return false;
+    return true;
   });
 
   return result;
@@ -1123,7 +1293,11 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
  */
 export async function fetchChampionshipData(rankingUrl) {
   const cacheKey = normalizeUrlForCache(rankingUrl);
-  if (championshipDataCache.has(cacheKey)) return championshipDataCache.get(cacheKey);
+  const cached = championshipDataCache.get(cacheKey);
+  if (cached) {
+    const isExpired = (Date.now() - (cached.cachedAt || 0)) > CHAMPIONSHIP_CACHE_TTL_MS;
+    if (!isExpired && cached.data) return cached.data;
+  }
 
   // ── Paso 1: Obtener el HTML de la primera fase ──
   const absoluteUrl = toAbsoluteUrl(rankingUrl);
@@ -1163,13 +1337,13 @@ export async function fetchChampionshipData(rankingUrl) {
   const mainFlow = [];
   const placementFlow = [];
 
+  // SOLO PARTIDOS DE BRACKET O CALENDARIO EN TORNEOS
   phaseData.forEach(p => {
     const title = (p.title || '').toLowerCase();
     const isPlacement = placementPatterns.some(re => re.test(title));
-    const hasData = p.blocks && p.blocks.some(b => b.type === 'bracket' || b.type === 'table');
-    
-    // Solo añadir fases con datos (o la principal siempre para no dejarlo vacío)
-    if (hasData || p.href === absoluteUrl) {
+    // Solo bloques tipo bracket o calendar (no tablas de clasificación)
+    const hasBracketOrCalendar = p.blocks && p.blocks.some(b => b.type === 'bracket' || b.type === 'calendar');
+    if (hasBracketOrCalendar || p.href === absoluteUrl) {
       if (isPlacement) {
         placementFlow.push(p);
       } else {
@@ -1193,7 +1367,7 @@ export async function fetchChampionshipData(rankingUrl) {
   mainFlow.sort((a, b) => getWeight(a.title) - getWeight(b.title));
 
   const result = { mainFlow, placements: placementFlow };
-  championshipDataCache.set(cacheKey, result);
+  championshipDataCache.set(cacheKey, { data: result, cachedAt: Date.now() });
   return result;
 }
 
@@ -1505,17 +1679,151 @@ function findMatchBoxes(rootOrArray) {
       }
     }
 
-    const dateTime = scheduleNode ? getTextContent(scheduleNode).replace(/\s+/g, ' ').trim() : '';
+
+    // --- EXTRACCIÓN ROBUSTA DE FASE, FECHA Y SEDE ---
+    let phase = '';
+    let dateTime = '';
+    let venue = '';
+    // Buscar en ancestros .bracket-data y .round-header y .next-match
+    let parent = mNode.parent;
+    while (parent) {
+      if (!phase && parent.attribs && /bracket-data/.test(parent.attribs.class || '')) {
+        phase = getTextContent(parent).replace(/\s+/g, ' ').trim();
+      }
+      if (!phase && parent.attribs && /round-header/.test(parent.attribs.class || '')) {
+        phase = getTextContent(parent).replace(/\s+/g, ' ').trim();
+      }
+      // Buscar fecha/sede en .next-match o en el texto de .bracket-data
+      if (!dateTime || !venue) {
+        const nextMatch = DomUtils.findOne(
+          n => n.type === 'tag' && /next-match/.test(n.attribs?.class || ''),
+          [parent],
+          true
+        );
+        if (nextMatch) {
+          const txt = getTextContent(nextMatch).replace(/\s+/g, ' ').trim();
+          const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+          if (m) {
+            if (m[1]) dateTime = m[1].trim();
+            if (m[2]) venue = m[2].trim();
+          } else {
+            dateTime = txt;
+          }
+        }
+        if (!venue && parent.attribs && /bracket-data/.test(parent.attribs.class || '')) {
+          const txt = getTextContent(parent).replace(/\s+/g, ' ').trim();
+          const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+          if (m) {
+            if (!dateTime && m[1]) dateTime = m[1].trim();
+            if (m[2]) venue = m[2].trim();
+          }
+        }
+      }
+      parent = parent.parent;
+    }
+    // Buscar en hermanos siguientes .bracket-data o .next-match si sigue sin datos
+    let sibling = mNode.next;
+    while (sibling) {
+      if (!phase && sibling.attribs && /bracket-data/.test(sibling.attribs.class || '')) {
+        phase = getTextContent(sibling).replace(/\s+/g, ' ').trim();
+      }
+      if ((!dateTime || !venue) && sibling.attribs && /next-match/.test(sibling.attribs.class || '')) {
+        const txt = getTextContent(sibling).replace(/\s+/g, ' ').trim();
+        const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+        if (m) {
+          if (m[1]) dateTime = m[1].trim();
+          if (m[2]) venue = m[2].trim();
+        } else {
+          dateTime = txt;
+        }
+      }
+      sibling = sibling.next;
+    }
+    // Si sigue sin datos, buscar en el propio mNode (por compatibilidad)
+    if (!phase) {
+      const bracketDataNode = DomUtils.findOne(
+        n => n.type === 'tag' && /bracket-data/.test(n.attribs?.class || ''),
+        [mNode],
+        true
+      );
+      if (bracketDataNode) {
+        phase = getTextContent(bracketDataNode).replace(/\s+/g, ' ').trim();
+      }
+    }
+    if ((!dateTime || !venue) && scheduleNode) {
+      const txt = getTextContent(scheduleNode).replace(/\s+/g, ' ').trim();
+      const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+      if (m) {
+        if (m[1]) dateTime = m[1].trim();
+        if (m[2]) venue = m[2].trim();
+      } else {
+        dateTime = txt;
+      }
+    }
+
+    // Forzar logo 200x200
+    const fixLogo = url => url ? url.replace(/\.(\d+)x\1(\.[a-zA-Z0-9]+)$/, '.200x200$2') : null;
+
+    // Extraer sets de <span class="partial"><span>home</span><span>away</span></span>
+    const setNodes = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'span' && /partial/.test(n.attribs?.class || ''),
+      [mNode],
+      true
+    );
+    const sets = setNodes.map(sn => {
+      const nums = DomUtils.findAll(
+        n => n.type === 'tag' && n.name === 'span',
+        sn.children || [],
+        false
+      ).map(s => getTextContent(s).replace(/\D+/g, '')).filter(Boolean);
+      return nums.length === 2 ? { home: nums[0], away: nums[1] } : null;
+    }).filter(Boolean);
+
+    // --- DETECCIÓN DE ESTADO "LIVE"/"EN CURSO" ---
+    let state = undefined;
+    // 1. Buscar iconos <i title="En curso"> o similares
+    const liveIcon = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'i' && n.attribs && (
+        /en\s*curso|en\s*juego|live|directo|in\s*play|in\s*progress/i.test(n.attribs.title || '') ||
+        /fa[- ]?bolt|fa[- ]?play|icon[- ]?live|icono[- ]?live/.test(n.attribs.class || '')
+      ),
+      [mNode],
+      true
+    );
+    // 2. Buscar clases "live", "en-curso", etc. en el propio nodo o descendientes
+    const hasLiveClass = (node) => {
+      if (!node || !node.attribs) return false;
+      return /\blive\b|en[-_]?curso|en[-_]?juego|directo|in[-_]?play|in[-_]?progress/i.test(node.attribs.class || '');
+    };
+    let foundLiveClass = hasLiveClass(mNode);
+    if (!foundLiveClass) {
+      DomUtils.findAll(
+        n => n.type === 'tag' && hasLiveClass(n),
+        [mNode],
+        true
+      ).forEach(() => { foundLiveClass = true; });
+    }
+    // 3. Buscar texto visible "En curso", "En juego", "Directo", etc.
+    const textContent = getTextContent(mNode).toLowerCase();
+    const foundLiveText = /en\s*curso|en\s*juego|directo|live|in\s*play|in\s*progress/.test(textContent);
+
+    if (liveIcon || foundLiveClass || foundLiveText) {
+      state = 'live';
+    }
 
     matches.push({
-      title: '',
+      title: phase,
+      phase,
       homeTeam,
       awayTeam,
-      homeLogo: toAbsoluteUrl(homeLogo),
-      awayLogo: toAbsoluteUrl(awayLogo),
+      homeLogo: fixLogo(toAbsoluteUrl(homeLogo)),
+      awayLogo: fixLogo(toAbsoluteUrl(awayLogo)),
       scoreText,
       href: toAbsoluteUrl(matchLinkNode?.attribs?.href || scheduleNode?.attribs?.href || ''),
       dateTime,
+      venue,
+      sets: sets.length ? sets : undefined,
+      ...(state ? { state } : {}),
     });
   });
 

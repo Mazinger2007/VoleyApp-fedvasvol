@@ -150,8 +150,8 @@ function MatchCard({ match, isDark, colors, onPress }) {
 
 export default function JornadaDetailScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { tableBlock, title, subtitle, calendarUrl } = route.params || {};
-  
+  const { tableBlock, title, subtitle, calendarUrl, jornadaIndex } = route.params || {};
+
   const [currentTableBlock, setCurrentTableBlock] = useState(tableBlock);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -160,11 +160,20 @@ export default function JornadaDetailScreen({ route, navigation }) {
     setRefreshing(true);
     try {
       const blocks = await fetchAndParse(calendarUrl);
-      // Find the specific table block that matches the current title or contains matches
-      const newBlock = blocks.find(b => 
-        (b.type === 'table' && (b.title === title || b.title === tableBlock?.title)) ||
-        (b.type === 'table' && b.matches?.length > 0)
-      );
+      // Buscar por índice si está disponible
+      let newBlock = null;
+      if (typeof jornadaIndex === 'number' && jornadaIndex >= 0) {
+        // Invertir el orden como en LeagueScreen (slice().reverse())
+        const tables = blocks.filter(b => b.type === 'table').slice().reverse();
+        newBlock = tables[jornadaIndex] || null;
+      }
+      // Fallback: buscar por título si no se encuentra por índice
+      if (!newBlock) {
+        newBlock = blocks.find(b => 
+          (b.type === 'table' && (b.title === title || b.title === tableBlock?.title)) ||
+          (b.type === 'table' && b.matches?.length > 0)
+        );
+      }
       if (newBlock) {
         setCurrentTableBlock(newBlock);
       }
@@ -173,7 +182,7 @@ export default function JornadaDetailScreen({ route, navigation }) {
     } finally {
       setRefreshing(false);
     }
-  }, [calendarUrl, title, tableBlock]);
+  }, [calendarUrl, title, tableBlock, jornadaIndex]);
 
   const matchList = useMemo(() => {
     if (currentTableBlock?.matches?.length) return currentTableBlock.matches;

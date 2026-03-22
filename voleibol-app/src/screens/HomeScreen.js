@@ -24,7 +24,7 @@ import { Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
 export default function HomeScreen({ navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors } = useTheme();
   const { blocks, loading, error, refresh } = useFetch(URLS.home);
 
   // Home centrada en torneos
@@ -38,8 +38,8 @@ export default function HomeScreen({ navigation }) {
   };
 
   const styles = useMemo(() => StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.background },
-    scroll: { flex: 1, backgroundColor: Colors.background },
+    safe: { flex: 1, backgroundColor: colors.background },
+    scroll: { flex: 1, backgroundColor: colors.background },
     content: { paddingBottom: Spacing.xxxl },
     emptyWrap: {
       padding: Spacing.xxl,
@@ -49,7 +49,7 @@ export default function HomeScreen({ navigation }) {
     },
     emptyIcon: { fontSize: 52 },
     emptyText: {
-      color: Colors.textMuted,
+      color: colors.textMuted,
       fontSize: Typography.size.md,
       textAlign: 'center',
       lineHeight: 22,

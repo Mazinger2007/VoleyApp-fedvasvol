@@ -101,15 +101,23 @@ export default function SettingsScreen() {
       paddingHorizontal: Spacing.lg,
       paddingTop: Spacing.md,
       paddingBottom: Spacing.md,
-      borderBottomWidth: 1,
-      borderBottomColor: Colors.border,
-      backgroundColor: Colors.surface,
+      borderBottomWidth: 0,
+      backgroundColor: '#fff',
       alignItems: 'center',
+      elevation: 4,
+      shadowColor: Colors.primary,
+      shadowOpacity: 0.08,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 2 },
     },
     headerTitle: {
-      color: Colors.textPrimary,
+      color: Colors.primary,
       fontSize: Typography.size.lg,
       fontWeight: Typography.weight.bold,
+      letterSpacing: 1,
+      textShadowColor: 'rgba(0,0,0,0.04)',
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 1,
     },
     scrollContent: {
       padding: Spacing.lg,
@@ -446,7 +454,7 @@ export default function SettingsScreen() {
                   }}
                 >
                   <LinearGradient
-                    colors={[Colors.primary, Colors.primary + 'CC']}
+                    colors={[Colors.primary, Colors.primary]}
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                     style={{ flex: 1, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', elevation: 2 }}

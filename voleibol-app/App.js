@@ -14,8 +14,8 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 // ── Pantallas ────────────────────────────────────────────────────────────────
 import MatchesScreen from './src/screens/MatchesScreen';
-import CompetitionsScreen from './src/screens/CompetitionsScreen';
-import TeamsScreen from './src/screens/TeamsScreen';
+import BeachScreen from './src/screens/BeachScreen';
+import NewsScreen from './src/screens/NewsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import LeagueScreen from './src/screens/LeagueScreen';
 import TournamentScreen from './src/screens/TournamentScreen';
@@ -44,8 +44,8 @@ function TabIcon({ routeName, focused, colors }) {
 
   const iconByRoute = {
     Matches: 'emoji-events',
-    Competitions: 'beach-access',
-    Teams: 'newspaper',
+    Beach: 'beach-access',
+    News: 'newspaper',
     Settings: 'settings',
   };
 
@@ -77,8 +77,8 @@ const iconStyles = StyleSheet.create({
 
 const TAB_LABELS = {
   Matches: 'LIGAS',
-  Competitions: 'VOLEY PLAYA',
-  Teams: 'NOTICIAS',
+  Beach: 'VOLEY PLAYA',
+  News: 'NOTICIAS',
   Settings: 'AJUSTES',
 };
 
@@ -185,14 +185,14 @@ function MainTabs() {
         options={{ tabBarLabel: TAB_LABELS.Matches }}
       />
       <Tab.Screen
-        name="Competitions"
-        component={CompetitionsScreen}
-        options={{ tabBarLabel: TAB_LABELS.Competitions }}
+        name="Beach"
+        component={BeachScreen}
+        options={{ tabBarLabel: TAB_LABELS.Beach }}
       />
       <Tab.Screen
-        name="Teams"
-        component={TeamsScreen}
-        options={{ tabBarLabel: TAB_LABELS.Teams }}
+        name="News"
+        component={NewsScreen}
+        options={{ tabBarLabel: TAB_LABELS.News }}
       />
       <Tab.Screen
         name="Settings"

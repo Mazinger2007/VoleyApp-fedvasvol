@@ -1,4 +1,0 @@
-# Directorio para archivos de caché JSON
-# Los archivos se crean/renombran atómicamente por writeCache() en config/database.php
-# No confirmar archivos .json generados — añade esto a .gitignore si lo tienes:
-#   cache/*.json

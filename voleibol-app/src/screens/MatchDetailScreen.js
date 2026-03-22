@@ -63,6 +63,13 @@ function TeamLogo({ uri, name, isDark, size = 64 }) {
 
 export default function MatchDetailScreen({ route, navigation }) {
   const { match, calendarUrl } = route.params;
+  // LOG para depuración
+  if (typeof window !== 'undefined') {
+    console.log('[MATCH DETAIL] Params:', { match, calendarUrl });
+  } else {
+    // eslint-disable-next-line no-console
+    console.log('[MATCH DETAIL] Params:', { match, calendarUrl });
+  }
   const { colors: Colors, isDark } = useTheme();
 
   // 1. Hooks de estado
@@ -114,6 +121,11 @@ export default function MatchDetailScreen({ route, navigation }) {
       const matchDateObj = parseMatchDateTime(summary.rawDate) || new Date();
       // Normalizar a medianoche (hora local) para la comparación
       const matchDay = new Date(matchDateObj.getFullYear(), matchDateObj.getMonth(), matchDateObj.getDate());
+      const isLiveMatch = summary.state === 'live';
+      const dayStart = new Date(matchDay);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(matchDay);
+      dayEnd.setHours(23, 59, 59, 999);
       
       const isCloseDate = (pubDate, targetDay) => {
         const d1 = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate());
@@ -121,6 +133,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         const diffDays = Math.abs(d1 - d2) / (1000 * 60 * 60 * 24);
         return diffDays <= 1; // Margen de 1 día (el mismo día o el siguiente)
       };
+      const hasLiveWords = (title = '') => /en\s*directo|directo|live|stream/i.test(title);
 
       const cleanName = (n) => n.replace(/Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
       const homeClean = cleanName(summary.homeTeam);
@@ -239,14 +252,50 @@ export default function MatchDetailScreen({ route, navigation }) {
             return prev;
           });
           
-          if (officialResult.score >= 15) { // Si ya es una excelente coincidencia, paramos
+          if (!isLiveMatch && officialResult.score >= 15) { // En live primero intentamos directos
             foundId = officialResult.id;
             console.log(`[YouTube] ✓ Encontrado en canal oficial (${officialResult.canal}) con alta puntuación: ${officialResult.score}`);
           }
         }
       }
 
-      // ─── PASO 3: Búsqueda General en YouTube (Si no hay nada oficial fuerte) ───────────────
+      // ─── PASO 3: Si está en directo, priorizar búsqueda LIVE en YouTube ─────────────────────
+      if (!foundId && apiKey && isLiveMatch) {
+        console.log(`[YouTube] Partido en directo: buscando emisiones LIVE para "${searchTerm}"...`);
+        try {
+          const liveRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+            params: {
+              part: 'snippet',
+              q: searchTerm,
+              maxResults: 25,
+              type: 'video',
+              eventType: 'live',
+              relevanceLanguage: 'es',
+              regionCode: 'ES',
+              key: apiKey
+            }
+          });
+
+          if (liveRes.data?.items?.length > 0) {
+            let bestLiveMatch = null;
+            for (const item of liveRes.data.items) {
+              const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam)
+                + (hasLiveWords(item.snippet.title) ? 8 : 0);
+              if (score > (bestLiveMatch?.score || 0)) {
+                bestLiveMatch = { id: item.id.videoId, score };
+              }
+            }
+            if (bestLiveMatch) {
+              foundId = bestLiveMatch.id;
+              console.log(`[YouTube] ✓ Directo encontrado vía API LIVE (score ${bestLiveMatch.score})`);
+            }
+          }
+        } catch (err) {
+          console.warn('[YouTube] Búsqueda LIVE falló:', err.message, err.response?.data?.error || '');
+        }
+      }
+
+      // ─── PASO 4: Fallback a vídeos emitidos/subidos el día del partido ──────────────────────
       if (!foundId && apiKey) {
         console.log(`[YouTube] Probando búsqueda general: ${searchTerm} (Puntuación oficial previa: ${officialResult?.score || 0})`);
         try {
@@ -256,6 +305,9 @@ export default function MatchDetailScreen({ route, navigation }) {
               q: searchTerm, 
               maxResults: 50, 
               type: 'video', 
+              order: 'date',
+              publishedAfter: dayStart.toISOString(),
+              publishedBefore: dayEnd.toISOString(),
               relevanceLanguage: 'es',
               regionCode: 'ES',
               key: apiKey 
@@ -431,41 +483,136 @@ export default function MatchDetailScreen({ route, navigation }) {
     }
   };
 
-  const updateMatchFromBlocks = useCallback((blocks) => {
-    // Find correctly identifying match by team names
+  const updateMatchFromBlocks = useCallback(async (blocks) => {
+    // Si hay href, refresca usando el enlace directo del partido
+    if (currentMatch?.href) {
+      try {
+        const directBlocks = await fetchAndParse(currentMatch.href);
+        const blockMatches = (directBlocks || [])
+          .filter((b) => b.type === 'table')
+          .flatMap((b) => b.matches || []);
+        // 1. Buscar por nombre exacto
+        let found = blockMatches.find(m => {
+          const s = getMatchSummary(m);
+          return s.homeTeam === summary.homeTeam && s.awayTeam === summary.awayTeam;
+        });
+        // 2. Si no, buscar el primero con sets válidos
+        if (!found) found = blockMatches.find(m => (m.sets || []).length > 0);
+        // 3. Si no, usar el primero
+        if (!found && blockMatches.length > 0) found = blockMatches[0];
+        if (found) {
+          setCurrentMatch((prev) => ({
+            ...prev,
+            ...found,
+            href: prev?.href || found?.href || null,
+          }));
+          return;
+        }
+      } catch (err) {
+        console.warn('[MatchDetail] Error al refrescar desde href:', err?.message || err);
+      }
+    }
+    // Si no hay href, buscar por nombre en los bloques
+    let found = null;
     for (const block of blocks) {
       if (block.type !== 'table') continue;
       const matches = block.matches || [];
-      const found = matches.find(m => {
+      found = matches.find(m => {
         const s = getMatchSummary(m);
         return s.homeTeam === summary.homeTeam && s.awayTeam === summary.awayTeam;
       });
-      if (found) {
-        setCurrentMatch(found);
-        return;
+      if (found) break;
+    }
+    // Si no, buscar el primero con sets válidos
+    if (!found) {
+      for (const block of blocks) {
+        if (block.type !== 'table') continue;
+        const matches = block.matches || [];
+        found = matches.find(m => (m.sets || []).length > 0);
+        if (found) break;
       }
     }
+    // Si no, usar el primero
+    if (!found) {
+      for (const block of blocks) {
+        if (block.type !== 'table') continue;
+        const matches = block.matches || [];
+        if (matches.length > 0) {
+          found = matches[0];
+          break;
+        }
+      }
+    }
+    if (found) setCurrentMatch(found);
+  }, [currentMatch?.href, summary.homeTeam, summary.awayTeam]);
+
+  const updateMatchFromDirectMatchBlocks = useCallback((blocks) => {
+    const blockMatches = (blocks || [])
+      .filter((b) => b.type === 'table')
+      .flatMap((b) => b.matches || []);
+
+    if (!blockMatches.length) return false;
+
+    // 1. Buscar por nombre exacto
+    let found = blockMatches.find((m) => {
+      const s = getMatchSummary(m);
+      return s.homeTeam === summary.homeTeam && s.awayTeam === summary.awayTeam;
+    });
+    // 2. Si no, buscar el primero con sets válidos
+    if (!found) found = blockMatches.find((m) => (m.sets || []).length > 0);
+    // 3. Si no, usar el primero
+    if (!found && blockMatches.length > 0) found = blockMatches[0];
+    if (!found) return false;
+
+    setCurrentMatch((prev) => ({
+      ...prev,
+      ...found,
+      href: prev?.href || found?.href || null,
+    }));
+    return true;
   }, [summary.homeTeam, summary.awayTeam]);
 
-  // Background polling if in progress
+  // Polling siempre que haya calendarUrl, sin importar el estado
   useLivePolling(
-    summary.state === 'live' ? calendarUrl : null,
-    [currentMatch], // Needs to be an array for hasLiveMatch check
+    calendarUrl,
+    [currentMatch],
     updateMatchFromBlocks
   );
 
   const onRefresh = useCallback(async () => {
-    if (!calendarUrl) return;
     setRefreshing(true);
     try {
-      const blocks = await fetchAndParse(calendarUrl);
-      updateMatchFromBlocks(blocks);
+      if (calendarUrl) {
+        const blocks = await fetchAndParse(calendarUrl);
+        updateMatchFromBlocks(blocks);
+      }
+
+      if (currentMatch?.href) {
+        const directBlocks = await fetchAndParse(currentMatch.href);
+        updateMatchFromDirectMatchBlocks(directBlocks);
+      }
     } catch (err) {
       console.error('Error refreshing match detail:', err);
     } finally {
       setRefreshing(false);
     }
-  }, [calendarUrl, updateMatchFromBlocks]);
+  }, [calendarUrl, currentMatch?.href, updateMatchFromBlocks, updateMatchFromDirectMatchBlocks]);
+
+  // When opened from TournamentScreen, fetch direct match URL to load sets.
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDirectMatchData() {
+      if (!currentMatch?.href) return;
+      try {
+        const directBlocks = await fetchAndParse(currentMatch.href);
+        if (!cancelled) updateMatchFromDirectMatchBlocks(directBlocks);
+      } catch (err) {
+        console.warn('Error loading direct match data:', err?.message || err);
+      }
+    }
+    loadDirectMatchData();
+    return () => { cancelled = true; };
+  }, [currentMatch?.href, updateMatchFromDirectMatchBlocks]);
 
   const openVenueInMaps = () => {
     let venue = summary.venue || '';

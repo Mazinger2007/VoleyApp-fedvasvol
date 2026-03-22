@@ -1,40 +1,13 @@
 // src/hooks/useLivePolling.js
 // Polls a URL periodically and updates the block result only when scores change.
-// Polling only starts when at least one "EN CURSO" / "live" match is detected.
+// It keeps polling even before a match is live so "EN CURSO" transitions are
+// detected automatically without manual refresh.
 
 import { useEffect, useRef, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { fetchAndParse } from '../utils/htmlParser';
 
-const POLL_INTERVAL_MS = 60_000; // 60 seconds between polls
-
-/**
- * Returns true if any calendar block contains a live match.
- * @param {Array} blocks - Parsed blocks from the calendar URL.
- */
-function hasLiveMatch(blocks) {
-  for (const block of blocks) {
-    if (block?.type !== 'table') continue;
-    const rows = block.rows || [];
-    for (const row of rows) {
-      for (const cell of row) {
-        const val = String(cell || '').toUpperCase();
-        if (val.includes('EN CURSO') || val.includes('LIVE') || val.includes('DIRECTO')) {
-          return true;
-        }
-      }
-    }
-    // Also check rowData if present
-    const matches = block.matches || [];
-    for (const match of matches) {
-      const s = String(match?.status || '').toUpperCase();
-      if (s.includes('EN CURSO') || s.includes('LIVE') || s.includes('DIRECTO')) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
+const POLL_INTERVAL_MS = 10_000; // 10 seconds between polls
 
 /**
  * Serializes live-relevant data so we can detect changes without deep equal.
@@ -76,11 +49,6 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
         lastSnapshotRef.current = newSnapshot;
         onUpdate(newBlocks);
         onResultChange?.();
-        // If no more live matches, stop polling
-        if (!hasLiveMatch(newBlocks)) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
       }
     } catch (_) {
       // Ignore polling errors silently
@@ -91,9 +59,6 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
 
   useEffect(() => {
     if (!url || !currentBlocks?.length) return;
-
-    // Only start polling when there's at least one live match
-    if (!hasLiveMatch(currentBlocks)) return;
 
     lastSnapshotRef.current = scoreSnapshot(currentBlocks);
 
