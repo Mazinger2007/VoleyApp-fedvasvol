@@ -7,14 +7,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "postinstall": "node scripts/fix-metro-compat.js",
-    "sync:discover": "node scripts/fedvas-sync.js --discover",
-    "sync:benchmark": "node scripts/fedvas-benchmark.js",
-    "sync:benchmark:leagues": "node scripts/fedvas-benchmark-leagues.js",
-    "sync:sample": "node scripts/fedvas-sync.js --limitTournaments 3",
-    "sync:full": "node scripts/fedvas-sync.js",
-    "sync:db:once": "node scripts/fedvas-sync-db.js --once",
-    "sync:db:daemon": "node scripts/fedvas-sync-db.js"
+    "postinstall": "node scripts/fix-metro-compat.js"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
@@ -28,7 +21,7 @@
     "css-select": "^5.1.0",
     "domhandler": "^5.0.3",
     "domutils": "^3.1.0",
-    "expo": "^55.0.0",
+    "expo": "^55.0.8",
     "expo-blur": "^55.0.10",
     "expo-calendar": "^55.0.10",
     "expo-font": "~55.0.4",
@@ -70,7 +63,7 @@
     "metro-symbolicate": "0.83.3",
     "metro-transform-plugins": "0.83.3",
     "metro-transform-worker": "0.83.3",
-    "use-latest-callback": "0.1.11"
+    "use-latest-callback": "^0.2.1"
   },
   "private": true
 }

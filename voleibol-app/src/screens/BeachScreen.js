@@ -6,6 +6,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, TouchableOpacity } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
+import { Colors } from '../styles/theme'; 
 
 
 export default function BeachScreen({ navigation }) {

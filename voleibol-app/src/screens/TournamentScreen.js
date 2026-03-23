@@ -277,6 +277,24 @@ export default function TournamentScreen({ route, navigation }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const toggleFullscreen = useCallback(async () => {
+    const nextState = !isFullscreen;
+    setIsFullscreen(nextState);
+    if (nextState) {
+      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT);
+    } else {
+      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.DEFAULT);
+    }
+  }, [isFullscreen]);
+
+  useEffect(() => {
+    // Unlock on unmount
+    return () => {
+      ScreenOrientation.unlockAsync();
+    };
+  }, []);
 
   useEffect(() => {
     async function loadData(showLoading = true) {
@@ -794,13 +812,15 @@ export default function TournamentScreen({ route, navigation }) {
     return (
       <ScrollView style={{ flex: 1 }}>
         {/* Editorial header */}
-        <View style={styles.editorialHeader}>
-          <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
-            <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
+        {!isFullscreen && (
+          <View style={styles.editorialHeader}>
+            <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
+              <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
+            </View>
+            <Text style={[styles.editorialTitle, { color: Colors.primary }]}>CUADRO DE FINALES</Text>
+            <View style={[styles.editorialUnderline, { backgroundColor: Colors.primary }]} />
           </View>
-          <Text style={[styles.editorialTitle, { color: Colors.primary }]}>CUADRO DE FINALES</Text>
-          <View style={[styles.editorialUnderline, { backgroundColor: Colors.primary }]} />
-        </View>
+        )}
 
         {/* Horizontal bracket scroll */}
         <ScrollView
@@ -825,7 +845,7 @@ export default function TournamentScreen({ route, navigation }) {
           ))}
 
           {/* Placement matches (3rd/4th etc.) */}
-          {placementMatchesOrdered.length > 0 && (
+          {!isFullscreen && placementMatchesOrdered.length > 0 && (
             <View style={[
               styles.columnWrapper,
               styles.placementsColumn,
@@ -853,25 +873,34 @@ export default function TournamentScreen({ route, navigation }) {
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: Colors.background }]}>
-      <View style={[styles.header, { backgroundColor: Colors.surface, borderBottomColor: Colors.border, borderBottomWidth: 1 }]}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-          <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <MaterialIcons name="emoji-events" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-          <Text style={[styles.headerTitleText, { color: Colors.primary }]}>
-            {title ? title.toUpperCase() : 'TORNEO'}
-          </Text>
+      {!isFullscreen && (
+        <View style={[styles.header, { backgroundColor: Colors.surface, borderBottomColor: Colors.border, borderBottomWidth: 1 }]}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+            <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+          </TouchableOpacity>
+          <View style={styles.headerTitleContainer}>
+            <MaterialIcons name="emoji-events" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
+            <Text style={[styles.headerTitleText, { color: Colors.primary }]}>
+              {title ? title.toUpperCase() : 'TORNEO'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.navigate('Info', { tournamentUrl: url, title: title || 'Información' })}
+          >
+            <MaterialIcons name="info-outline" size={24} color={Colors.primary} />
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.navigate('Info', { tournamentUrl: url, title: title || 'Información' })}
-        >
-          <MaterialIcons name="info-outline" size={24} color={Colors.primary} />
-        </TouchableOpacity>
-      </View>
+      )}
 
       {renderContent()}
+
+      <TouchableOpacity
+        style={[styles.fullscreenBtn, { backgroundColor: Colors.surface }]}
+        onPress={toggleFullscreen}
+      >
+        <MaterialIcons name={isFullscreen ? "fullscreen-exit" : "fullscreen"} size={28} color={Colors.primary} />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -1024,4 +1053,20 @@ const styles = StyleSheet.create({
   icon: { marginBottom: 20 },
   emptyText: { fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 8 },
   subText: { fontSize: 14, textAlign: 'center', opacity: 0.6 },
+  fullscreenBtn: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    width: 44,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 22,
+    zIndex: 100,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
 });

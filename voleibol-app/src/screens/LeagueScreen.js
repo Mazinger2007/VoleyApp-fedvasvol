@@ -303,6 +303,10 @@ export default function LeagueScreen({ route, navigation }) {
     }).start();
   }, [activeTab]);
 
+
+  // Memoized values for teams, dates, and locations (move above any useEffect that uses them)
+
+
   useEffect(() => {
     if (isDatePickerVisible && !searchDate && allAvailableDates.length > 0) {
       const first = allAvailableDates[0];
@@ -541,6 +545,25 @@ export default function LeagueScreen({ route, navigation }) {
     const venues = flattenedMatches.map(m => m.venue || 'Sede por confirmar').filter(Boolean);
     return [...new Set(venues)].sort();
   }, [flattenedMatches]);
+
+  useEffect(() => {
+    if (isDatePickerVisible && !searchDate && allAvailableDates.length > 0) {
+      const first = allAvailableDates[0];
+      const match = first.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
+      if (match) {
+        const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
+        if (mIdx !== -1) {
+          setCalendarMonth(mIdx);
+        }
+      }
+    } else if (isDatePickerVisible && searchDate) {
+      const match = searchDate.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
+      if (match) {
+         const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
+         if (mIdx !== -1) setCalendarMonth(mIdx);
+      }
+    }
+  }, [isDatePickerVisible, searchDate, allAvailableDates]);
 
   const rankingTeamCount = useMemo(() => {
     if (!rankingTables || rankingTables.length === 0) return 0;

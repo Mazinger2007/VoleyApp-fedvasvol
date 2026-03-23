@@ -62,7 +62,7 @@ function TeamLogo({ uri, name, isDark, size = 64 }) {
 }
 
 export default function MatchDetailScreen({ route, navigation }) {
-  const { match, calendarUrl } = route.params;
+  const { match, calendarUrl } = route?.params || {};
   // LOG para depuración
   if (typeof window !== 'undefined') {
     console.log('[MATCH DETAIL] Params:', { match, calendarUrl });
@@ -76,11 +76,13 @@ export default function MatchDetailScreen({ route, navigation }) {
   const [activeTab, setActiveTab] = useState('detalles');
   const [youtubeVideoId, setYoutubeVideoId] = useState(null);
   const [youtubeLoading, setYoutubeLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [currentMatch, setCurrentMatch] = useState(match);
   const [refreshing, setRefreshing] = useState(false);
   const [isReminderActive, setIsReminderActive] = useState(false);
   const [reminderLoading, setReminderLoading] = useState(false);
   const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
+  const [isPlaying, setIsPlaying] = useState(false);
 
   // 2. Refs
   const pagerRef = useRef(null);
@@ -107,12 +109,13 @@ export default function MatchDetailScreen({ route, navigation }) {
   ];
 
   const INVIDIOUS_HOSTS = [
-    'https://inv.nadeko.net',
-    'https://invidious.nerdvpn.de',
-    'https://invidious.projectsegfau.lt'
+    // Prioridad basada en test de velocidad (138ms y 696ms)
+    'https://yewtu.be',
+    'https://invidious.projectsegfau.lt',
+    'https://iv.ggtyler.dev',
+    'https://invidious.jing.rocks',
+    'https://vid.puffyan.us'
   ];
-
-
   const fetchYouTubeVideo = async () => {
     const apiKey = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
 
@@ -135,7 +138,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       };
       const hasLiveWords = (title = '') => /en\s*directo|directo|live|stream/i.test(title);
 
-      const cleanName = (n) => n.replace(/Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
+      const cleanName = (n) => n.replace(/Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|S\.K\.T\.|S\.K\.T|K\.E\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
       const homeClean = cleanName(summary.homeTeam);
       const awayClean = cleanName(summary.awayTeam);
       const searchTerm = `${homeClean} ${awayClean}`.replace(/\s+/g, ' ');
@@ -159,11 +162,32 @@ export default function MatchDetailScreen({ route, navigation }) {
         if (matchHome && matchAway) score += 20; // ¡Super bono por tener ambos!
 
         if (t.includes('vs') || t.includes('contra') || t.includes('-')) score += 2;
-        if (t.includes('voley') || t.includes('voleibol') || t.includes('partido')) score += 1;
+        if (t.includes('voley') || t.includes('voleibol') || t.includes('boleibola') || t.includes('boleibol') || t.includes('partido')) score += 1;
         if (t.includes('jornada') || t.includes('fecha') || t.includes('liga')) score += 1;
         
         console.log(`[YouTube] Evaluando: "${titulo}" | Score: ${score} (H:${matchHome}, A:${matchAway})`);
         return score;
+      };
+
+      // Helper para peticiones web robustas (intenta varios proxies si uno falla)
+      const robustGet = async (url, isJson = true) => {
+        if (Platform.OS !== 'web') {
+          const res = await axios.get(url, { timeout: 5000 });
+          return res.data;
+        }
+        // Proxy 1: CorsProxy.io (Rápido)
+        try {
+          const res = await axios.get(`https://corsproxy.io/?${encodeURIComponent(url)}`, { timeout: 3500 });
+          if (isJson && typeof res.data === 'string' && res.data.trim().startsWith('<')) throw new Error("Proxy devolvió HTML");
+          return res.data;
+        } catch (e) { /* Falló P1, probar siguiente */ }
+        // Proxy 2: AllOrigins (Respaldo fiable)
+        try {
+          const res = await axios.get(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, { timeout: 4500 });
+          if (res.data?.contents) return isJson ? JSON.parse(res.data.contents) : res.data.contents;
+        } catch (e) { /* Falló P2 */ }
+
+        throw new Error("Todos los proxies fallaron");
       };
 
       // ─── PASO 1 y 2: Búsqueda en canales oficiales de los equipos (RSS + Invidious) ───────────────
@@ -183,13 +207,15 @@ export default function MatchDetailScreen({ route, navigation }) {
           const opponent = isHome ? summary.awayTeam : summary.homeTeam;
           const opponentClean = cleanName(opponent);
           
+          let channelBest = null;
           try {
             const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-            const rssRes = await axios.get(`https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`, { timeout: 6000 });
+            
+            const rssBaseUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`;
+            const rssRes = { data: await robustGet(rssBaseUrl, false) }; // false = esperamos XML string
             const data = parser.parse(rssRes.data);
             const entries = data?.feed?.entry ? (Array.isArray(data.feed.entry) ? data.feed.entry : [data.feed.entry]) : [];
 
-            let channelBest = null;
             for (const entry of entries) {
               const pubDate = new Date(entry.published);
               if (isCloseDate(pubDate, matchDay)) {
@@ -201,41 +227,68 @@ export default function MatchDetailScreen({ route, navigation }) {
             }
             if (channelBest && channelBest.score >= 20) return channelBest;
 
-            const host = INVIDIOUS_HOSTS[Math.floor(Math.random() * INVIDIOUS_HOSTS.length)];
+            // Intentar con los servidores en orden de fiabilidad/velocidad (sin shuffle)
+            const shuffledHosts = [...INVIDIOUS_HOSTS];
             
-            // Paso 2.1: Búsqueda específica dentro del canal
-            try {
-              const searchRes = await axios.get(`${host}/api/v1/channels/${channel.id}/search?q=${encodeURIComponent(opponentClean)}`, { timeout: 8000 });
-              const searchVideos = searchRes.data || [];
-              for (const v of searchVideos) {
-                const pubDate = new Date(v.published * 1000);
-                if (isCloseDate(pubDate, matchDay)) {
-                  const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam);
-                  if (score > (channelBest?.score || 0)) {
-                    channelBest = { id: v.videoId, score, source: 'InvSearch', canal: channel.name, priority: channel.priority || false, isHome };
+            for (const host of shuffledHosts) {
+              if (channelBest && channelBest.score >= 20) break; // Ya tenemos uno bueno
+              let hostWorks = false;
+              
+              try {
+                // Paso 2.1: Búsqueda específica
+                const searchApiUrl = `${host}/api/v1/channels/${channel.id}/search?q=${encodeURIComponent(opponentClean)}`;
+                const responseData = await robustGet(searchApiUrl, true);
+                
+                if (!Array.isArray(responseData)) throw new Error("Respuesta inválida (no es array)");
+
+                hostWorks = true;
+                const searchVideos = responseData || [];
+                for (const v of searchVideos) {
+                  const pubDate = new Date(v.published * 1000);
+                  if (isCloseDate(pubDate, matchDay)) {
+                    const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam);
+                    if (score > (channelBest?.score || 0)) {
+                      channelBest = { id: v.videoId, score, source: 'InvSearch', canal: channel.name, priority: channel.priority || false, isHome };
+                    }
                   }
                 }
+              } catch (err) {
+                console.log(`[YouTube] Search falló en ${host}: ${err.message}`);
               }
-            } catch (searchErr) {
-              console.log(`[YouTube] Invidious Search falló para ${channel.name}: ${searchErr.message}`);
-            }
-            if (channelBest && channelBest.score >= 20) return channelBest;
 
-            // Paso 2.2: Escaneo cronológico (como último recurso en el canal)
-            const invRes = await axios.get(`${host}/api/v1/channels/${channel.id}/videos?sort_by=newest`, { timeout: 8000 });
-            const videos = invRes.data?.videos || [];
-            for (const v of videos) {
-              const pubDate = new Date(v.published * 1000);
-              if (isCloseDate(pubDate, matchDay)) {
-                const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam);
-                if (score > (channelBest?.score || 0)) {
-                   channelBest = { id: v.videoId, score, source: 'Invidious', canal: channel.name, priority: channel.priority || false, isHome };
+              if (channelBest && channelBest.score >= 20) break;
+
+              try {
+                // Paso 2.2: Escaneo cronológico (fallback)
+                const videosApiUrl = `${host}/api/v1/channels/${channel.id}/videos?sort_by=newest`;
+                const responseData = await robustGet(videosApiUrl, true);
+
+                // Validar estructura de respuesta de vídeos
+                if (!responseData || !Array.isArray(responseData.videos)) throw new Error("Respuesta inválida (campo videos faltante)");
+
+                hostWorks = true;
+                const videos = responseData.videos || [];
+                for (const v of videos) {
+                  const pubDate = new Date(v.published * 1000);
+                  if (isCloseDate(pubDate, matchDay)) {
+                    const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam);
+                    if (score > (channelBest?.score || 0)) {
+                      channelBest = { id: v.videoId, score, source: 'Invidious', canal: channel.name, priority: channel.priority || false, isHome };
+                    }
+                  }
                 }
+              } catch (err) {
+                console.log(`[YouTube] Videos falló en ${host}: ${err.message}`);
               }
+              
+              // Si el host respondió correctamente a algo (Search o Videos), paramos de rotar para no saturar,
+              // a menos que no hayamos encontrado nada, pero Invidious suele ser consistente.
+              if (hostWorks) break;
             }
+
             if (channelBest && channelBest.score > 0) return channelBest;
           } catch (e) {
-            return null;
+            if (channelBest && channelBest.score > 0) return channelBest;
           }
           return null;
         });
@@ -342,10 +395,17 @@ export default function MatchDetailScreen({ route, navigation }) {
         }
       }
 
+      // PASO FINAL: Si tenemos un resultado de canal oficial (aunque sea de baja puntuación) y no hay nada mejor, usarlo.
+      // Esto arregla casos donde el título es solo "Getxo en directo" (Score ~6) pero es el canal correcto en el día correcto.
+      if (!foundId && officialResult) {
+        foundId = officialResult.id;
+        console.log(`[YouTube] ✓ Forzando uso de resultado oficial (Score: ${officialResult.score}) al no encontrar alternativa mejor.`);
+      }
 
 
       if (foundId) {
         setYoutubeVideoId(foundId);
+        // No iniciamos la reproducción, solo cargamos el ID para mostrar la miniatura
       } else {
         console.log('[YouTube] No se encontró ningún vídeo');
       }
@@ -353,13 +413,18 @@ export default function MatchDetailScreen({ route, navigation }) {
       console.error('Error YouTube:', err.message);
     } finally {
       setYoutubeLoading(false);
+      setHasSearched(true);
     }
   };
 
   // 5. Effects
   useEffect(() => {
-    if (activeTab === 'repeticion' && !youtubeVideoId && !youtubeLoading) {
+    if (activeTab === 'repeticion' && !youtubeVideoId && !youtubeLoading && !hasSearched) {
       fetchYouTubeVideo();
+    }
+    // Resetea la reproducción si se cambia de pestaña
+    if (activeTab !== 'repeticion') {
+      setIsPlaying(false);
     }
   }, [activeTab]);
 
@@ -753,33 +818,33 @@ export default function MatchDetailScreen({ route, navigation }) {
       case 'repeticion':
         return (
           <View style={{ gap: Spacing.xl }}>
-            <View style={[styles.videoPlayer, { backgroundColor: '#000', overflow: 'hidden' }]}>
-              {youtubeVideoId ? (
-                <WebView
-                  style={{ flex: 1 }}
-                  source={{ 
-                    uri: `https://www.youtube-nocookie.com/embed/${youtubeVideoId}?rel=0&modestbranding=1&playsinline=1&enablejsapi=1&origin=https://www.youtube.com`,
-                    headers: { 'Referer': 'https://www.youtube.com' }
-                  }}
-                  javaScriptEnabled={true}
-                  domStorageEnabled={true}
-                  allowsFullscreenVideo={true}
-                  allowsInlineMediaPlayback={true}
-                  mediaPlaybackRequiresUserAction={true}
-                  userAgent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
-                />
-              ) : youtubeLoading ? (
-                <View style={[styles.videoPlaceholder, { justifyContent: 'center', alignItems: 'center', flex: 1 }]}>
-                  <Text style={{ color: '#fff' }}>Buscando repetición...</Text>
+            <View style={[styles.videoPlayer, { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
+              {youtubeLoading || (!hasSearched && !youtubeVideoId) ? (
+                <View style={{ alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+                  <ActivityIndicator size="large" color={Colors.primary} />
+                  <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 }}>BUSCANDO VÍDEO...</Text>
                 </View>
+              ) : youtubeVideoId ? (
+                <TouchableOpacity
+                  style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }}
+                  onPress={() => Linking.openURL(`https://www.youtube.com/watch?v=${youtubeVideoId}`)}
+                  activeOpacity={0.9}
+                >
+                  <Image
+                    source={{ uri: `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg` }}
+                    style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                  />
+                  <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
+                    <MaterialIcons name="play-circle" size={72} color="rgba(255,255,255,0.7)" />
+                  </View>
+                </TouchableOpacity>
               ) : (
-                <View style={[styles.videoPlaceholder, { justifyContent: 'center', alignItems: 'center', flex: 1 }]}>
-                   <MaterialIcons name="video-library" size={48} color="rgba(255,255,255,0.3)" />
-                   <Text style={{ color: 'rgba(255,255,255,0.6)', marginTop: 12 }}>No se ha encontrado repetición del partido</Text>
-                   <TouchableOpacity style={{ marginTop: 20, padding: 10 }} onPress={fetchYouTubeVideo}>
-                     <Text style={{ color: Colors.primary }}>Reintentar búsqueda</Text>
-                   </TouchableOpacity>
-                </View>
+                <View style={{ alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32 }}>
+                   <MaterialIcons name="videocam-off" size={48} color="rgba(255,255,255,0.2)" />
+                   <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
+                     No hemos encontrado el partido en los canales oficiales.
+                   </Text>
+                 </View>
               )}
             </View>
           </View>
