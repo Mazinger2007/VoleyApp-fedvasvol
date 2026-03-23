@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,13 +7,18 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
+  Animated,
+  PanResponder,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
-import { fetchChampionshipData } from '../utils/htmlParser';
+import { fetchChampionshipData, discoverSeasonLabel } from '../utils/htmlParser';
 import { Radius, Spacing, Typography } from '../styles/theme';
+import { useMemo } from 'react';
 
 
 // ─── Gap between cards in the same column ───────────────────────────────────
@@ -22,6 +27,50 @@ const CARD_GAP = 16;
 const CONNECTOR_WIDTH = 40;
 const PHASE_CARD_WIDTH = 300;
 const PHASE_SNAP_INTERVAL = PHASE_CARD_WIDTH + CONNECTOR_WIDTH * 1.5;
+
+// ─── Zoomable View for Fullscreen ─────────────────────────────────────────────
+function ZoomableView({ children, backgroundColor = '#000' }) {
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const [contentSize, setContentSize] = useState({ w: 0, h: 0 });
+
+  // Valores animados para la transformación inicial
+  const pan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const scale = useRef(new Animated.Value(1)).current;
+
+  // Auto-ajustar (Fit to Frame) cuando tenemos dimensiones
+  useEffect(() => {
+    if (contentSize.w > 0 && containerSize.w > 0) {
+      // 1. Calculamos la escala (esto está bien)
+      const scaleX = containerSize.w / contentSize.w;
+      const scaleY = containerSize.h / contentSize.h;
+      const fitScale = Math.min(scaleX, scaleY) * 0.9; // 0.9 para dejar margen
+      scale.setValue(fitScale);
+
+      // 2. EL FIX: Centrar los ejes. 
+      // No multipliques por fitScale aquí. Solo busca que los centros coincidan.
+        const offsetX = (containerSize.w - contentSize.w) / 2 -160; // Mueve 60px a la izquierda
+      const offsetY = (containerSize.h - contentSize.h) / 2;
+      pan.setValue({ x: offsetX, y: offsetY });
+    }
+  }, [contentSize, containerSize]);
+
+  return (
+    <View 
+      style={{ flex: 1, backgroundColor: backgroundColor, overflow: 'hidden' }}
+      onLayout={(e) => setContainerSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+    >
+      <Animated.View
+        style={{
+          transform: [{ translateX: pan.x }, { translateY: pan.y }, { scale: scale }],
+          flexDirection: 'row', // Asegurar layout horizontal para el bracket
+        }}
+        onLayout={(e) => setContentSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
+      >
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
 
 // Manual snap offset per phase (edit these values).
 // Positive = further right, Negative = further left.
@@ -272,12 +321,26 @@ function BracketColumn({ col, cIdx, totalColumns, Colors, renderMatchCard }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function TournamentScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { title, url } = route.params || {};
+  const { title, url, season } = route.params || {};
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [resolvedSeason, setResolvedSeason] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    async function getSeason() {
+      if (!url) return;
+      try {
+        const s = await discoverSeasonLabel(url);
+        if (mounted && s) setResolvedSeason(s);
+      } catch {}
+    }
+    getSeason();
+    return () => { mounted = false; };
+  }, [url]);
 
   const toggleFullscreen = useCallback(async () => {
     const nextState = !isFullscreen;
@@ -378,18 +441,16 @@ export default function TournamentScreen({ route, navigation }) {
     const topIsWinner = hasBothScores && top.score > bottom.score;
     const bottomIsWinner = hasBothScores && bottom.score > top.score;
 
-    const openMatchDetail = () => {
+    const openMatchDetail = async () => {
+      if (isFullscreen) {
+        // Forzar orientación vertical antes de navegar
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        setIsFullscreen(false); // Actualizar estado para salir del modo fullscreen visualmente
+      }
       const payload = {
         match: toMatchDetailPayload(match),
         calendarUrl: url,
       };
-      // LOG para depuración
-      if (typeof window !== 'undefined') {
-        console.log('[NAVIGATE] MatchDetail payload:', payload);
-      } else {
-        // eslint-disable-next-line no-console
-        console.log('[NAVIGATE] MatchDetail payload:', payload);
-      }
       navigation.navigate('MatchDetail', payload);
     };
 
@@ -446,7 +507,7 @@ export default function TournamentScreen({ route, navigation }) {
         )}
       </TouchableOpacity>
     );
-  }, [Colors, navigation]);
+  }, [Colors, navigation, isFullscreen, url]);
 
   // ── Flatten phases → columns ───────────────────────────────────────────────
   const flattenedColumns = React.useMemo(() => {
@@ -495,8 +556,24 @@ export default function TournamentScreen({ route, navigation }) {
     return columns.filter(c => (c.matches || []).length > 0);
   }, [data]);
 
-  // Mostrar siempre el texto "Temporada actual" en el badge
-  const seasonBadgeLabel = 'TEMPORADA ACTUAL';
+  const seasonBadgeLabel = useMemo(() => {
+    const yearPattern = /\b(20\d{2})\s*[\/\-]\s*(\d{2,4})\b/;
+
+    // Intentar encontrar patrón de año en resolvedSeason, title o season (en ese orden)
+    for (const src of [resolvedSeason, title, season]) {
+      const m = String(src || '').match(yearPattern);
+      if (m) {
+        return `TEMPORADA ${m[1]}/${m[2].length === 2 ? m[2] : m[2].slice(-2)}`;
+      }
+    }
+
+    // Si no hay match de año, y resolvedSeason tiene texto válido (y no es solo un ID), usarlo
+    if (resolvedSeason && !/^\d+$/.test(resolvedSeason)) {
+      return `TEMPORADA ${resolvedSeason.replace(/\s/g, '')}`;
+    }
+
+    return '';
+  }, [season, resolvedSeason, title]);
 
   const displayColumns = React.useMemo(() => {
     if (flattenedColumns.length <= 1) return flattenedColumns;
@@ -530,7 +607,7 @@ export default function TournamentScreen({ route, navigation }) {
 
       const mergedColumns = [...nonSemifinalColumns];
       mergedColumns.splice(insertionIndex, 0, {
-        title: 'SEMIFINAL',
+        title: 'CUARTOS DE FINAL',
         matches: mergedSemifinalMatches,
       });
       workingColumns = mergedColumns;
@@ -655,7 +732,7 @@ export default function TournamentScreen({ route, navigation }) {
   }, [displayColumns, data?.placements]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  const renderContent = () => {
+  const renderContent = (isLandscapeMode) => {
     if (loading) {
       return (
         <View style={styles.center}>
@@ -809,13 +886,67 @@ export default function TournamentScreen({ route, navigation }) {
       return match || null;
     }).filter(Boolean);
 
+    // Contenido del Bracket (Reutilizable para ScrollView normal y ZoomableView)
+    const bracketContent = (
+      <>
+        {displayColumns.map((col, cIdx) => (
+          <BracketColumn
+            key={`${String(col?.title || 'col').toLowerCase().trim()}-${cIdx}-${(col?.matches || []).length}`}
+            col={col}
+            cIdx={cIdx}
+            totalColumns={displayColumns.length}
+            Colors={Colors}
+            renderMatchCard={renderMatchCard}
+          />
+        ))}
+        {/* Placement matches (3rd/4th etc.) - Renderizar también en fullscreen */}
+        {placementMatchesOrdered.length > 0 && (
+          <View style={[
+            styles.columnWrapper,
+            styles.placementsColumn,
+            { borderLeftColor: Colors.border, marginRight: 10 }
+          ]}>
+            <Text style={styles.phaseTitleText}>CLASIFICACIÓN FINAL</Text>
+            <View style={[styles.matchesGroup, { width: PHASE_CARD_WIDTH }]}> 
+              {placementMatchesOrdered.map((m, idx) => {
+                if (!m) return null;
+                return (
+                  <View key={buildMatchStableKey(m, `placement-${idx}`)}>
+                    {renderMatchCard(m, true)}
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
+      </>
+    );
+
+    if (isLandscapeMode) {
+      return (
+        <ZoomableView backgroundColor={Colors.background}>
+          <View style={styles.bracketContainer}>
+            {bracketContent}
+          </View>
+        </ZoomableView>
+      );
+    }
+
     return (
       <ScrollView style={{ flex: 1 }}>
         {/* Editorial header */}
         {!isFullscreen && (
           <View style={styles.editorialHeader}>
-            <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
-              <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
+                <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
+              </View>
+              <TouchableOpacity 
+                onPress={toggleFullscreen}
+                style={{ padding: 4, marginTop: -9 }}
+              >
+                <MaterialIcons name="fullscreen" size={28} color={Colors.primary} />
+              </TouchableOpacity>
             </View>
             <Text style={[styles.editorialTitle, { color: Colors.primary }]}>CUADRO DE FINALES</Text>
             <View style={[styles.editorialUnderline, { backgroundColor: Colors.primary }]} />
@@ -833,37 +964,7 @@ export default function TournamentScreen({ route, navigation }) {
           directionalLockEnabled
           contentContainerStyle={styles.bracketContainer}
         >
-          {displayColumns.map((col, cIdx) => (
-            <BracketColumn
-              key={`${String(col?.title || 'col').toLowerCase().trim()}-${cIdx}-${(col?.matches || []).length}`}
-              col={col}
-              cIdx={cIdx}
-              totalColumns={displayColumns.length}
-              Colors={Colors}
-              renderMatchCard={renderMatchCard}
-            />
-          ))}
-
-          {/* Placement matches (3rd/4th etc.) */}
-          {!isFullscreen && placementMatchesOrdered.length > 0 && (
-            <View style={[
-              styles.columnWrapper,
-              styles.placementsColumn,
-              { borderLeftColor: Colors.border, marginRight: 10, /* solo 10px de margen derecho */ }
-            ]}>
-              <Text style={styles.phaseTitleText}>CLASIFICACIÓN FINAL</Text>
-              <View style={[styles.matchesGroup, { width: PHASE_CARD_WIDTH }]}> 
-                {placementMatchesOrdered.map((m, idx) => {
-                  if (!m) return null;
-                  return (
-                    <View key={buildMatchStableKey(m, `placement-${idx}`)}>
-                      {renderMatchCard(m, true)}
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-          )}
+          {bracketContent}
         </ScrollView>
 
         <View style={{ height: 100 }} />
@@ -893,14 +994,17 @@ export default function TournamentScreen({ route, navigation }) {
         </View>
       )}
 
-      {renderContent()}
+      {renderContent(isFullscreen)}
 
-      <TouchableOpacity
-        style={[styles.fullscreenBtn, { backgroundColor: Colors.surface }]}
-        onPress={toggleFullscreen}
-      >
-        <MaterialIcons name={isFullscreen ? "fullscreen-exit" : "fullscreen"} size={28} color={Colors.primary} />
-      </TouchableOpacity>
+      {isFullscreen && (
+        <TouchableOpacity
+          style={{ position: 'absolute', top: 25, right: 20, marginTop: 20, zIndex: 100 }}
+          onPress={toggleFullscreen}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <MaterialIcons name="fullscreen-exit" size={28} color={Colors.primary} />
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 }
@@ -1053,20 +1157,4 @@ const styles = StyleSheet.create({
   icon: { marginBottom: 20 },
   emptyText: { fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 8 },
   subText: { fontSize: 14, textAlign: 'center', opacity: 0.6 },
-  fullscreenBtn: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 44,
-    height: 44,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderRadius: 22,
-    zIndex: 100,
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-  },
 });

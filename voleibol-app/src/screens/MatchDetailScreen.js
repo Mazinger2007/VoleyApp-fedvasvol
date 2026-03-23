@@ -23,7 +23,6 @@ import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
 import { getCachedLogoColorSync } from '../utils/logoColorCache';
-import { useLivePolling } from '../hooks/useLivePolling';
 import { fetchAndParse } from '../utils/htmlParser';
 import VenueMap from '../components/VenueMap';
 import PagerView from '../components/PagerViewWrapper';
@@ -63,13 +62,6 @@ function TeamLogo({ uri, name, isDark, size = 64 }) {
 
 export default function MatchDetailScreen({ route, navigation }) {
   const { match, calendarUrl } = route?.params || {};
-  // LOG para depuración
-  if (typeof window !== 'undefined') {
-    console.log('[MATCH DETAIL] Params:', { match, calendarUrl });
-  } else {
-    // eslint-disable-next-line no-console
-    console.log('[MATCH DETAIL] Params:', { match, calendarUrl });
-  }
   const { colors: Colors, isDark } = useTheme();
 
   // 1. Hooks de estado
@@ -87,6 +79,31 @@ export default function MatchDetailScreen({ route, navigation }) {
   // 2. Refs
   const pagerRef = useRef(null);
   const bellAnim = useRef(new Animated.Value(1)).current;
+  
+  // ── Animación de pestañas (Tab Indicator) ──
+  const positionAnim = useRef(new Animated.Value(0)).current;
+  const offsetAnim = useRef(new Animated.Value(0)).current;
+  const pagerScrollNative = useMemo(() => Animated.add(positionAnim, offsetAnim), [positionAnim, offsetAnim]);
+  const pagerScrollJS = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const id = pagerScrollNative.addListener(({ value }) => {
+      pagerScrollJS.setValue(value);
+    });
+    return () => pagerScrollNative.removeListener(id);
+  }, [pagerScrollNative, pagerScrollJS]);
+
+  const onPageScrollHandler = useMemo(() => Animated.event(
+    [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
+    { useNativeDriver: false }
+  ), [positionAnim, offsetAnim]);
+
+  const TAB_COUNT = 3;
+  const tabWidth = SCREEN_WIDTH / TAB_COUNT;
+  const tabIndicatorX = pagerScrollNative.interpolate({
+    inputRange: [0, 1, 2],
+    outputRange: [0, tabWidth, tabWidth * 2],
+  });
 
   // 3. Valores calculados
   const summary = useMemo(() => getMatchSummary(currentMatch), [currentMatch]);
@@ -109,12 +126,27 @@ export default function MatchDetailScreen({ route, navigation }) {
   ];
 
   const INVIDIOUS_HOSTS = [
-    // Prioridad basada en test de velocidad (138ms y 696ms)
-    'https://yewtu.be',
-    'https://invidious.projectsegfau.lt',
-    'https://iv.ggtyler.dev',
+    // Lista actualizada (eliminados fallidos 403/Network)
     'https://invidious.jing.rocks',
-    'https://vid.puffyan.us'
+    'https://iv.ggtyler.dev',
+    'https://inv.bp.projectsegfau.lt',
+    'https://invidious.protokolla.fi',
+    'https://invidious.private.coffee',
+    'https://invidious.perennialte.ch',
+    'https://invidious.fdn.fr',
+    'https://yewtu.be',
+  ];
+
+  const PIPED_HOSTS = [
+    'https://pipedapi.kavin.rocks',
+    'https://pipedapi.drgns.space',
+    'https://api.piped.privacy.com.de',
+    'https://pipedapi.smnz.de',
+    'https://pipedapi.tokhmi.xyz',
+    'https://pipedapi.moomoo.me',
+    'https://pipedapi.adminforge.de',
+    'https://pipedapi.ngn.tf',
+    'https://pipedapi.system41.com',
   ];
   const fetchYouTubeVideo = async () => {
     const apiKey = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
@@ -138,7 +170,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       };
       const hasLiveWords = (title = '') => /en\s*directo|directo|live|stream/i.test(title);
 
-      const cleanName = (n) => n.replace(/Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|S\.K\.T\.|S\.K\.T|K\.E\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
+      const cleanName = (n) => n.replace(/Club Voleibol|Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|S\.K\.T\.|S\.K\.T|K\.E\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
       const homeClean = cleanName(summary.homeTeam);
       const awayClean = cleanName(summary.awayTeam);
       const searchTerm = `${homeClean} ${awayClean}`.replace(/\s+/g, ' ');
@@ -165,14 +197,17 @@ export default function MatchDetailScreen({ route, navigation }) {
         if (t.includes('voley') || t.includes('voleibol') || t.includes('boleibola') || t.includes('boleibol') || t.includes('partido')) score += 1;
         if (t.includes('jornada') || t.includes('fecha') || t.includes('liga')) score += 1;
         
-        console.log(`[YouTube] Evaluando: "${titulo}" | Score: ${score} (H:${matchHome}, A:${matchAway})`);
+        // console.log(`[YouTube] Evaluando: "${titulo}" | Score: ${score} (H:${matchHome}, A:${matchAway})`);
         return score;
       };
 
       // Helper para peticiones web robustas (intenta varios proxies si uno falla)
       const robustGet = async (url, isJson = true) => {
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        };
         if (Platform.OS !== 'web') {
-          const res = await axios.get(url, { timeout: 5000 });
+          const res = await axios.get(url, { headers, timeout: 5000 });
           return res.data;
         }
         // Proxy 1: CorsProxy.io (Rápido)
@@ -200,7 +235,7 @@ export default function MatchDetailScreen({ route, navigation }) {
 
       let officialResult = null;
       if (relevantChannels.length > 0) {
-        console.log(`[YouTube] Escaneando canales de ${relevantChannels.map(c => c.name).join(', ')} para el ${matchLabel}...`);
+        console.log(`[YouTube] Paso 1: Escaneando canales oficiales (${relevantChannels.map(c => c.name).join(', ')}) para ${matchLabel}...`);
         
         const channelSearches = relevantChannels.map(async (channel) => {
           const isHome = channel.patterns.some(p => p.test(summary.homeTeam));
@@ -222,6 +257,41 @@ export default function MatchDetailScreen({ route, navigation }) {
                 const score = calcularScore(entry.title, summary.homeTeam, summary.awayTeam);
                 if (score > (channelBest?.score || 0)) {
                   channelBest = { id: entry['yt:videoId'], score, source: 'RSS', canal: channel.name, priority: channel.priority || false, isHome };
+                }
+              }
+            }
+            if (channelBest && channelBest.score >= 20) return channelBest;
+
+            // Paso 1.5: Piped API (Más robusto que Invidious para escaneo de canal)
+            if (!channelBest || channelBest.score < 20) {
+              for (const host of PIPED_HOSTS) {
+                try {
+                  const res = await robustGet(`${host}/channel/${channel.id}`, true);
+                  if (res && Array.isArray(res.relatedStreams)) {
+                    for (const v of res.relatedStreams) {
+                      // Piped suele devolver 'uploaded' como timestamp numérico
+                      // Si es < 10^10, asumimos segundos y convertimos a ms
+                      const uploadTime = typeof v.uploaded === 'number' ? (v.uploaded < 10000000000 ? v.uploaded * 1000 : v.uploaded) : Date.now();
+                      const pubDate = new Date(uploadTime);
+                      if (isCloseDate(pubDate, matchDay)) {
+                          const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam);
+                          if (score > (channelBest?.score || 0)) {
+                            // url viene como "/watch?v=ID"
+                            const vId = v.url.split('v=')[1];
+                            if (vId) {
+                              channelBest = { id: vId, score, source: 'Piped', canal: channel.name, priority: channel.priority || false, isHome };
+                            }
+                          }
+                      }
+                    }
+                    // Si encontramos algo bueno en Piped, dejamos de buscar
+                    if (channelBest && channelBest.score >= 20) break;
+                  }
+                } catch (e) { 
+                  if (typeof window === 'undefined') {
+                    // Solo log en nativo para no saturar web
+                    // console.log(`[YouTube] Piped falló en ${host}:`, e.message); 
+                  }
                 }
               }
             }
@@ -253,7 +323,7 @@ export default function MatchDetailScreen({ route, navigation }) {
                   }
                 }
               } catch (err) {
-                console.log(`[YouTube] Search falló en ${host}: ${err.message}`);
+                // console.log(`[YouTube] Search falló en ${host}: ${err.message}`);
               }
 
               if (channelBest && channelBest.score >= 20) break;
@@ -278,12 +348,45 @@ export default function MatchDetailScreen({ route, navigation }) {
                   }
                 }
               } catch (err) {
-                console.log(`[YouTube] Videos falló en ${host}: ${err.message}`);
+                // console.log(`[YouTube] Videos falló en ${host}: ${err.message}`);
               }
               
               // Si el host respondió correctamente a algo (Search o Videos), paramos de rotar para no saturar,
               // a menos que no hayamos encontrado nada, pero Invidious suele ser consistente.
               if (hostWorks) break;
+            }
+
+            // Fallback: Si Invidious falló y tenemos API Key, buscar específicamente en este canal
+            if ((!channelBest || channelBest.score < 10) && apiKey) {
+              try {
+                const apiRes = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+                  params: {
+                    part: 'snippet',
+                    channelId: channel.id,
+                    q: searchTerm,
+                    maxResults: 5,
+                    order: 'date',
+                    type: 'video',
+                    key: apiKey
+                  }
+                });
+                
+                if (apiRes.data?.items) {
+                  for (const item of apiRes.data.items) {
+                    const pubDate = new Date(item.snippet.publishedAt);
+                    if (isCloseDate(pubDate, matchDay)) {
+                      const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam);
+                      if (score > (channelBest?.score || 0)) {
+                        channelBest = { 
+                          id: item.id.videoId, score, source: 'API_Channel', canal: channel.name, priority: channel.priority || false, isHome 
+                        };
+                      }
+                    }
+                  }
+                }
+              } catch (err) {
+                console.log(`[YouTube] API Channel Search falló para ${channel.name} (Fallback):`, err.message);
+              }
             }
 
             if (channelBest && channelBest.score > 0) return channelBest;
@@ -307,7 +410,7 @@ export default function MatchDetailScreen({ route, navigation }) {
           
           if (!isLiveMatch && officialResult.score >= 15) { // En live primero intentamos directos
             foundId = officialResult.id;
-            console.log(`[YouTube] ✓ Encontrado en canal oficial (${officialResult.canal}) con alta puntuación: ${officialResult.score}`);
+            console.log(`[YouTube] ✓ Encontrado en canal oficial (${officialResult.canal}) vía ${officialResult.source}. Score: ${officialResult.score}`);
           }
         }
       }
@@ -349,8 +452,57 @@ export default function MatchDetailScreen({ route, navigation }) {
       }
 
       // ─── PASO 4: Fallback a vídeos emitidos/subidos el día del partido ──────────────────────
-      if (!foundId && apiKey) {
-        console.log(`[YouTube] Probando búsqueda general: ${searchTerm} (Puntuación oficial previa: ${officialResult?.score || 0})`);
+      if (!foundId) {
+        // 4a. Intentar búsqueda general en PIPED antes que la API oficial (ahorra cuota y a veces es mejor)
+        console.log(`[YouTube] Paso 4a: Búsqueda general en Piped: "${searchTerm}"`);
+        for (const host of PIPED_HOSTS) {
+          try {
+            const res = await robustGet(`${host}/search?q=${encodeURIComponent(searchTerm)}&filter=all`, true);
+            if (res && Array.isArray(res.items)) {
+              for (const item of res.items) {
+                // Piped search items a veces no traen fecha exacta, cuidado
+                // Pero si el score es muy alto (nombres exactos), nos vale
+                const score = calcularScore(item.title, summary.homeTeam, summary.awayTeam);
+                if (score >= 20) {
+                   // url viene como "/watch?v=ID"
+                   const vId = item.url.split('v=')[1];
+                   if (vId) {
+                     foundId = vId;
+                     console.log(`[YouTube] ✓ Encontrado vía Piped Search: ${item.title} (Score: ${score})`);
+                     break;
+                   }
+                }
+              }
+            }
+            if (foundId) break;
+          } catch (e) { 
+            // console.log(`[YouTube] Piped Search falló en ${host}:`, e.message);
+          }
+        }
+
+        // 4b. Fallback: Intentar búsqueda general en INVIDIOUS si Piped falló
+        if (!foundId) {
+          console.log(`[YouTube] Paso 4b: Búsqueda general en Invidious: "${searchTerm}"`);
+          for (const host of INVIDIOUS_HOSTS) {
+            try {
+              const res = await robustGet(`${host}/api/v1/search?q=${encodeURIComponent(searchTerm)}`, true);
+              if (Array.isArray(res)) {
+                for (const item of res) {
+                  const score = calcularScore(item.title, summary.homeTeam, summary.awayTeam);
+                  if (score >= 20) {
+                    foundId = item.videoId;
+                    console.log(`[YouTube] ✓ Encontrado vía Invidious Search en ${host}: ${item.title} (Score: ${score})`);
+                    break;
+                  }
+                }
+              }
+              if (foundId) break;
+            } catch (e) { /* ignore */ }
+          }
+        }
+
+        if (!foundId && apiKey) {
+        console.log(`[YouTube] Paso 4c: Búsqueda API General: "${searchTerm}" (Puntuación oficial previa: ${officialResult?.score || 0})`);
         try {
           const res = await axios.get('https://www.googleapis.com/youtube/v3/search', {
             params: { 
@@ -371,7 +523,7 @@ export default function MatchDetailScreen({ route, navigation }) {
             let bestApiMatch = null;
             for (const item of res.data.items) {
               const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam);
-              console.log(`[YouTube API Check] Evaluando: "${item.snippet.title}" | Score: ${score}`);
+              // console.log(`[YouTube API Check] Evaluando: "${item.snippet.title}" | Score: ${score}`);
               
               if (score > (bestApiMatch?.score || 0)) {
                 bestApiMatch = { id: item.id.videoId, score };
@@ -393,6 +545,7 @@ export default function MatchDetailScreen({ route, navigation }) {
           console.warn('[YouTube] Búsqueda general falló:', err.message, err.response?.data?.error || '');
           if (officialResult) foundId = officialResult.id;
         }
+        } // fin if apiKey
       }
 
       // PASO FINAL: Si tenemos un resultado de canal oficial (aunque sea de baja puntuación) y no hay nada mejor, usarlo.
@@ -410,7 +563,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         console.log('[YouTube] No se encontró ningún vídeo');
       }
     } catch (err) {
-      console.error('Error YouTube:', err.message);
+      console.error('[YouTube] Error Fatal:', err.message);
     } finally {
       setYoutubeLoading(false);
       setHasSearched(true);
@@ -637,12 +790,31 @@ export default function MatchDetailScreen({ route, navigation }) {
     return true;
   }, [summary.homeTeam, summary.awayTeam]);
 
-  // Polling siempre que haya calendarUrl, sin importar el estado
-  useLivePolling(
-    calendarUrl,
-    [currentMatch],
-    updateMatchFromBlocks
-  );
+  // Auto-refresh cada 10 segundos, INDEPENDIENTEMENTE del estado (Live/Finished)
+  // para corregir posibles errores de estado en la web.
+  useEffect(() => {
+    // if (!calendarUrl && !currentMatch?.href) return;
+    // console.log('[MatchDetail] Iniciando auto-refresh (10s)...');
+    const intervalId = setInterval(async () => {
+      try {
+        // console.log('[MatchDetail] Auto-refresh (10s) ejecutándose...');
+        if (calendarUrl) {
+          const blocks = await fetchAndParse(calendarUrl);
+          updateMatchFromBlocks(blocks);
+        }
+        if (currentMatch?.href) {
+          const directBlocks = await fetchAndParse(currentMatch.href);
+          updateMatchFromDirectMatchBlocks(directBlocks);
+        }
+        // if (!calendarUrl && !currentMatch?.href) {
+        //   console.log('[MatchDetail] No se puede actualizar: faltan calendarUrl y match.href');
+        // }
+      } catch (e) {
+        console.log('[MatchDetail] Error en auto-refresh:', e.message);
+      }
+    }, 10000); // 10 segundos
+    return () => clearInterval(intervalId);
+  }, [calendarUrl, currentMatch?.href, updateMatchFromBlocks, updateMatchFromDirectMatchBlocks]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -702,8 +874,8 @@ export default function MatchDetailScreen({ route, navigation }) {
     Linking.openURL(url);
   };
 
-  const renderTabContent = () => {
-    switch (activeTab) {
+  const renderTabContent = (tabKey) => {
+    switch (tabKey) {
       case 'detalles':
         const setList = summary.sets || [];
         let totalHomePoints = 0;
@@ -854,6 +1026,14 @@ export default function MatchDetailScreen({ route, navigation }) {
     }
   };
 
+  const getTabColor = (index) => {
+    return pagerScrollJS.interpolate({
+      inputRange: [index - 1, index, index + 1],
+      outputRange: [Colors.textMuted, Colors.primary, Colors.textMuted],
+      extrapolate: 'clamp',
+    });
+  };
+
   const badgeText = summary.state === 'live' ? 'EN CURSO' : (summary.state === 'finished' ? 'FINALIZADO' : 'PRÓXIMO');
 
   return (
@@ -917,7 +1097,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         </View>
         <View style={{ height: Spacing.lg, backgroundColor: 'transparent' }} />
         <View>
-          <View style={{ 
+          <View style={{
             flexDirection: 'row', 
             width: '100%', 
             backgroundColor: Colors.surface, 
@@ -927,34 +1107,38 @@ export default function MatchDetailScreen({ route, navigation }) {
             elevation: 4
           }}>
             {TABS.map((tab, index) => {
-              const isActive = activeTab === tab;
               const label = tab === 'repeticion' ? 'Repetición' : tab.charAt(0).toUpperCase() + tab.slice(1);
               return (
                 <TouchableOpacity
                   key={tab}
                   onPress={() => {
-                    setActiveTab(tab);
                     pagerRef.current?.setPage(index);
                   }}
                   activeOpacity={0.8}
                   style={{
                     flex: 1,
                     paddingVertical: Spacing.md,
-                    alignItems: 'center',
-                    borderBottomWidth: 3,
-                    borderBottomColor: isActive ? Colors.primary : 'transparent'
+                    alignItems: 'center'
                   }}
                 >
-                  <Text style={{
+                  <Animated.Text style={{
                     fontSize: 14,
-                    fontWeight: isActive ? '800' : '600',
-                    color: isActive ? Colors.primary : Colors.textMuted
+                    fontWeight: '800',
+                    color: getTabColor(index)
                   }}>
                     {label}
-                  </Text>
+                  </Animated.Text>
                 </TouchableOpacity>
               );
             })}
+            {/* Indicador animado */}
+            <Animated.View style={{
+              position: 'absolute', bottom: 0, left: 0,
+              width: tabWidth, height: 3,
+              backgroundColor: Colors.primary,
+              borderTopLeftRadius: 3, borderTopRightRadius: 3,
+              transform: [{ translateX: tabIndicatorX }]
+            }} />
           </View>
         </View>
         <View style={styles.mainContent}>
@@ -962,16 +1146,22 @@ export default function MatchDetailScreen({ route, navigation }) {
             ref={pagerRef}
             style={{ height: activeTab === 'detalles' ? 600 : (activeTab === 'mapa' ? 500 : 800) }}
             initialPage={0}
-            onPageSelected={(e) => setActiveTab(TABS[e.nativeEvent.position])}
+            onPageSelected={(e) => {
+              const pos = e.nativeEvent.position;
+              setActiveTab(TABS[pos]);
+              positionAnim.setValue(pos);
+              offsetAnim.setValue(0);
+            }}
+            onPageScroll={onPageScrollHandler}
           >
             <View key="detalles">
-              {activeTab === 'detalles' && renderTabContent()}
+              {renderTabContent('detalles')}
             </View>
             <View key="mapa">
-              {activeTab === 'mapa' && renderTabContent()}
+              {renderTabContent('mapa')}
             </View>
             <View key="repeticion">
-              {activeTab === 'repeticion' && renderTabContent()}
+              {renderTabContent('repeticion')}
             </View>
           </PagerView>
         </View>

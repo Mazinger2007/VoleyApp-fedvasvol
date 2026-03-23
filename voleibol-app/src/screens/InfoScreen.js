@@ -157,13 +157,6 @@ export default function InfoScreen({ route, navigation }) {
       >
         <View style={styles.heroOuter}>
           <View style={[styles.hero, { backgroundColor: Colors.primary }]}>
-            <LinearGradient
-              colors={['rgba(255,255,255,0.2)', 'transparent']}
-              start={{ x: 1, y: 0 }}
-              end={{ x: 0.2, y: 1 }}
-              style={StyleSheet.absoluteFill}
-              pointerEvents="none"
-            />
 
             <View style={styles.heroContent}>
               <View style={styles.heroBadgesRow}>

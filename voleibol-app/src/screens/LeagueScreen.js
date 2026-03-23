@@ -6,7 +6,6 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import PagerView from '../components/PagerViewWrapper';
-import * as Calendar from 'expo-calendar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import CompetitionTable from '../components/CompetitionTable';
@@ -258,14 +257,6 @@ export default function LeagueScreen({ route, navigation }) {
   const [expandedCalendar, setExpandedCalendar] = useState({});
   // Track the last selected jornada index
   const [selectedJornadaIndex, setSelectedJornadaIndex] = useState(null);
-  const [selectedMatch, setSelectedMatch] = useState(null);
-  const [modalHomeLogoIndex, setModalHomeLogoIndex] = useState(0);
-  const [modalAwayLogoIndex, setModalAwayLogoIndex] = useState(0);
-  const [homeLogoCenterColor, setHomeLogoCenterColor] = useState('#ffffff');
-  const [awayLogoCenterColor, setAwayLogoCenterColor] = useState('#ffffff');
-  const [modalTab, setModalTab] = useState('details');
-  const [reminderSaved, setReminderSaved] = useState(false);
-  const [reminderLoading, setReminderLoading] = useState(false);
   const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
   const [seasonLabel, setSeasonLabel] = useState(null);
   const [resolvedCalendarUrl, setResolvedCalendarUrl] = useState(null);
@@ -284,12 +275,60 @@ export default function LeagueScreen({ route, navigation }) {
   const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDate;
 
   const headerIconAnim = useRef(new Animated.Value(0)).current;
-  const modalSlideX = useRef(new Animated.Value(0)).current;
-  const modalGestureStartX = useRef(0);
+  
+  // ── Animación sincronizada con Scroll (PagerView) ──
+  // Usamos position + offset para saber la posición exacta decimal (ej: 0.5 es mitad de camino)
+  const positionAnim = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
+  const offsetAnim = useRef(new Animated.Value(0)).current;
+  // `pagerScrollNative` se actualiza en el hilo de UI (nativo) y se usa para transformaciones (translate, scale).
+  const pagerScrollNative = useMemo(() => Animated.add(positionAnim, offsetAnim), [positionAnim, offsetAnim]);
+
+  // `pagerScrollJS` se actualiza en el hilo de JS a través de un listener. Se usa para animar props no-nativas (color).
+  const pagerScrollJS = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
+
+  // Handler de scroll definido a nivel superior para evitar error de hooks
+  const onPageScrollHandler = useMemo(() => Animated.event(
+    [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
+    { useNativeDriver: false } 
+  ), [positionAnim, offsetAnim]);
+
+  useEffect(() => {
+    const listenerId = pagerScrollNative.addListener(({ value }) => {
+      pagerScrollJS.setValue(value);
+    });
+    return () => {
+      pagerScrollNative.removeListener(listenerId);
+    };
+  }, [pagerScrollNative, pagerScrollJS]);
+
+  // Colores para interpolación
+  const activeTextColor = isDark ? Colors.textOnPrimary : Colors.primary;
+  const inactiveTextColor = Colors.textMuted;
+
+  // Dimensiones
+  const tabPadding = Spacing.md;
+  const tabWidth = (screenWidth - tabPadding * 2) / 2;
+
+  // Interpolaciones
+  const tabIndicatorTranslateX = pagerScrollNative.interpolate({
+    inputRange: [0, 1],
+    outputRange: [tabPadding, tabPadding + tabWidth],
+  });
+
+  const rankingTextColor = pagerScrollJS.interpolate({
+    inputRange: [0, 1],
+    outputRange: [activeTextColor, inactiveTextColor],
+  });
+
+  const calendarTextColor = pagerScrollJS.interpolate({
+    inputRange: [0, 1],
+    outputRange: [inactiveTextColor, activeTextColor],
+  });
 
   const switchTab = useCallback((nextTab) => {
     if (!nextTab || nextTab === activeTab) return;
-    setActiveTab(nextTab);
+    // Optimizacion: No actualizamos estado aquí para evitar bloquear la UI durante cargas pesadas.
+    // El PagerView actualizará el activeTab vía onPageSelected cuando la animación nativa progrese.
     if (pagerRef.current) {
       pagerRef.current.setPage(nextTab === 'ranking' ? 0 : 1);
     }
@@ -303,66 +342,6 @@ export default function LeagueScreen({ route, navigation }) {
     }).start();
   }, [activeTab]);
 
-
-  // Memoized values for teams, dates, and locations (move above any useEffect that uses them)
-
-
-  useEffect(() => {
-    if (isDatePickerVisible && !searchDate && allAvailableDates.length > 0) {
-      const first = allAvailableDates[0];
-      const match = first.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
-      if (match) {
-        const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
-        if (mIdx !== -1) {
-          setCalendarMonth(mIdx);
-        }
-      }
-    } else if (isDatePickerVisible && searchDate) {
-      const match = searchDate.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
-      if (match) {
-         const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
-         if (mIdx !== -1) setCalendarMonth(mIdx);
-      }
-    }
-  }, [isDatePickerVisible, searchDate, allAvailableDates]);
-
-  const modalPanResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gesture) =>
-      Math.abs(gesture.dx) > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.2,
-    onPanResponderGrant: () => {
-      modalSlideX.stopAnimation((value) => {
-        modalGestureStartX.current = value;
-      });
-    },
-    onPanResponderMove: (_, gesture) => {
-      const minX = -screenWidth;
-      const maxX = 0;
-      const next = Math.max(minX, Math.min(maxX, modalGestureStartX.current + gesture.dx));
-      modalSlideX.setValue(next);
-    },
-    onPanResponderRelease: (_, gesture) => {
-      const shouldGoMap = (gesture.dx < -50 || (gesture.dx < -24 && gesture.vx < -0.45)) && modalTab === 'details';
-      const shouldGoDetails = (gesture.dx > 50 || (gesture.dx > 24 && gesture.vx > 0.45)) && modalTab === 'map';
-      const nextModalTab = shouldGoMap ? 'map' : shouldGoDetails ? 'details' : modalTab;
-      const targetX = nextModalTab === 'map' ? -screenWidth : 0;
-      Animated.timing(modalSlideX, {
-        toValue: targetX,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-      if (nextModalTab !== modalTab) setModalTab(nextModalTab);
-    },
-    onPanResponderTerminate: () => {
-      const targetX = modalTab === 'map' ? -screenWidth : 0;
-      Animated.timing(modalSlideX, {
-        toValue: targetX,
-        duration: 240,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    },
-  }), [modalSlideX, modalTab, screenWidth]);
 
   const rankingUrl = useMemo(() => getUrlWithSeason(toRankingUrl(url)), [url, season]);
   
@@ -597,27 +576,22 @@ export default function LeagueScreen({ route, navigation }) {
       const navState = navigation.getState();
       const currentRoute = navState.routes[navState.index];
       if (currentRoute && currentRoute.name === 'JornadaDetail') {
+        const table = calendarTables[selectedJornadaIndex];
+        const rawTitle = table.title || `Jornada ${calendarTables.length - selectedJornadaIndex}`;
+        // FIX: Limpiar fecha del título igual que en el render (ej: "Jornada 1 - 12/10..." -> "Jornada 1")
+        const displayTitle = rawTitle.replace(/\s*[-–—(]\s*\d{1,2}[\/\-]\d{1,2}.*$/, '').trim();
+
         // Navegar a la jornada seleccionada con el bloque actualizado
         navigation.replace('JornadaDetail', {
-          tableBlock: calendarTables[selectedJornadaIndex],
-          title: calendarTables[selectedJornadaIndex].title || `Jornada ${calendarTables.length - selectedJornadaIndex}`,
+          tableBlock: table,
+          title: displayTitle,
           subtitle: seasonLabel,
-          calendarUrl: resolvedCalendarUrl
+          calendarUrl: resolvedCalendarUrl,
+          jornadaIndex: selectedJornadaIndex
         });
       }
     }
   }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, resolvedCalendarUrl]);
-
-  const selectedSets = useMemo(() => {
-    if (!selectedMatch?.sets?.length) return [];
-    return selectedMatch.sets
-      .filter((set) => set && (set.home !== null || set.away !== null))
-      .map((set, i) => ({
-        number: set.number || i + 1,
-        home: set.home ?? '—',
-        away: set.away ?? '—',
-      }));
-  }, [selectedMatch]);
 
   const toggleCalendarSection = useCallback((index) => {
     const key = `jornada-${index}`;
@@ -628,10 +602,11 @@ export default function LeagueScreen({ route, navigation }) {
 
   const openMatchModal = useCallback((match) => {
     if (!match) return;
-    setSelectedMatch(match);
-    setModalTab('details');
-    setReminderSaved(false);
-  }, []);
+    navigation.navigate('MatchDetail', {
+      match: { ...match, ...getMatchSummary(match) },
+      calendarUrl: resolvedCalendarUrl,
+    });
+  }, [navigation, resolvedCalendarUrl]);
 
   // OPTIMIZACIÓN: Callbacks estables para evitar re-render de tablas
   const handlePressTeam = useCallback((teamName, teamUrl, teamLogo, leagueStats) => {
@@ -660,218 +635,6 @@ export default function LeagueScreen({ route, navigation }) {
       title: title || 'Información',
       teamCount: rankingTeamCount,
     });
-  };
-
-  const openTeamFromMatch = (side = 'home') => {
-    if (!selectedMatch) return;
-
-    const isHome = side === 'home';
-    const teamName = isHome ? (selectedMatch.homeTeam || 'Local') : (selectedMatch.awayTeam || 'Visitante');
-    const normalizedTeam = normalizeTeamName(teamName);
-
-    let teamUrl = null;
-    let teamLogo = isHome ? (selectedMatch.homeLogo || null) : (selectedMatch.awayLogo || null);
-    let leagueStats = {
-      position: '-',
-      played: '-',
-      won: '-',
-      points: '-',
-    };
-
-    for (const table of rankingTables) {
-      const headers = table?.headers || [];
-      const rows = table?.rows || [];
-      const teamCol = findColIndex(headers, 'equipo', 'club', 'nombre', 'team');
-      if (teamCol < 0) continue;
-
-      const posCol = findPositionCol(headers, teamCol);
-      const ptsCol = findPointsCol(headers, teamCol);
-      const playedCol = findColIndex(headers, 'pj', 'jug', 'played', 'partidos');
-      const wonCol = headers.findIndex((h) => ['v', 'pg'].includes(String(h || '').trim().toLowerCase()));
-
-      for (let index = 0; index < rows.length; index += 1) {
-        const row = rows[index] || [];
-        const rowTeam = getCellValue(row, teamCol, '');
-        if (!rowTeam) continue;
-        if (normalizeTeamName(rowTeam) !== normalizedTeam) continue;
-
-        teamUrl = table?.rowLinks?.[index] || teamUrl;
-        teamLogo = table?.rowLogos?.[index] || table?.rowImages?.[index] || teamLogo;
-        leagueStats = {
-          position: getCellValue(row, posCol, String(index + 1)),
-          played: getCellValue(row, playedCol, '-'),
-          won: getCellValue(row, wonCol, '-'),
-          points: getCellValue(row, ptsCol, '-'),
-        };
-        break;
-      }
-
-      if (teamUrl || leagueStats.position !== '-') break;
-    }
-
-    const pointsScoredTotal = sumTeamPointsScored(calendarTables, teamName);
-
-    navigation.navigate('TeamDetail', {
-      teamName,
-      teamUrl,
-      teamLogo,
-      tournamentTitle: title,
-      leagueStats,
-      pointsScoredTotal,
-      calendarUrl: resolvedCalendarUrl,
-    });
-  };
-
-  const closeMatchModal = () => setSelectedMatch(null);
-
-  const modalHomeLogoCandidates = useMemo(
-    () => buildLogoCandidates(selectedMatch?.homeLogo),
-    [selectedMatch?.homeLogo]
-  );
-  const modalAwayLogoCandidates = useMemo(
-    () => buildLogoCandidates(selectedMatch?.awayLogo),
-    [selectedMatch?.awayLogo]
-  );
-
-  const modalHomeLogoUri = modalHomeLogoCandidates[modalHomeLogoIndex] || null;
-  const modalAwayLogoUri = modalAwayLogoCandidates[modalAwayLogoIndex] || null;
-
-  useEffect(() => {
-    setModalHomeLogoIndex(0);
-    setModalAwayLogoIndex(0);
-  }, [selectedMatch?.homeLogo, selectedMatch?.awayLogo]);
-
-  // --- NUEVO: Usar caché persistente para los colores de los logos en el modal ---
-  useEffect(() => {
-    if (!modalHomeLogoUri) { setHomeLogoCenterColor(Colors.surfaceAlt); return; }
-    const cached = getCachedLogoColorSync(modalHomeLogoUri);
-    if (cached) setHomeLogoCenterColor(cached);
-    requestLogoColorExtraction(modalHomeLogoUri, getDominantBorderColor);
-    let mounted = true;
-    const unsubscribe = subscribeToLogoColor(modalHomeLogoUri, (color) => {
-      if (mounted && color) setHomeLogoCenterColor(color);
-    });
-    return () => { mounted = false; unsubscribe(); };
-  }, [modalHomeLogoUri, Colors.surfaceAlt]);
-
-  useEffect(() => {
-    if (!modalAwayLogoUri) { setAwayLogoCenterColor(Colors.surfaceAlt); return; }
-    const cached = getCachedLogoColorSync(modalAwayLogoUri);
-    if (cached) setAwayLogoCenterColor(cached);
-    requestLogoColorExtraction(modalAwayLogoUri, getDominantBorderColor);
-    let mounted = true;
-    const unsubscribe = subscribeToLogoColor(modalAwayLogoUri, (color) => {
-      if (mounted && color) setAwayLogoCenterColor(color);
-    });
-    return () => { mounted = false; unsubscribe(); };
-  }, [modalAwayLogoUri, Colors.surfaceAlt]);
-
-  // ── Open venue in maps app ─────────────────────────────────────────────
-  const openMaps = (venue) => {
-    if (!venue) return;
-    const query = encodeURIComponent(venue);
-    const url = Platform.OS === 'ios'
-      ? `maps://maps.apple.com/?q=${query}`
-      : `geo:0,0?q=${query}`;
-    Linking.canOpenURL(url).then((supported) => {
-      if (supported) {
-        Linking.openURL(url);
-      } else {
-        Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${query}`);
-      }
-    });
-  };
-
-  // ── Add calendar reminder ──────────────────────────────────────────────
-  const addReminder = async () => {
-    try {
-      setReminderLoading(true);
-      const { status } = await Calendar.requestCalendarPermissionsAsync();
-      if (status !== 'granted') {
-        setStatusModal({
-          visible: true,
-          title: '¡Vaya!',
-          message: 'Necesitamos tu permiso para acceder al calendario y poder crear el recordatorio del partido.',
-          type: 'error'
-        });
-        return;
-      }
-
-      const match = selectedMatch;
-      const homeTeam = match?.homeTeam || 'Local';
-      const awayTeam = match?.awayTeam || 'Visitante';
-      const rawDate  = match?.rawDate || match?.date || null;
-      const timeStr  = match?.time || null;
-
-      // Build start date
-      let startDate = new Date();
-      if (rawDate) {
-        const dmMatch = rawDate.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-        const isoMatch = rawDate.match(/(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/);
-        if (dmMatch) {
-          startDate = new Date(Number(dmMatch[3]), Number(dmMatch[2]) - 1, Number(dmMatch[1]));
-        } else if (isoMatch) {
-          startDate = new Date(Number(isoMatch[1]), Number(isoMatch[2]) - 1, Number(isoMatch[3]));
-        }
-        if (timeStr) {
-          const [h, m] = timeStr.split(':').map(Number);
-          startDate.setHours(h || 0, m || 0, 0, 0);
-        } else {
-          startDate.setHours(18, 0, 0, 0);
-        }
-      }
-
-      const now = new Date();
-      if (startDate < now) {
-        setStatusModal({
-          visible: true,
-          title: 'Partido pasado',
-          message: 'Este partido ya ha ocurrido, por lo que no podemos añadir un recordatorio al calendario.',
-          type: 'warning'
-        });
-        setReminderLoading(false);
-        return;
-      }
-
-      const endDate = new Date(startDate.getTime() + (2 * 60 + 30) * 60 * 1000); // +2 h 30 min
-
-      const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
-      const writable  = calendars.find((c) => c.allowsModifications && c.type !== 'birthday');
-      if (!writable) {
-        setStatusModal({
-          visible: true,
-          title: 'Sin calendario',
-          message: 'No hemos podido encontrar un calendario editable en tu dispositivo para guardar el evento.',
-          type: 'error'
-        });
-        return;
-      }
-
-      await Calendar.createEventAsync(writable.id, {
-        title:     `${homeTeam} vs ${awayTeam}`,
-        location:  match?.venue || '',
-        startDate,
-        endDate,
-        notes:     `Partido de voleibol · ${title || ''}\nLocal: ${homeTeam} | Visitante: ${awayTeam}`,
-        alarms:    [{ relativeOffset: -60 }],  // 1 h before
-      });
-      setReminderSaved(true);
-      setStatusModal({
-        visible: true,
-        title: '¡Excelente!',
-        message: 'El partido se ha guardado en tu calendario. Te avisaremos antes del comienzo.',
-        type: 'success'
-      });
-    } catch (e) {
-      setStatusModal({
-        visible: true,
-        title: 'Error',
-        message: 'No se pudo guardar el recordatorio en este momento.',
-        type: 'error'
-      });
-    } finally {
-      setReminderLoading(false);
-    }
   };
 
   const RT_LABELS = {
@@ -909,11 +672,11 @@ export default function LeagueScreen({ route, navigation }) {
       letterSpacing: -0.5,
       textTransform: 'uppercase',
     },
-    tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: 'transparent' },
-    tabItemActive: { borderBottomColor: Colors.primary },
-    tabLabel: { color: Colors.textMuted, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
-    tabLabelActive: { color: isDark ? Colors.textOnPrimary : Colors.primary, fontWeight: Typography.weight.bold },
+    tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative' },
+    tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center' },
+    tabItemActive: { },
+    tabIndicator: { position: 'absolute', bottom: 0, left: 0, height: 3, backgroundColor: Colors.primary, borderTopLeftRadius: 3, borderTopRightRadius: 3, zIndex: 10 },
+    tabLabel: { fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
     mainPagerClip: { flex: 1, overflow: 'hidden' },
     tabScene: { ...StyleSheet.absoluteFillObject },
     tabSceneVisible: { opacity: 1 },
@@ -1365,29 +1128,13 @@ export default function LeagueScreen({ route, navigation }) {
           matches={filteredMatches}
           onPressMatch={openMatchModal}
           onTeamPress={(name) => handlePressTeam(name, null, null, null)}
+          calendarUrl={resolvedCalendarUrl}
           compact={true}
         />
       </View>
     );
   }, [filteredMatches, Colors, hasActiveFilters, openMatchModal, handlePressTeam]);
 
-  if (rankingLoading) {
-    return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
-        <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
-            <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={2}>
-            {(title || 'Liga').toUpperCase()}
-          </Text>
-          <View style={styles.backBtn} />
-        </View>
-        <LoadingView variant="clean" message="Cargando clasificación..." />
-      </SafeAreaView>
-    );
-  }
   
   // Manejo de temporada en configuración
   const isConfiguring = rankingError === 'SEASON_CONFIGURING' || calendarError === 'SEASON_CONFIGURING';
@@ -1426,6 +1173,7 @@ export default function LeagueScreen({ route, navigation }) {
               
               <TouchableOpacity 
                 style={[styles.configModalBtn, { backgroundColor: Colors.primary }]}
+                activeOpacity={0.9}
                 onPress={() => navigation.goBack()}
               >
                 <Text style={styles.configModalBtnText}>ENTENDIDO</Text>
@@ -1484,11 +1232,16 @@ export default function LeagueScreen({ route, navigation }) {
               onPress={() => switchTab(tab.key)}
               activeOpacity={0.8}
             >
-              <Text style={[styles.tabLabel, activeTab === tab.key && styles.tabLabelActive]}>
+            <Animated.Text style={[styles.tabLabel, { color: tab.key === 'ranking' ? rankingTextColor : calendarTextColor }]}>
                 {tab.label}
-              </Text>
+            </Animated.Text>
             </TouchableOpacity>
           ))}
+          {/* Indicador animado */}
+          <Animated.View style={[styles.tabIndicator, { 
+            width: tabWidth, 
+          transform: [{ translateX: tabIndicatorTranslateX }]
+          }]} />
         </View>
 
       {/* Premium Search Modal */}
@@ -1563,6 +1316,7 @@ export default function LeagueScreen({ route, navigation }) {
 
               <TouchableOpacity 
                 style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
+                activeOpacity={0.9}
                 onPress={() => setIsSearchModalVisible(false)}
               >
                 <Text style={styles.searchModalBtnText}>VER RESULTADOS</Text>
@@ -1606,6 +1360,7 @@ export default function LeagueScreen({ route, navigation }) {
             </ScrollView>
             <TouchableOpacity 
               style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]} 
+              activeOpacity={0.9}
               onPress={() => setIsTeamPickerVisible(false)}
             >
               <Text style={styles.modalFooterBtnText}>LISTO</Text>
@@ -1648,6 +1403,7 @@ export default function LeagueScreen({ route, navigation }) {
             </ScrollView>
             <TouchableOpacity 
               style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]} 
+              activeOpacity={0.9}
               onPress={() => setIsLocationPickerVisible(false)}
             >
               <Text style={styles.modalFooterBtnText}>LISTO</Text>
@@ -1721,6 +1477,7 @@ export default function LeagueScreen({ route, navigation }) {
 
             <TouchableOpacity 
               style={[styles.modalFooterBtn, { backgroundColor: Colors.surfaceAlt, marginTop: Spacing.xl }]} 
+              activeOpacity={0.9}
               onPress={() => { setSearchDate(null); setIsDatePickerVisible(false); }}
             >
               <Text style={[styles.modalFooterBtnText, { color: Colors.textPrimary }]}>TODAS LAS FECHAS</Text>
@@ -1733,8 +1490,15 @@ export default function LeagueScreen({ route, navigation }) {
         style={{ flex: 1 }}
         initialPage={defaultTab === 'calendar' ? 1 : 0}
         onPageSelected={(e) => {
-          setActiveTab(e.nativeEvent.position === 0 ? 'ranking' : 'calendar');
+          const pos = e.nativeEvent.position;
+          setActiveTab(pos === 0 ? 'ranking' : 'calendar');
+          // FIX: Forzar la sincronización de la barra.
+          // Si el JS estaba bloqueado y se perdieron eventos de scroll, esto asegura que la barra llegue a su sitio.
+          positionAnim.setValue(pos);
+          offsetAnim.setValue(0);
         }}
+        // Sincronizar animaciones con el gesto de scroll
+        onPageScroll={onPageScrollHandler}
       >
         <View key="0" style={styles.mainPage}>
           <ScrollView
@@ -1788,199 +1552,6 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </PagerView>
 
-      {selectedMatch ? (
-        <View style={styles.modalRoot}>
-          {/* ── Header ── */}
-          <View style={styles.modalHeader}>
-            <TouchableOpacity style={styles.modalCloseBtn} onPress={closeMatchModal} activeOpacity={0.7}>
-              <MaterialIcons name="close" size={24} color={Colors.textPrimary} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitleText} numberOfLines={1}>Detalles del partido</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* ── Tab bar ── */}
-          <View style={styles.modalTabRow}>
-            {[{ key: 'details', label: 'Detalles' }, { key: 'map', label: 'Mapa' }].map((t) => (
-              <TouchableOpacity key={t.key} style={styles.modalTabItem} onPress={() => {
-                const targetX = t.key === 'map' ? -screenWidth : 0;
-                Animated.timing(modalSlideX, { toValue: targetX, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-                setModalTab(t.key);
-              }} activeOpacity={0.8}>
-                <Text style={[styles.modalTabLabel, modalTab === t.key && styles.modalTabLabelActive]}>{t.label}</Text>
-                <View style={[styles.modalTabUnderline, modalTab === t.key && styles.modalTabUnderlineActive]} />
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={styles.modalPagerClip} {...modalPanResponder.panHandlers}>
-            <Animated.View
-              style={[
-                styles.modalPagerTrack,
-                {
-                  width: screenWidth * 2,
-                  transform: [{ translateX: modalSlideX }],
-                },
-              ]}
-            >
-              <View style={[styles.modalPage, { width: screenWidth }]}>
-                <ScrollView style={styles.modalScroll} contentContainerStyle={{ paddingBottom: Spacing.xl }}>
-                  <View style={styles.scoreSection}>
-                    <View style={styles.scoreTeamsRow}>
-                      <TouchableOpacity style={styles.scoreTeamCol} activeOpacity={0.78} onPress={() => openTeamFromMatch('home')}>
-                        <View style={[styles.scoreLogoWrap, { backgroundColor: homeLogoCenterColor || '#ffffff' }]}>
-                          {modalHomeLogoUri
-                            ? <Image source={{ uri: modalHomeLogoUri }} style={styles.scoreLogoImg} resizeMode="contain" onError={() => setModalHomeLogoIndex((current) => (current + 1 < modalHomeLogoCandidates.length ? current + 1 : modalHomeLogoCandidates.length))} />
-                            : <Text style={styles.scoreLogoFallback}>{(selectedMatch.homeTeam || 'LO').slice(0, 2).toUpperCase()}</Text>
-                          }
-                        </View>
-                        <Text style={styles.scoreTeamRoleLabel}>Local</Text>
-                        <Text style={{ color: Colors.textSecondary, fontSize: Typography.size.xs, fontWeight: Typography.weight.semiBold, textAlign: 'center', maxWidth: 90 }} numberOfLines={2}>{selectedMatch.homeTeam || ''}</Text>
-                      </TouchableOpacity>
-
-                      <View style={styles.scoreMid}>
-                        <View style={styles.scoreRow}>
-                          <Text style={styles.scoreNum}>{selectedMatch?.homeScore ?? selectedMatch?.matchScore?.home ?? '—'}</Text>
-                          <Text style={styles.scoreSep}> - </Text>
-                          <Text style={styles.scoreNum}>{selectedMatch?.awayScore ?? selectedMatch?.matchScore?.away ?? '—'}</Text>
-                        </View>
-                        {selectedMatch?.status ? (
-                          <View style={[styles.statusPill, {
-                            backgroundColor: selectedMatch.status === 'FINALIZADO' ? Colors.primaryAlpha10
-                              : selectedMatch.status === 'EN CURSO' ? 'rgba(239,68,68,0.12)' : Colors.surfaceAlt,
-                            borderColor: selectedMatch.status === 'FINALIZADO' ? Colors.primaryAlpha20
-                              : selectedMatch.status === 'EN CURSO' ? 'rgba(239,68,68,0.3)' : Colors.border,
-                          }]}>
-                            <Text style={[styles.statusPillText, {
-                              color: selectedMatch.status === 'FINALIZADO' ? Colors.primary
-                                : selectedMatch.status === 'EN CURSO' ? '#ef4444' : Colors.textMuted,
-                            }]}>{selectedMatch.status}</Text>
-                          </View>
-                        ) : null}
-                      </View>
-
-                      <TouchableOpacity style={styles.scoreTeamCol} activeOpacity={0.78} onPress={() => openTeamFromMatch('away')}>
-                        <View style={[styles.scoreLogoWrap, { backgroundColor: awayLogoCenterColor || '#ffffff' }]}>
-                          {modalAwayLogoUri
-                            ? <Image source={{ uri: modalAwayLogoUri }} style={styles.scoreLogoImg} resizeMode="contain" onError={() => setModalAwayLogoIndex((current) => (current + 1 < modalAwayLogoCandidates.length ? current + 1 : modalAwayLogoCandidates.length))} />
-                            : <Text style={styles.scoreLogoFallback}>{(selectedMatch.awayTeam || 'VI').slice(0, 2).toUpperCase()}</Text>
-                          }
-                        </View>
-                        <Text style={styles.scoreTeamRoleLabel}>Visitante</Text>
-                        <Text style={{ color: Colors.textSecondary, fontSize: Typography.size.xs, fontWeight: Typography.weight.semiBold, textAlign: 'center', maxWidth: 90 }} numberOfLines={2}>{selectedMatch.awayTeam || ''}</Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    <View style={styles.metaChipsRow}>
-                      <View style={styles.metaChip}>
-                        <MaterialIcons name="calendar-today" size={18} color={Colors.primary} />
-                        <Text style={styles.metaChipText}>{selectedMatch.dateLabel}</Text>
-                      </View>
-                      
-                      {selectedMatch?.time ? (
-                        <View style={styles.metaChip}>
-                          <MaterialIcons name="schedule" size={18} color={Colors.primary} />
-                          <Text style={styles.metaChipText}>{selectedMatch.time}</Text>
-                        </View>
-                      ) : null}
-                      {selectedMatch?.venue && selectedMatch.venue !== 'Sede por confirmar' ? (
-                        <View style={styles.metaChip}>
-                          <MaterialIcons name="location-on" size={18} color={Colors.primary} />
-                          <Text style={styles.metaChipText}>{selectedMatch.venue}</Text>
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
-
-                  <View style={styles.setsSection}>
-                    {selectedSets.length > 0 ? (
-                      <View style={styles.setsCard}>
-                        <View style={styles.setsHeaderRow}>
-                          <Text style={[styles.setsHeaderCell, { textAlign: 'left', maxWidth: 56 }]}>Set</Text>
-                          <Text style={styles.setsHeaderCell}>Local</Text>
-                          <Text style={styles.setsHeaderCell}>Visitante</Text>
-                        </View>
-                        {selectedSets.map((set) => {
-                          const hw = typeof set.home === 'number' && typeof set.away === 'number' && set.home > set.away;
-                          const aw = typeof set.home === 'number' && typeof set.away === 'number' && set.away > set.home;
-                          return (
-                            <View key={`set-${set.number}`} style={[styles.setsDataRow, hw && styles.setsDataRowHighlight]}>
-                              <Text style={[styles.setsCell, { textAlign: 'left', maxWidth: 56, color: hw ? Colors.primary : Colors.textMuted, fontWeight: hw ? Typography.weight.bold : Typography.weight.regular }]}>#{set.number}</Text>
-                              <Text style={[styles.setsCell, hw && styles.setsCellWin]}>{set.home}</Text>
-                              <Text style={[styles.setsCell, aw && styles.setsCellWin]}>{set.away}</Text>
-                            </View>
-                          );
-                        })}
-                      </View>
-                    ) : (
-                      <View style={styles.noSetsBox}>
-                        <Text style={styles.noSetsText}>No hay desglose de sets disponible.</Text>
-                      </View>
-                    )}
-                  </View>
-                </ScrollView>
-
-                <View style={styles.modalFooter}>
-                  <TouchableOpacity style={styles.modalFooterBtn} onPress={closeMatchModal} activeOpacity={0.84}>
-                    <Text style={styles.modalFooterBtnText}>Cerrar</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              <View style={[styles.modalPage, { width: screenWidth }]}>
-                <ScrollView style={styles.modalScroll} contentContainerStyle={{ paddingBottom: Spacing.xxxl }}>
-                  <View style={styles.mapPlaceholder}>
-                    <View style={styles.mapPinCircle}>
-                      <MaterialIcons name="location-on" size={36} color={Colors.textOnPrimary} />
-                    </View>
-                  </View>
-
-                  <View style={styles.mapInfoSection}>
-                    <View style={styles.mapTitleRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.mapVenueTitle} numberOfLines={2}>
-                          {selectedMatch?.venue && selectedMatch.venue !== 'Sede por confirmar'
-                            ? selectedMatch.venue : 'Sede por confirmar'}
-                        </Text>
-                      </View>
-                      <View style={styles.mapSportsBadge}>
-                        <MaterialIcons name="sports-volleyball" size={24} color={Colors.primary} />
-                      </View>
-                    </View>
-
-                    <View style={styles.mapBtns}>
-                      {selectedMatch?.venue && selectedMatch.venue !== 'Sede por confirmar' ? (
-                        <TouchableOpacity style={styles.mapPrimaryBtn} onPress={() => openMaps(selectedMatch.venue)} activeOpacity={0.84}>
-                          <MaterialIcons name="map" size={20} color={Colors.textOnPrimary} />
-                          <Text style={styles.mapPrimaryBtnText}>Abrir en Mapas</Text>
-                        </TouchableOpacity>
-                      ) : null}
-
-                      <TouchableOpacity
-                        style={[styles.mapSecondaryBtn, reminderSaved && { backgroundColor: Colors.successSoft }]}
-                        onPress={reminderSaved ? undefined : addReminder}
-                        activeOpacity={reminderSaved ? 1 : 0.84}
-                        disabled={reminderLoading || reminderSaved}
-                      >
-                        <MaterialIcons name={reminderSaved ? 'check' : 'notifications'} size={20} color={reminderSaved ? Colors.success : Colors.textPrimary} />
-                        <Text style={[styles.mapSecondaryBtnText, reminderSaved && { color: Colors.success }]}>
-                          {reminderLoading ? 'Guardando…' : reminderSaved ? 'Recordatorio guardado' : 'Añadir recordatorio'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                </ScrollView>
-
-                <View style={styles.mapFooter}>
-                  <TouchableOpacity style={styles.mapFooterTextBtn} onPress={closeMatchModal} activeOpacity={0.7}>
-                    <Text style={styles.mapFooterTextBtnText}>CERRAR</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </Animated.View>
-          </View>
-        </View>
-      ) : null}
       <StatusModal
         visible={statusModal.visible}
         title={statusModal.title}

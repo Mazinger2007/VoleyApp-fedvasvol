@@ -73,7 +73,7 @@ export default function StatusModal({
           <TouchableOpacity 
             style={styles.btn} 
             onPress={onClose}
-            activeOpacity={0.8}
+            activeOpacity={0.9}
           >
             <LinearGradient
               colors={[Colors.primary, Colors.primary]}

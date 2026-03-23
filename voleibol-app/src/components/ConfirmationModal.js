@@ -74,7 +74,7 @@ export default function ConfirmationModal({
             <TouchableOpacity 
               style={[styles.btn, styles.cancelBtn, { backgroundColor: isDark ? 'rgba(71, 85, 105, 0.2)' : '#f1f5f9' }]} 
               onPress={onCancel}
-              activeOpacity={0.7}
+              activeOpacity={0.9}
             >
               <Text style={[styles.btnText, { color: Colors.textPrimary }]}>{cancelLabel}</Text>
             </TouchableOpacity>
@@ -82,10 +82,10 @@ export default function ConfirmationModal({
             <TouchableOpacity 
               style={styles.btn} 
               onPress={onConfirm}
-              activeOpacity={0.8}
+              activeOpacity={0.9}
             >
               <LinearGradient
-                colors={isDestructive ? ['#f43f5e', '#e11d48'] : [Colors.primary, Colors.primary + 'CC']}
+                colors={isDestructive ? ['#f43f5e', '#e11d48'] : [Colors.primary, Colors.primary]}
                 start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
                 style={[styles.gradient, styles.confirmBtn]}

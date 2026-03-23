@@ -13,6 +13,7 @@ import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme, ACCENT_COLORS } from '../contexts/ThemeContext';
 import ConfirmationModal from '../components/ConfirmationModal';
 import StatusModal from '../components/StatusModal';
+import { DarkTheme } from '@react-navigation/native';
 
 export default function SettingsScreen() {
   const { colors: Colors, isDark, toggleTheme, accentKey, changeAccent } = useTheme();
@@ -102,7 +103,7 @@ export default function SettingsScreen() {
       paddingTop: Spacing.md,
       paddingBottom: Spacing.md,
       borderBottomWidth: 0,
-      backgroundColor: '#fff',
+      backgroundColor: Colors.surface,
       alignItems: 'center',
       elevation: 4,
       shadowColor: Colors.primary,
@@ -111,7 +112,7 @@ export default function SettingsScreen() {
       shadowOffset: { width: 0, height: 2 },
     },
     headerTitle: {
-      color: Colors.primary,
+      color: DarkTheme.colors.text,
       fontSize: Typography.size.lg,
       fontWeight: Typography.weight.bold,
       letterSpacing: 1,
@@ -442,12 +443,14 @@ export default function SettingsScreen() {
               <View style={{ flexDirection: 'row', gap: Spacing.md, width: '100%' }}>
                 <TouchableOpacity 
                   style={{ flex: 1, height: 48, borderRadius: Radius.lg, backgroundColor: isDark ? 'rgba(71, 85, 105, 0.2)' : '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}
+                  activeOpacity={0.9}
                   onPress={() => setUpdateInfo(null)}
                 >
                   <Text style={{ color: Colors.textPrimary, fontWeight: Typography.weight.semiBold }}>Más tarde</Text>
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={{ flex: 1, height: 48 }} 
+                  activeOpacity={0.9}
                   onPress={() => {
                     Linking.openURL(updateInfo.url);
                     setUpdateInfo(null);
@@ -466,10 +469,11 @@ export default function SettingsScreen() {
             ) : (
               <TouchableOpacity 
                 style={{ width: '100%', height: 48 }} 
+                activeOpacity={0.9}
                 onPress={() => setUpdateInfo(null)}
               >
                 <LinearGradient
-                  colors={[Colors.primary, Colors.primary + 'CC']}
+                  colors={[Colors.primary, Colors.primary]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 1 }}
                   style={{ flex: 1, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', elevation: 2 }}

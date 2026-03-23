@@ -87,8 +87,11 @@ function MatchCard({ match, isDark, colors, onPress }) {
       <TouchableOpacity 
         activeOpacity={0.7}
         onPress={() => {
-          if (onPress) onPress(match);
-          navigation.navigate('MatchDetail', { match: { ...match, ...summary } });
+          if (onPress) {
+            onPress(match);
+          } else {
+            navigation.navigate('MatchDetail', { match: { ...match, ...summary } });
+          }
         }}
         style={{ flex: 1 }}
       >

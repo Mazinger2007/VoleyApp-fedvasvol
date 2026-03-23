@@ -101,10 +101,10 @@ const lightColors = {
 
 // ─── Colores de Acento ────────────────────────────────────────────────────────
 export const ACCENT_COLORS = {
+  emerald: { primary: '#059669', primaryDark: '#047857' },
   blue: { primary: '#0d8ff2', primaryDark: '#0b76ca' },
   navy: { primary: '#001f3d', primaryDark: '#001224' },
   red: { primary: '#dc2626', primaryDark: '#b91c1c' },
-  emerald: { primary: '#059669', primaryDark: '#047857' },
   amber: { primary: '#f59e0b', primaryDark: '#d97706' },
   purple: { primary: '#9333ea', primaryDark: '#7e22ce' },
 };
@@ -119,15 +119,15 @@ function hexToRgba(hex, alpha) {
 // ─── Contexto ─────────────────────────────────────────────────────────────────
 const ThemeContext = createContext({
   colors: darkColors,
-  isDark: true,
-  accentKey: 'blue',
+  isDark: false,
+  accentKey: 'emerald',
   toggleTheme: () => {},
   changeAccent: () => {},
 });
 
 export function ThemeProvider({ children }) {
-  const [isDark, setIsDark] = useState(true);
-  const [accentKey, setAccentKey] = useState('blue');
+  const [isDark, setIsDark] = useState(false);
+  const [accentKey, setAccentKey] = useState('emerald');
 
   useEffect(() => {
     AsyncStorage.getItem('@theme_preference').then((val) => {

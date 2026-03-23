@@ -3,7 +3,7 @@
 // Configura React Navigation con NavigationContainer y Bottom Tabs.
 // Cada pestaña corresponde a una pantalla principal.
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StyleSheet, Text, View, Platform, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
@@ -11,6 +11,7 @@ import { createMaterialTopTabNavigator } from '@react-navigation/material-top-ta
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ScreenOrientation from 'expo-screen-orientation';
 
 // ── Pantallas ────────────────────────────────────────────────────────────────
 import MatchesScreen from './src/screens/MatchesScreen';
@@ -204,6 +205,12 @@ function MainTabs() {
 }
 
 export default function App() {
+  useEffect(() => {
+    // Inicializar y bloquear la orientación vertical por defecto para evitar errores de referencia
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
+      .catch((err) => console.log('Orientation Lock Error:', err));
+  }, []);
+
   return (
     <ThemeProvider>
       <AppContent />

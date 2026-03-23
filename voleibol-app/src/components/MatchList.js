@@ -268,7 +268,7 @@ export function getMatchSummary(match = {}) {
   };
 }
 
-function MatchCard({ match, headers, onPress }) {
+function MatchCard({ match, headers, onPress, calendarUrl }) {
   const navigation = useNavigation();
   const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);
@@ -349,8 +349,11 @@ function MatchCard({ match, headers, onPress }) {
       }}
       activeOpacity={0.88}
       onPress={() => {
-        if (onPress) onPress(match);
-        navigation.navigate('MatchDetail', { match: { ...match, ...summary } });
+        if (onPress) {
+          onPress(match);
+        } else {
+          navigation.navigate('MatchDetail', { match: { ...match, ...summary }, calendarUrl });
+        }
       }}
     >
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: Spacing.md, paddingTop: Spacing.md, paddingBottom: Spacing.sm }}>
@@ -438,7 +441,7 @@ function MatchCard({ match, headers, onPress }) {
  * Lista de partidos a partir de un bloque de tipo 'table'
  * @param {{ headers: string[], rows: string[][] }} tableBlock
  */
-export default function MatchList({ tableBlock, matches, onPressMatch }) {
+export default function MatchList({ tableBlock, matches, onPressMatch, calendarUrl }) {
   const { colors: Colors } = useTheme();
   
   const finalMatches = useMemo(() => {
@@ -463,7 +466,7 @@ export default function MatchList({ tableBlock, matches, onPressMatch }) {
       data={finalMatches}
       keyExtractor={(_, i) => String(i)}
       renderItem={({ item }) => (
-        <MatchCard match={item} headers={tableBlock?.headers || []} onPress={onPressMatch} />
+        <MatchCard match={item} headers={tableBlock?.headers || []} onPress={onPressMatch} calendarUrl={calendarUrl} />
       )}
       contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm }}
       showsVerticalScrollIndicator={false}
@@ -472,5 +475,3 @@ export default function MatchList({ tableBlock, matches, onPressMatch }) {
     />
   );
 }
-
-
