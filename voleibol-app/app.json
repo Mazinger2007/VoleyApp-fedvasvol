@@ -2,7 +2,7 @@
   "expo": {
     "name": "Voleibol Vizcaya",
     "slug": "voleibol-vizcaya",
-    "version": "1.0.0",
+    "version": "0.3.8",
     "jsEngine": "jsc",
     "orientation": "portrait",
     "userInterfaceStyle": "light",

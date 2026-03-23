@@ -9,6 +9,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getDominantBorderColor } from '../utils/imageColor';
+import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 
 function getInitials(name = '') {
   return name
@@ -93,21 +94,19 @@ function buildLogoCandidates(url = '') {
 function TeamLogo({ teamLogo, initials, Colors }) {
   const candidates = useMemo(() => buildLogoCandidates(teamLogo), [teamLogo]);
   const [index, setIndex] = useState(0);
-  const [bgColor, setBgColor] = useState('#ffffff');
+  const [bgColor, setBgColor] = useState(() => getCachedLogoColorSync(candidates[0]) || '#ffffff');
   const uri = candidates[index] || null;
 
   useEffect(() => {
+    if (!uri) { setBgColor(Colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(uri);
+    if (cached) { setBgColor(cached); }
+    requestLogoColorExtraction(uri, getDominantBorderColor);
     let mounted = true;
-    async function resolveColor() {
-      if (!uri) {
-        if (mounted) setBgColor(Colors.surfaceAlt);
-        return;
-      }
-      const color = await getDominantBorderColor(uri);
-      if (mounted) setBgColor(color || '#ffffff');
-    }
-    resolveColor();
-    return () => { mounted = false; };
+    const unsubscribe = subscribeToLogoColor(uri, (color) => {
+      if (mounted && color) setBgColor(color);
+    });
+    return () => { mounted = false; unsubscribe(); };
   }, [uri, Colors.surfaceAlt]);
 
   return (
@@ -144,14 +143,7 @@ export default function CompetitionTable({ tableBlock, title, onPressTeam, onPre
   const ptsCol = findPointsCol(headers, teamCol);
   const pjCol = findExactHeaderIndex(headers, 'pj') >= 0 ? findExactHeaderIndex(headers, 'pj') : findColIndex(headers, 'jug', 'played');
   const vCol = findExactHeaderIndex(headers, 'v') >= 0 ? findExactHeaderIndex(headers, 'v') : findExactHeaderIndex(headers, 'pg');
-  const eCol = findExactHeaderIndex(headers, 'e') >= 0 ? findExactHeaderIndex(headers, 'e') : findExactHeaderIndex(headers, 'pe');
-  const dCol = findExactHeaderIndex(headers, 'd') >= 0 ? findExactHeaderIndex(headers, 'd') : findExactHeaderIndex(headers, 'pp');
-  const statCols = [
-    { key: 'pj', label: 'PJ', index: pjCol },
-    { key: 'v', label: 'V', index: vCol },
-    { key: 'e', label: 'E', index: eCol },
-    { key: 'd', label: 'D', index: dCol },
-  ].filter((item) => item.index >= 0);
+
   const getCell = (row, idx, fallback = '-') => {
     if (idx < 0) return fallback;
     const value = String(row[idx] ?? '').trim();
@@ -160,30 +152,13 @@ export default function CompetitionTable({ tableBlock, title, onPressTeam, onPre
 
   return (
     <View style={{ marginBottom: Spacing.xl }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.xxl, marginBottom: 0, backgroundColor: Colors.background, paddingVertical: Spacing.sm + 6 }}>
-        <Text style={{ color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, flex: 1, textTransform: 'uppercase', letterSpacing: 1.6 }} numberOfLines={1}>
-          {title || 'Temporada oficial'}
-        </Text>
-        <TouchableOpacity
-          onPress={() => onPressExpand?.(tableBlock, title)}
-          activeOpacity={0.75}
-          style={{ width: '46%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: Radius.md, backgroundColor: Colors.surface, paddingHorizontal: Spacing.sm, paddingVertical: Spacing.sm, marginLeft: Spacing.sm }}
-        >
-          <MaterialIcons name="fullscreen" size={16} color={Colors.textSecondary} />
-          <Text style={{ color: Colors.textSecondary, fontSize: 10, fontWeight: Typography.weight.semiBold }}>Pantalla completa</Text>
-        </TouchableOpacity>
-      </View>
 
-      <View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, backgroundColor: Colors.background }}>
-          <Text style={{ width: 30, color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase' }}>Pos</Text>
-          <Text style={{ flex: 1, color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase' }}>Equipo</Text>
-          {statCols.map((stat) => (
-            <Text key={`head-${stat.key}`} style={{ width: 30, textAlign: 'center', color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase' }}>
-              {stat.label}
-            </Text>
-          ))}
-          <Text style={{ width: 40, textAlign: 'right', color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase' }}>Pts</Text>
+
+      <View style={{ flex: 1, backgroundColor: Colors.background }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, backgroundColor: Colors.surfaceAlt, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+          <Text style={{ width: 40, color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 1.6 }}>Pos</Text>
+          <Text style={{ flex: 1, color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 1.6 }}>Equipo</Text>
+          <Text style={{ width: 40, textAlign: 'right', color: Colors.textMuted, fontSize: 10, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 1.6 }}>Pts</Text>
         </View>
 
         {rows.map((row, ri) => {
@@ -208,7 +183,7 @@ export default function CompetitionTable({ tableBlock, title, onPressTeam, onPre
             ? ({ children }) => (
                 <TouchableOpacity
                   key={ri}
-                  style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 3, backgroundColor: Colors.background }, rowHighlight]}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}
                   activeOpacity={0.75}
                   onPress={() => onPressTeam(teamName, teamUrl, teamLogo, {
                     position: posLabel,
@@ -221,46 +196,55 @@ export default function CompetitionTable({ tableBlock, title, onPressTeam, onPre
                 </TouchableOpacity>
               )
             : ({ children }) => (
-                <View key={ri} style={[{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 3, backgroundColor: Colors.background }, rowHighlight]}>
+                <View key={ri} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
                   {children}
                 </View>
               );
 
           return (
             <RowWrapper key={ri}>
-              <Text style={{ width: 30, color: topColor || (isRelegation ? '#ef4444' : Colors.textMuted), fontSize: Typography.size.sm, fontWeight: Typography.weight.bold, textAlign: 'center' }}>
-                {posLabel}
-              </Text>
+              <View style={{ width: 40, flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ color: topColor || (isRelegation ? '#ef4444' : Colors.textPrimary), fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>
+                  {posLabel}
+                </Text>
+                {(topColor || isRelegation) && (
+                  <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: topColor ? '#10b981' : '#ef4444', marginLeft: 4 }} />
+                )}
+              </View>
 
-              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
                 <TeamLogo teamLogo={teamLogo} initials={initials} Colors={Colors} />
-                <Text style={{ flex: 1, color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: ri < 3 ? Typography.weight.bold : Typography.weight.medium }} numberOfLines={1}>
+                <Text style={{ flex: 1, color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.semiBold }} numberOfLines={1}>
                   {teamName}
                 </Text>
               </View>
 
-              {statCols.map((stat) => (
-                <Text key={`row-${ri}-${stat.key}`} style={{ width: 30, textAlign: 'center', color: Colors.textSecondary, fontSize: Typography.size.xs, fontWeight: Typography.weight.medium }}>
-                  {getCell(row, stat.index, '-')}
-                </Text>
-              ))}
-
-              <Text style={{ width: 40, textAlign: 'right', color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>{ptsVal}</Text>
+              <Text style={{ width: 40, textAlign: 'right', color: Colors.primary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>{ptsVal}</Text>
             </RowWrapper>
           );
         })}
       </View>
 
-      <View style={{ marginTop: Spacing.lg, marginHorizontal: Spacing.lg, paddingVertical: Spacing.sm, gap: Spacing.sm }}>
-        <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 1 }}>Leyenda</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-          <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#f59e0b33' }} />
-          <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs }}>Clasificación directa para Fase Final</Text>
+      <View style={{ padding: Spacing.lg, gap: Spacing.md }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xl }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />
+            <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.medium }}>Fase Final</Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#ef4444' }} />
+            <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.medium }}>Permanencia</Text>
+          </View>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-          <View style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: '#ef444433' }} />
-          <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs }}>Permanencia en Liga</Text>
-        </View>
+
+        <TouchableOpacity
+          onPress={() => onPressExpand?.(tableBlock, title)}
+          activeOpacity={0.75}
+          style={{ width: '100%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, borderRadius: Radius.xl, backgroundColor: Colors.surfaceAlt, paddingVertical: Spacing.md + 2 }}
+        >
+          <MaterialIcons name="fullscreen" size={18} color={Colors.textPrimary} />
+          <Text style={{ color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>Pantalla Completa</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );

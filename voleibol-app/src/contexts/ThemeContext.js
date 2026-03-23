@@ -2,7 +2,8 @@
 // Contexto global de tema (claro / oscuro).
 // Usar useTheme() en cualquier componente para acceder a colors + toggleTheme.
 
-import React, { createContext, useContext, useState, useMemo } from 'react';
+import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Paleta oscura (por defecto) ─────────────────────────────────────────────
 const darkColors = {
@@ -98,21 +99,72 @@ const lightColors = {
   cardTeal: '#ccfbf1',
 };
 
+// ─── Colores de Acento ────────────────────────────────────────────────────────
+export const ACCENT_COLORS = {
+  blue: { primary: '#0d8ff2', primaryDark: '#0b76ca' },
+  navy: { primary: '#001f3d', primaryDark: '#001224' },
+  red: { primary: '#dc2626', primaryDark: '#b91c1c' },
+  emerald: { primary: '#059669', primaryDark: '#047857' },
+  amber: { primary: '#f59e0b', primaryDark: '#d97706' },
+  purple: { primary: '#9333ea', primaryDark: '#7e22ce' },
+};
+
+function hexToRgba(hex, alpha) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
 // ─── Contexto ─────────────────────────────────────────────────────────────────
 const ThemeContext = createContext({
   colors: darkColors,
   isDark: true,
+  accentKey: 'blue',
   toggleTheme: () => {},
+  changeAccent: () => {},
 });
 
 export function ThemeProvider({ children }) {
   const [isDark, setIsDark] = useState(true);
+  const [accentKey, setAccentKey] = useState('blue');
 
-  const toggleTheme = () => setIsDark((prev) => !prev);
+  useEffect(() => {
+    AsyncStorage.getItem('@theme_preference').then((val) => {
+      if (val !== null) setIsDark(val === 'dark');
+    });
+    AsyncStorage.getItem('@theme_accent').then((val) => {
+      if (val !== null) setAccentKey(val);
+    });
+  }, []);
 
-  const colors = useMemo(() => (isDark ? darkColors : lightColors), [isDark]);
+  const toggleTheme = () => {
+    setIsDark((prev) => {
+      const next = !prev;
+      AsyncStorage.setItem('@theme_preference', next ? 'dark' : 'light').catch(() => {});
+      return next;
+    });
+  };
 
-  const value = useMemo(() => ({ colors, isDark, toggleTheme }), [colors, isDark]);
+  const changeAccent = (key) => {
+    setAccentKey(key);
+    AsyncStorage.setItem('@theme_accent', key).catch(() => {});
+  };
+
+  const colors = useMemo(() => {
+    const base = isDark ? darkColors : lightColors;
+    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.blue;
+    return {
+      ...base,
+      primary: accent.primary,
+      primaryDark: accent.primaryDark,
+      primaryAlpha20: hexToRgba(accent.primary, 0.20),
+      primaryAlpha15: hexToRgba(accent.primary, 0.15),
+      primaryAlpha10: hexToRgba(accent.primary, 0.10),
+    };
+  }, [isDark, accentKey]);
+
+  const value = useMemo(() => ({ colors, isDark, toggleTheme, accentKey, changeAccent }), [colors, isDark, accentKey, changeAccent]);
 
   return (
     <ThemeContext.Provider value={value}>

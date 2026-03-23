@@ -14,16 +14,17 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import Header from '../components/Header';
-import TournamentList from '../components/TournamentList';
+import CompetitionList from '../components/CompetitionList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { URLS, toTournamentRankingUrl } from '../utils/htmlParser';
+import { URLS } from '../utils/htmlParser';
+import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
 export default function HomeScreen({ navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors } = useTheme();
   const { blocks, loading, error, refresh } = useFetch(URLS.home);
 
   // Home centrada en torneos
@@ -33,17 +34,12 @@ export default function HomeScreen({ navigation }) {
   }, [blocks]);
 
   const handleOpenTournament = (tournament) => {
-    if (!tournament?.href) return;
-    const rankingUrl = toTournamentRankingUrl(tournament.href);
-    navigation.navigate('TournamentDetail', {
-      url: rankingUrl,
-      title: tournament.name || 'Clasificación y calendario',
-    });
+    openTournamentDetail(navigation, tournament);
   };
 
   const styles = useMemo(() => StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.background },
-    scroll: { flex: 1, backgroundColor: Colors.background },
+    safe: { flex: 1, backgroundColor: colors.background },
+    scroll: { flex: 1, backgroundColor: colors.background },
     content: { paddingBottom: Spacing.xxxl },
     emptyWrap: {
       padding: Spacing.xxl,
@@ -53,7 +49,7 @@ export default function HomeScreen({ navigation }) {
     },
     emptyIcon: { fontSize: 52 },
     emptyText: {
-      color: Colors.textMuted,
+      color: colors.textMuted,
       fontSize: Typography.size.md,
       textAlign: 'center',
       lineHeight: 22,
@@ -94,7 +90,7 @@ export default function HomeScreen({ navigation }) {
       >
         {/* Lista clicable de torneos */}
         {tournamentTable ? (
-          <TournamentList
+          <CompetitionList
             tableBlock={tournamentTable}
             onOpenTournament={handleOpenTournament}
           />

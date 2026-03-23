@@ -1,6 +1,8 @@
 // src/styles/theme.js
 // Sistema de diseño global: colores, tipografía, espaciado, sombras
 // Modifica estos valores para cambiar el aspecto de toda la app
+import { Platform } from 'react-native';
+
 
 export const Colors = {
   primary: '#0d8ff2',
@@ -107,29 +109,39 @@ export const Radius = {
   md: 10,
   lg: 16,
   xl: 24,
+  xxl: 32,
   full: 9999,
 };
 
 export const Shadow = {
   sm: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
+    ...(Platform.OS !== 'web' && {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.08,
+      shadowRadius: 4,
+    }),
     elevation: 2,
+    ...(Platform.OS === 'web' && { boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }),
   },
   md: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
+    ...(Platform.OS !== 'web' && {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 3 },
+      shadowOpacity: 0.12,
+      shadowRadius: 10,
+    }),
     elevation: 4,
+    ...(Platform.OS === 'web' && { boxShadow: '0 3px 10px rgba(0,0,0,0.12)' }),
   },
   lg: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.14,
-    shadowRadius: 16,
+    ...(Platform.OS !== 'web' && {
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.14,
+      shadowRadius: 16,
+    }),
     elevation: 8,
+    ...(Platform.OS === 'web' && { boxShadow: '0 6px 16px rgba(0,0,0,0.14)' }),
   },
 };

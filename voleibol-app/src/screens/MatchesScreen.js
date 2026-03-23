@@ -2,44 +2,70 @@
 // Pestaña "Partidos" — muestra la lista de ligas y al pulsar
 // abre TournamentDetailScreen directamente en la pestaña Calendario.
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
   ScrollView,
   TouchableOpacity,
-  TextInput,
   RefreshControl,
   StyleSheet,
   StatusBar,
+  Modal,
+  Animated,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 
-import TournamentList from '../components/TournamentList';
+import CompetitionList from '../components/CompetitionList';
 import LoadingView from '../components/LoadingView';
 import ErrorView from '../components/ErrorView';
 import { useFetch } from '../hooks/useFetch';
-import { URLS, toTournamentRankingUrl } from '../utils/htmlParser';
+import { URLS } from '../utils/htmlParser';
+import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
 const FILTERS = [
   { key: 'all', label: 'Todas' },
-  { key: 'junior', label: 'Junior' },
   { key: 'senior', label: 'Senior' },
-  { key: 'juvenil', label: 'Juvenil' },
+  { key: 'junior', label: 'Junior' },
   { key: 'cadete', label: 'Cadete' },
+  { key: 'playa', label: 'Voley Playa' },
 ];
 
 export default function MatchesScreen({ navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors: Colors, isDark } = useTheme();
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
+  const [selectedSeason, setSelectedSeason] = useState(null);
+  const [availableSeasons, setAvailableSeasons] = useState([]);
+  const [showSeasons, setShowSeasons] = useState(false);
+  const slideAnim = useRef(new Animated.Value(500)).current;
 
-  const { blocks, loading, error, refresh } = useFetch(URLS.home);
+  useEffect(() => {
+    if (showSeasons) {
+      slideAnim.setValue(500);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, speed: 20, bounciness: 0 }).start();
+    }
+  }, [showSeasons, slideAnim]);
+
+  const fetchUrl = useMemo(() => {
+    if (!selectedSeason) return URLS.home;
+    return `${URLS.home}?season=${selectedSeason}`;
+  }, [selectedSeason]);
+
+  const { blocks, loading, error, refresh } = useFetch(fetchUrl);
 
   const tournamentTable = useMemo(() => {
+    // Extract seasons metadata if present
+    const seasonsBlock = blocks.find(b => b.type === 'seasons');
+    if (seasonsBlock && availableSeasons.length === 0) {
+      setAvailableSeasons(seasonsBlock.items);
+      if (!selectedSeason) setSelectedSeason(seasonsBlock.current);
+    }
+
     const tables = blocks.filter((b) => b.type === 'table');
     return tables[0] || null;
   }, [blocks]);
@@ -73,56 +99,120 @@ export default function MatchesScreen({ navigation }) {
   }, [tournamentTable, search, activeFilter]);
 
   const handleOpenLeague = (url, leagueName) => {
-    const rankingUrl = toTournamentRankingUrl(url);
-    navigation.navigate('TournamentDetail', {
-      url: rankingUrl,
-      title: leagueName,
-      defaultTab: 'ranking',
+    openTournamentDetail(navigation, { href: url, name: leagueName }, {
+      season: selectedSeason,
     });
   };
 
   const styles = useMemo(() => StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.background },
+    safe: { flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f9' },
     headerWrap: {
       paddingHorizontal: Spacing.lg,
-      paddingTop: Spacing.md,
+      paddingTop: Spacing.lg,
       paddingBottom: Spacing.sm,
-      backgroundColor: Colors.background,
+      backgroundColor: isDark ? 'rgba(15,25,35,0.8)' : 'rgba(255,255,255,0.8)',
       borderBottomWidth: 1,
-      borderBottomColor: Colors.border,
+      borderBottomColor: 'rgba(13,143,242,0.1)',
     },
-    topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.sm + 2 },
+    topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md },
     leftGroup: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-    iconBtn: { width: 36, height: 36, borderRadius: Radius.full, justifyContent: 'center', alignItems: 'center' },
-    notifDot: { position: 'absolute', top: 8, right: 9, width: 8, height: 8, borderRadius: Radius.full, backgroundColor: Colors.primary },
     headerTitle: {
-      color: Colors.textPrimary,
-      fontSize: Typography.size.xxl,
-      fontWeight: Typography.weight.black || Typography.weight.extraBold,
+      color: isDark ? '#f1f5f9' : Colors.primary,
+      fontSize: 20,
+      fontWeight: 'bold',
       letterSpacing: -0.5,
     },
-    headerSubtitle: { color: Colors.textMuted, fontSize: Typography.size.md, marginBottom: Spacing.md },
-    searchBar: {
-      flexDirection: 'row', alignItems: 'center',
-      backgroundColor: Colors.surfaceAlt,
-      borderRadius: Radius.lg,
-      paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm,
-      borderWidth: 1, borderColor: Colors.border,
+    calendarBtn: {
+      width: 40, height: 40, borderRadius: Radius.md,
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(13,143,242,0.1)',
+      justifyContent: 'center', alignItems: 'center',
+      elevation: 2,
     },
-    searchIcon: { marginRight: Spacing.sm, color: Colors.primary },
-    searchInput: { flex: 1, color: Colors.textPrimary, fontSize: Typography.size.md, paddingVertical: 2 },
-    clearIcon: { color: Colors.textMuted, fontSize: 15, paddingLeft: Spacing.sm },
-    chipsScroll: { gap: Spacing.sm, paddingTop: Spacing.md, paddingBottom: Spacing.xs },
-    chip: { paddingHorizontal: Spacing.lg, paddingVertical: 6, borderRadius: Radius.full, backgroundColor: Colors.surfaceAlt },
-    chipActive: { backgroundColor: Colors.primary },
-    chipText: { color: Colors.textSecondary, fontSize: Typography.size.sm, fontWeight: Typography.weight.semiBold },
-    chipTextActive: { color: Colors.textOnPrimary },
-    scroll: { flex: 1, backgroundColor: Colors.background },
+    chipsScroll: { gap: Spacing.sm, paddingBottom: Spacing.md },
+    chip: {
+      height: 36,
+      paddingHorizontal: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderRadius: Radius.full,
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderWidth: 1,
+      borderColor: 'rgba(13,143,242,0.1)',
+    },
+    chipActive: {
+      backgroundColor: Colors.primary,
+      borderColor: Colors.primary,
+    },
+    chipText: {
+      color: isDark ? '#cbd5e1' : '#475569',
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    chipTextActive: {
+      color: '#ffffff',
+    },
+    scroll: { flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f9' },
     emptyWrap: { padding: Spacing.xxxl, alignItems: 'center', gap: Spacing.md },
     emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
-  }), [Colors]);
+    
+    // Modal Styles
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    modalContent: {
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      padding: 24,
+      paddingBottom: 48,
+      elevation: 20,
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+      } : {
+        boxShadow: '0 -10px 20px rgba(0,0,0,0.1)'
+      })
+    },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+    modalTitle: { fontSize: 20, fontWeight: 'bold', color: isDark ? '#f1f5f9' : '#0f172a' },
+    modalCloseBtn: { padding: 8, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: 20 },
+    seasonBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: 16, paddingVertical: 16,
+      borderRadius: 16,
+      borderWidth: 2, borderColor: 'transparent',
+      backgroundColor: isDark ? '#334155' : '#f8fafc',
+      marginBottom: 12,
+    },
+    seasonBtnActive: {
+      borderColor: Colors.primary,
+      backgroundColor: isDark ? 'rgba(13,143,242,0.1)' : '#eff6ff',
+    },
+    seasonText: { fontSize: 16, fontWeight: '500', color: isDark ? '#cbd5e1' : '#334155' },
+    seasonTextActive: { fontWeight: '600', color: Colors.primary },
+    seasonRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: isDark ? '#64748b' : '#cbd5e1' },
+    seasonRadioActive: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: Colors.primary, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+    modalConfirmBtn: {
+      marginTop: 24,
+      backgroundColor: Colors.primary,
+      paddingVertical: 16,
+      borderRadius: 16,
+      alignItems: 'center',
+      elevation: 4,
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: Colors.primary,
+        shadowOpacity: 0.3,
+        shadowOffset: { width: 0, height: 4 },
+        shadowRadius: 10,
+      } : {
+        boxShadow: `0 4px 10px ${Colors.primary}4D`
+      })
+    },
+    modalConfirmText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+  }), [Colors, isDark]);
 
-  if (loading) return <LoadingView message="Cargando ligas..." />;
+  if (loading) return <LoadingView message="Cargando ligas y torneos..." />;
   if (error)   return <ErrorView message={error} onRetry={refresh} />;
 
   return (
@@ -133,39 +223,12 @@ export default function MatchesScreen({ navigation }) {
       <View style={styles.headerWrap}>
         <View style={styles.topRow}>
           <View style={styles.leftGroup}>
-            <TouchableOpacity
-              style={styles.iconBtn}
-              activeOpacity={0.8}
-              onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}
-            >
-              <MaterialIcons name="arrow-back" size={24} color={Colors.textPrimary} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle}>Partidos</Text>
+            <Text style={styles.headerTitle}><Text style={{ fontWeight: 'bold' }}>Ligas</Text></Text>
           </View>
 
-          <TouchableOpacity style={styles.iconBtn} activeOpacity={0.8}>
-            <MaterialIcons name="notifications-none" size={24} color={Colors.textPrimary} />
-            <View style={styles.notifDot} />
+          <TouchableOpacity style={styles.calendarBtn} activeOpacity={0.8} onPress={() => setShowSeasons(!showSeasons)}>
+            <MaterialIcons name="calendar-month" size={24} color={isDark ? '#e2e8f0' : Colors.primary} />
           </TouchableOpacity>
-        </View>
-
-        <Text style={styles.headerSubtitle}>Explora las ligas de voleibol regionales</Text>
-
-        <View style={styles.searchBar}>
-          <MaterialIcons name="search" size={20} color={Colors.primary} style={styles.searchIcon} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar ligas, categorías..."
-            placeholderTextColor={Colors.textMuted}
-            value={search}
-            onChangeText={setSearch}
-            clearButtonMode="while-editing"
-          />
-          {search.length > 0 && (
-            <TouchableOpacity onPress={() => setSearch('')}>
-              <Text style={styles.clearIcon}>✕</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
@@ -195,7 +258,7 @@ export default function MatchesScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
       >
         {filteredTable ? (
-          <TournamentList
+          <CompetitionList
             tableBlock={filteredTable}
             onOpenTournament={handleOpenLeague}
           />
@@ -209,6 +272,44 @@ export default function MatchesScreen({ navigation }) {
         )}
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>
+
+      {/* Modal Selecting Season */}
+      <Modal visible={showSeasons} transparent animationType="fade" onRequestClose={() => setShowSeasons(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowSeasons(false)} />
+          <Animated.View style={[styles.modalContent, { transform: [{ translateY: slideAnim }] }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Seleccionar Temporada</Text>
+              <TouchableOpacity onPress={() => setShowSeasons(false)} style={styles.modalCloseBtn}>
+                <MaterialIcons name="close" size={20} color={isDark ? '#cbd5e1' : '#64748b'} />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={{ maxHeight: 350 }} showsVerticalScrollIndicator={false}>
+              {availableSeasons.map(s => {
+                const isSelected = selectedSeason === s.value;
+                return (
+                  <TouchableOpacity key={s.value} onPress={() => { setSelectedSeason(s.value); setShowSeasons(false); }} activeOpacity={0.8}
+                    style={[
+                      styles.seasonBtn,
+                      isSelected ? styles.seasonBtnActive : {}
+                    ]}>
+                    <Text style={[styles.seasonText, isSelected ? styles.seasonTextActive : {}]}>{s.label}</Text>
+                    {isSelected ? (
+                      <View style={styles.seasonRadioActive}>
+                        <MaterialIcons name="check" size={14} color="#ffffff" />
+                      </View>
+                    ) : (
+                      <View style={styles.seasonRadio} />
+                    )}
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
+
     </SafeAreaView>
   );
 }

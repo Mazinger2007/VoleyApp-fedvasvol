@@ -1,10 +1,13 @@
 // src/hooks/useFetch.js
 // Hook reutilizable para descargar y parsear cualquier URL de la federación.
 // Gestiona los estados: cargando, datos, error y recarga.
+// V2: in-memory result cache so revisited URLs render instantly.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchAndParse } from '../utils/htmlParser';
 
+// Keyed by URL → parsed block array. Persists for the entire app session.
+const resultCache = new Map();
 const inFlightByUrl = new Map();
 
 /**
@@ -12,12 +15,13 @@ const inFlightByUrl = new Map();
  * @returns {{ blocks, loading, error, refresh }}
  */
 export function useFetch(url) {
-  const [blocks, setBlocks] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Seed immediately from cache if available (zero-loading-flash on revisits)
+  const [blocks, setBlocks] = useState(() => resultCache.get(url) || []);
+  const [loading, setLoading] = useState(() => !resultCache.has(url));
   const [error, setError] = useState(null);
   const latestRequestTokenRef = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (forceRefresh = false) => {
     const nextToken = Date.now() + Math.random();
     latestRequestTokenRef.current = nextToken;
 
@@ -27,6 +31,17 @@ export function useFetch(url) {
       setLoading(false);
       return;
     }
+
+    // Serve from cache instantly, then refresh in background
+    const cached = resultCache.get(url);
+    if (cached && !forceRefresh) {
+      setBlocks(cached);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
+    const start = Date.now();
     setLoading(true);
     setError(null);
 
@@ -43,10 +58,13 @@ export function useFetch(url) {
 
       const result = await pending;
       if (latestRequestTokenRef.current === nextToken) {
+        const elapsed = Date.now() - start;
+        resultCache.set(url, result);
         setBlocks(result);
       }
     } catch (err) {
       if (latestRequestTokenRef.current === nextToken) {
+        const elapsed = Date.now() - start;
         setError(err.message || 'Error desconocido');
       }
     } finally {
@@ -56,9 +74,14 @@ export function useFetch(url) {
     }
   }, [url]);
 
+  const refresh = useCallback(() => {
+    resultCache.delete(url);
+    load(true);
+  }, [url, load]);
+
   useEffect(() => {
     load();
   }, [load]);
 
-  return { blocks, loading, error, refresh: load };
+  return { blocks, loading, error, refresh };
 }

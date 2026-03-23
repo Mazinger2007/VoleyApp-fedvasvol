@@ -4,7 +4,7 @@
 // Cada pestaña corresponde a una pantalla principal.
 
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, Platform, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -14,16 +14,26 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 // ── Pantallas ────────────────────────────────────────────────────────────────
 import MatchesScreen from './src/screens/MatchesScreen';
-import CompetitionsScreen from './src/screens/CompetitionsScreen';
-import TeamsScreen from './src/screens/TeamsScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
-import TournamentDetailScreen from './src/screens/TournamentDetailScreen';
+import BeachScreen from './src/screens/BeachScreen';
+import NewsScreen from './src/screens/NewsScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+import LeagueScreen from './src/screens/LeagueScreen';
+import TournamentScreen from './src/screens/TournamentScreen';
 import TeamDetailScreen from './src/screens/TeamDetailScreen';
 import RankingTableScreen from './src/screens/RankingTableScreen';
+import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
+import MatchDetailScreen from './src/screens/MatchDetailScreen';
+import InfoScreen from './src/screens/InfoScreen';
 
 // ── Tema ─────────────────────────────────────────────────────────────────────
 import { Typography } from './src/styles/theme';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
+import { hydrateLogoColorCache } from './src/utils/logoColorCache';
+
+// Kick off AsyncStorage → memory hydration of logo colors immediately at module
+// load time, before any React tree renders. This means getCachedLogoColorSync
+// will return instant results for already-seen URLs.
+hydrateLogoColorCache();
 
 const Tab = createMaterialTopTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -32,69 +42,135 @@ const Stack = createNativeStackNavigator();
 function TabIcon({ routeName, focused, colors }) {
   const iconColor = focused ? colors.primary : colors.textMuted;
 
-  if (routeName === 'Matches') {
-    return (
-      <View style={[iconStyles.wrap, focused && { backgroundColor: colors.primaryAlpha15 }]}>
-        <MaterialCommunityIcons name="volleyball" size={22} color={iconColor} />
-      </View>
-    );
-  }
-
   const iconByRoute = {
-    Competitions: 'emoji-events',
-    Teams: 'groups',
-    Profile: 'person',
+    Matches: 'emoji-events',
+    Beach: 'beach-access',
+    News: 'newspaper',
+    Settings: 'settings',
   };
 
   return (
-    <View style={[iconStyles.wrap, focused && { backgroundColor: colors.primaryAlpha15 }]}>
-      <MaterialIcons name={iconByRoute[routeName] || 'circle'} size={22} color={iconColor} />
+    <View style={iconStyles.wrap}>
+      <MaterialIcons name={iconByRoute[routeName] || 'circle'} size={24} color={iconColor} />
+      {focused && <View style={[iconStyles.dot, { backgroundColor: colors.primary }]} />}
     </View>
   );
 }
 
 const iconStyles = StyleSheet.create({
   wrap: {
-    width: 32,
+    width: 48,
     height: 32,
-    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+    position: 'relative',
+    marginBottom: 2,
+  },
+  dot: {
+    position: 'absolute',
+    bottom: -6,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
   },
 });
 
 const TAB_LABELS = {
-  Matches: 'Partidos',
-  Competitions: 'Ligas',
-  Teams: 'Equipos',
-  Profile: 'Perfil',
+  Matches: 'LIGAS',
+  Beach: 'VOLEY PLAYA',
+  News: 'NOTICIAS',
+  Settings: 'AJUSTES',
 };
 
-function MainTabs() {
+// COMPONENTE PERSONALIZADO PARA WEB
+// Evita el bug de la librería material-top-tabs (react-native-tab-view) 
+// que crashea al intentar usar interpolate() en campos undefined.
+function CustomWebTabBar({ state, descriptors, navigation }) {
   const { colors: Colors } = useTheme();
+
+  return (
+    <View style={{
+      flexDirection: 'row',
+      backgroundColor: Colors.surface,
+      borderTopColor: Colors.border,
+      borderTopWidth: 1,
+      height: 64,
+      paddingBottom: 8,
+      paddingTop: 8,
+    }}>
+      {state.routes.map((route, index) => {
+        const { options } = descriptors[route.key];
+        const label = options.tabBarLabel !== undefined ? options.tabBarLabel : route.name;
+        const isFocused = state.index === index;
+
+        const onPress = () => {
+          const event = navigation.emit({
+            type: 'tabPress',
+            target: route.key,
+            canPreventDefault: true,
+          });
+
+          if (!isFocused && !event.defaultPrevented) {
+            navigation.navigate(route.name);
+          }
+        };
+
+        return (
+          <TouchableOpacity
+            key={route.key}
+            onPress={onPress}
+            style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
+            activeOpacity={0.7}
+          >
+            <TabIcon routeName={route.name} focused={isFocused} colors={Colors} />
+            <Text style={{
+              color: isFocused ? Colors.primary : Colors.textMuted,
+              fontSize: 10,
+              fontWeight: '500',
+              marginTop: 4
+            }}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+function MainTabs() {
+  const { colors: Colors, isDark } = useTheme();
   return (
     <Tab.Navigator
+      tabBar={Platform.OS === 'web' ? (props) => <CustomWebTabBar {...props} /> : undefined}
       tabBarPosition="bottom"
       screenOptions={({ route }) => ({
         headerShown: false,
-        swipeEnabled: true,
-        animationEnabled: true,
+        swipeEnabled: Platform.OS !== 'web',
+        animationEnabled: Platform.OS !== 'web',
         lazy: true,
-        tabBarShowIcon: true,
-        tabBarIcon: ({ focused }) => (
+        // The material-top-tabs library has a bug on web where it crashes trying to animate/interpolate
+        // if certain props like icons or complex styles are present. We simplify for web.
+        tabBarShowIcon: Platform.OS !== 'web',
+        tabBarIcon: Platform.OS === 'web' ? undefined : ({ focused }) => (
           <TabIcon routeName={route.name} focused={focused} colors={Colors} />
         ),
         tabBarStyle: {
-          backgroundColor: Colors.surface,
+          backgroundColor: isDark ? 'rgba(15,25,35,0.95)' : 'rgba(255,255,255,0.95)',
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: 68,
-          paddingBottom: 10,
-          paddingTop: 6,
+          height: Platform.OS === 'web' ? 60 : 76,
+          paddingBottom: Platform.OS === 'web' ? 0 : 24,
+          paddingTop: Platform.OS === 'web' ? 0 : 8,
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          elevation: 0,
         },
         tabBarIndicatorStyle: {
-          backgroundColor: 'transparent',
-          height: 0,
+          backgroundColor: Platform.OS === 'web' ? Colors.primary : 'transparent',
+          height: Platform.OS === 'web' ? 2 : 0,
         },
         tabBarPressColor: 'transparent',
         tabBarActiveTintColor: Colors.primary,
@@ -109,19 +185,19 @@ function MainTabs() {
         options={{ tabBarLabel: TAB_LABELS.Matches }}
       />
       <Tab.Screen
-        name="Competitions"
-        component={CompetitionsScreen}
-        options={{ tabBarLabel: TAB_LABELS.Competitions }}
+        name="Beach"
+        component={BeachScreen}
+        options={{ tabBarLabel: TAB_LABELS.Beach }}
       />
       <Tab.Screen
-        name="Teams"
-        component={TeamsScreen}
-        options={{ tabBarLabel: TAB_LABELS.Teams }}
+        name="News"
+        component={NewsScreen}
+        options={{ tabBarLabel: TAB_LABELS.News }}
       />
       <Tab.Screen
-        name="Profile"
-        component={ProfileScreen}
-        options={{ tabBarLabel: TAB_LABELS.Profile }}
+        name="Settings"
+        component={SettingsScreen}
+        options={{ tabBarLabel: TAB_LABELS.Settings }}
       />
     </Tab.Navigator>
   );
@@ -155,9 +231,13 @@ function AppContent() {
       >
         <Stack.Navigator screenOptions={{ headerShown: false }}>
           <Stack.Screen name="MainTabs" component={MainTabs} />
-          <Stack.Screen name="TournamentDetail" component={TournamentDetailScreen} />
+          <Stack.Screen name="League" component={LeagueScreen} />
+          <Stack.Screen name="Tournament" component={TournamentScreen} />
           <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
           <Stack.Screen name="RankingTable" component={RankingTableScreen} />
+          <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
+          <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
+          <Stack.Screen name="Info" component={InfoScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
@@ -166,11 +246,17 @@ function AppContent() {
 
 const styles = StyleSheet.create({
   tabLabel: {
-    fontSize: Typography.size.xs,
-    fontWeight: Typography.weight.medium,
-    marginTop: 2,
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 6,
+    textTransform: 'uppercase',
+    letterSpacing: -0.5,
+    textAlign: 'center',
   },
   tabItem: {
-    paddingTop: 4,
+    flex: 1,
+    paddingTop: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

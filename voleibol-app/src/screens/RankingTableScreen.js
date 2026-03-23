@@ -76,15 +76,15 @@ function formatDiff(value = '-') {
   return `${numeric}`;
 }
 
-function getRowAccent(index) {
-  if (index === 0) return 'rgba(13, 143, 242, 0.10)';
-  if (index === 1 || index === 2) return 'rgba(13, 143, 242, 0.05)';
+function getRowAccent(index, isDark, colors) {
+  if (index === 0) return isDark ? 'rgba(13, 143, 242, 0.12)' : 'rgba(13, 143, 242, 0.05)';
+  if (index === 1 || index === 2) return isDark ? 'rgba(13, 143, 242, 0.06)' : 'rgba(13, 143, 242, 0.03)';
   return 'transparent';
 }
 
-function getPositionBadgeColor(index) {
-  if (index === 0) return '#0d8ff2';
-  if (index === 1 || index === 2) return 'rgba(13, 143, 242, 0.40)';
+function getPositionBadgeColor(index, colors) {
+  if (index === 0) return colors.primary;
+  if (index === 1 || index === 2) return colors.primaryAlpha20 || 'rgba(13, 143, 242, 0.20)';
   return 'transparent';
 }
 
@@ -122,7 +122,7 @@ function findExactHeaderIndex(headers, ...candidates) {
 }
 
 export default function RankingTableScreen({ route, navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors: Colors, isDark } = useTheme();
   const { tableBlock, title, subtitle } = route.params || {};
   const { width: windowWidth } = useWindowDimensions();
 
@@ -264,8 +264,8 @@ export default function RankingTableScreen({ route, navigation }) {
     tableCard: {
       borderRadius: Radius.lg,
       borderWidth: 1,
-      borderColor: Colors.divider,
-      backgroundColor: 'rgba(15, 23, 42, 0.35)',
+      borderColor: Colors.border,
+      backgroundColor: isDark ? 'rgba(30, 41, 59, 0.5)' : Colors.surface,
       overflow: 'hidden',
       ...Shadow.lg,
     },
@@ -355,7 +355,7 @@ export default function RankingTableScreen({ route, navigation }) {
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'bottom', 'left', 'right']}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.background} />
 
       <ScrollView style={styles.rootScroll} contentContainerStyle={styles.content}>
         <View style={styles.header}>
@@ -370,7 +370,7 @@ export default function RankingTableScreen({ route, navigation }) {
           </View>
 
           <View style={styles.headerRight}>
-            <TouchableOpacity style={styles.exitButton} activeOpacity={0.85} onPress={() => navigation.goBack()}>
+            <TouchableOpacity style={styles.exitButton} activeOpacity={0.85} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}>
               <MaterialIcons name="fullscreen-exit" size={21} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
@@ -397,13 +397,13 @@ export default function RankingTableScreen({ route, navigation }) {
                     key={row.key}
                     style={[
                       styles.tableBodyRow,
-                      row.index < 3 ? { backgroundColor: getRowAccent(row.index) } : null,
+                      row.index < 3 ? { backgroundColor: getRowAccent(row.index, isDark, Colors) } : null,
                     ]}
                   >
                     <View style={styles.cellPos}>
                       {showPosBadge ? (
-                        <View style={[styles.posBadge, { backgroundColor: getPositionBadgeColor(row.index) }]}>
-                          <Text style={styles.posBadgeText}>{row.position}</Text>
+                        <View style={[styles.posBadge, { backgroundColor: getPositionBadgeColor(row.index, Colors) }]}>
+                          <Text style={[styles.posBadgeText, { color: isDark ? '#ffffff' : Colors.textOnPrimary }]}>{row.position}</Text>
                         </View>
                       ) : (
                         <Text style={styles.posPlainText}>{row.position}</Text>
