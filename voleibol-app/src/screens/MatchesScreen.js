@@ -72,7 +72,7 @@ export default function MatchesScreen({ navigation }) {
 
   const filteredTable = useMemo(() => {
     if (!tournamentTable) return null;
-    const { rows, headers, rowLinks } = tournamentTable;
+    const { rows, headers, rowLinks, rowLogos, rowImages } = tournamentTable;
     const q = search.toLowerCase().trim();
 
     const categoryIdx = headers.findIndex((h) => /categor/i.test(h));
@@ -89,19 +89,33 @@ export default function MatchesScreen({ navigation }) {
         if (matchesSearch && matchesFilter) {
           acc.rows.push(row);
           acc.rowLinks.push(rowLinks?.[i] || null);
+          acc.rowLogos.push(rowLogos?.[i] || null);
+          acc.rowImages.push(rowImages?.[i] || null);
         }
         return acc;
       },
-      { rows: [], rowLinks: [] }
+      { rows: [], rowLinks: [], rowLogos: [], rowImages: [] }
     );
 
-    return { ...tournamentTable, rows: filtered.rows, rowLinks: filtered.rowLinks };
+    return {
+      ...tournamentTable,
+      rows: filtered.rows,
+      rowLinks: filtered.rowLinks,
+      rowLogos: filtered.rowLogos,
+      rowImages: filtered.rowImages
+    };
   }, [tournamentTable, search, activeFilter]);
 
-  const handleOpenLeague = (url, leagueName) => {
-    openTournamentDetail(navigation, { href: url, name: leagueName }, {
-      season: selectedSeason,
-    });
+  const handleOpenLeague = (url, leagueName, tipo) => {
+    if (tipo === 'torneo') {
+      openTournamentDetail(navigation, { href: url, name: leagueName, isTorneo: true }, {
+        season: selectedSeason,
+      });
+    } else {
+      openTournamentDetail(navigation, { href: url, name: leagueName }, {
+        season: selectedSeason,
+      });
+    }
   };
 
   const styles = useMemo(() => StyleSheet.create({
@@ -155,7 +169,7 @@ export default function MatchesScreen({ navigation }) {
     scroll: { flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f9' },
     emptyWrap: { padding: Spacing.xxxl, alignItems: 'center', gap: Spacing.md },
     emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
-    
+
     // Modal Styles
     modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
     modalContent: {
@@ -213,7 +227,7 @@ export default function MatchesScreen({ navigation }) {
   }), [Colors, isDark]);
 
   if (loading) return <LoadingView message="Cargando ligas y torneos..." />;
-  if (error)   return <ErrorView message={error} onRetry={refresh} />;
+  if (error) return <ErrorView message={error} onRetry={refresh} />;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -284,7 +298,7 @@ export default function MatchesScreen({ navigation }) {
                 <MaterialIcons name="close" size={20} color={isDark ? '#cbd5e1' : '#64748b'} />
               </TouchableOpacity>
             </View>
-            
+
             <ScrollView style={{ maxHeight: 350 }} showsVerticalScrollIndicator={false}>
               {availableSeasons.map(s => {
                 const isSelected = selectedSeason === s.value;
@@ -313,4 +327,3 @@ export default function MatchesScreen({ navigation }) {
     </SafeAreaView>
   );
 }
-

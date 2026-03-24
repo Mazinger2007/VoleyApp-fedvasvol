@@ -1,11 +1,14 @@
 // src/contexts/ThemeContext.js
-// Contexto global de tema (claro / oscuro).
-// Usar useTheme() en cualquier componente para acceder a colors + toggleTheme.
+// Contexto global de tema (claro / oscuro) con transición suave de colores.
+// Usa Animated.Value para interpolar colores directamente sin overlay ni flash.
 
-import React, { createContext, useContext, useState, useMemo, useEffect } from 'react';
+import React, {
+  createContext, useContext, useState, useMemo, useEffect, useRef, useCallback,
+} from 'react';
+import { Animated } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ─── Paleta oscura (por defecto) ─────────────────────────────────────────────
+// ─── Paleta oscura ────────────────────────────────────────────────────────────
 const darkColors = {
   primary: '#0d8ff2',
   primaryDark: '#0b76ca',
@@ -52,7 +55,7 @@ const darkColors = {
   cardTeal: '#0a3a3a',
 };
 
-// ─── Paleta clara ────────────────────────────────────────────────────────────
+// ─── Paleta clara ─────────────────────────────────────────────────────────────
 const lightColors = {
   primary: '#0d8ff2',
   primaryDark: '#0b76ca',
@@ -102,11 +105,11 @@ const lightColors = {
 // ─── Colores de Acento ────────────────────────────────────────────────────────
 export const ACCENT_COLORS = {
   emerald: { primary: '#059669', primaryDark: '#047857' },
-  blue: { primary: '#0d8ff2', primaryDark: '#0b76ca' },
-  navy: { primary: '#001f3d', primaryDark: '#001224' },
-  red: { primary: '#dc2626', primaryDark: '#b91c1c' },
-  amber: { primary: '#f59e0b', primaryDark: '#d97706' },
-  purple: { primary: '#9333ea', primaryDark: '#7e22ce' },
+  blue:    { primary: '#0d8ff2', primaryDark: '#0b76ca' },
+  navy:    { primary: '#001f3d', primaryDark: '#001224' },
+  red:     { primary: '#dc2626', primaryDark: '#b91c1c' },
+  amber:   { primary: '#f59e0b', primaryDark: '#d97706' },
+  purple:  { primary: '#9333ea', primaryDark: '#7e22ce' },
 };
 
 function hexToRgba(hex, alpha) {
@@ -116,41 +119,72 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+// ─── Keys a interpolar en transición dark ↔ light ────────────────────────────
+// Solo las que cambian entre dark y light (estáticas se copian directas).
+const INTERPOLATED_KEYS = [
+  'background', 'surface', 'surfaceAlt',
+  'textPrimary', 'textSecondary', 'textMuted',
+  'border', 'divider',
+  'tableRowEven', 'tableRowOdd',
+  'cardBlue', 'cardPurple', 'cardGreen', 'cardRed', 'cardOrange', 'cardTeal',
+];
+
+const THEME_DURATION = 200; // ms
+
 // ─── Contexto ─────────────────────────────────────────────────────────────────
 const ThemeContext = createContext({
   colors: darkColors,
   isDark: false,
-  accentKey: 'emerald',
+  accentKey: 'blue',
+  animColors: {},        // Animated.Value-based color strings (for backgroundColor etc.)
+  themeProgress: null,   // Animated.Value 0=light 1=dark
   toggleTheme: () => {},
   changeAccent: () => {},
 });
 
 export function ThemeProvider({ children }) {
   const [isDark, setIsDark] = useState(false);
-  const [accentKey, setAccentKey] = useState('emerald');
+  const [accentKey, setAccentKey] = useState('blue');
+
+  // Animated value: 0 = light, 1 = dark
+  const themeProgress = useRef(new Animated.Value(0)).current;
+  // We store a ref to the current target so we can read it synchronously
+  const isDarkRef = useRef(false);
 
   useEffect(() => {
     AsyncStorage.getItem('@theme_preference').then((val) => {
-      if (val !== null) setIsDark(val === 'dark');
+      if (val !== null) {
+        const dark = val === 'dark';
+        setIsDark(dark);
+        isDarkRef.current = dark;
+        themeProgress.setValue(dark ? 1 : 0);
+      }
     });
     AsyncStorage.getItem('@theme_accent').then((val) => {
       if (val !== null) setAccentKey(val);
     });
   }, []);
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     setIsDark((prev) => {
       const next = !prev;
+      isDarkRef.current = next;
+      Animated.timing(themeProgress, {
+        toValue: next ? 1 : 0,
+        duration: THEME_DURATION,
+        useNativeDriver: false, // color interpolation requires JS driver
+      }).start();
       AsyncStorage.setItem('@theme_preference', next ? 'dark' : 'light').catch(() => {});
       return next;
     });
-  };
+  }, [themeProgress]);
 
-  const changeAccent = (key) => {
+  const changeAccent = useCallback((key) => {
     setAccentKey(key);
     AsyncStorage.setItem('@theme_accent', key).catch(() => {});
-  };
+  }, []);
 
+  // Static colors (instant, for logic / non-animated use)
   const colors = useMemo(() => {
     const base = isDark ? darkColors : lightColors;
     const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.blue;
@@ -164,7 +198,33 @@ export function ThemeProvider({ children }) {
     };
   }, [isDark, accentKey]);
 
-  const value = useMemo(() => ({ colors, isDark, toggleTheme, accentKey, changeAccent }), [colors, isDark, accentKey, changeAccent]);
+  // Animated color strings — interpolated over themeProgress
+  // These can be used directly as `backgroundColor`, `color`, etc. on Animated.View/Text
+  const animColors = useMemo(() => {
+    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.blue;
+    const result = {};
+
+    for (const key of INTERPOLATED_KEYS) {
+      result[key] = themeProgress.interpolate({
+        inputRange: [0, 1],
+        outputRange: [lightColors[key], darkColors[key]],
+      });
+    }
+
+    // Primary color animated (accent change is instant since it can't be smoothly
+    // interpolated without knowing previous accent)
+    result.primary = accent.primary;
+    result.primaryAlpha20 = hexToRgba(accent.primary, 0.20);
+    result.primaryAlpha15 = hexToRgba(accent.primary, 0.15);
+    result.primaryAlpha10 = hexToRgba(accent.primary, 0.10);
+
+    return result;
+  }, [accentKey, themeProgress]);
+
+  const value = useMemo(
+    () => ({ colors, isDark, toggleTheme, accentKey, changeAccent, animColors, themeProgress }),
+    [colors, isDark, accentKey, toggleTheme, changeAccent, animColors, themeProgress],
+  );
 
   return (
     <ThemeContext.Provider value={value}>

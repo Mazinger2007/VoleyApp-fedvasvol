@@ -268,7 +268,7 @@ export function getMatchSummary(match = {}) {
   };
 }
 
-function MatchCard({ match, headers, onPress, calendarUrl }) {
+export function MatchCard({ match, headers, onPress, calendarUrl }) {
   const navigation = useNavigation();
   const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);

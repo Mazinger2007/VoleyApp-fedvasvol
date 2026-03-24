@@ -1,7 +1,7 @@
 // src/hooks/useFetch.js
 // Hook reutilizable para descargar y parsear cualquier URL de la federación.
 // Gestiona los estados: cargando, datos, error y recarga.
-// V2: in-memory result cache so revisited URLs render instantly.
+// V3: Evita flash de datos cacheados de URLs anteriores al cambiar de URL.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchAndParse } from '../utils/htmlParser';
@@ -15,73 +15,84 @@ const inFlightByUrl = new Map();
  * @returns {{ blocks, loading, error, refresh }}
  */
 export function useFetch(url) {
-  // Seed immediately from cache if available (zero-loading-flash on revisits)
-  const [blocks, setBlocks] = useState(() => resultCache.get(url) || []);
-  const [loading, setLoading] = useState(() => !resultCache.has(url));
-  const [error, setError] = useState(null);
+  const [state, setState] = useState(() => ({
+    url,
+    blocks: (url && resultCache.has(url)) ? resultCache.get(url) : [],
+    loading: !url || !resultCache.has(url),
+    error: null,
+  }));
+
   const latestRequestTokenRef = useRef(0);
 
+  // Derivación de estado síncrona: Si la URL cambia, reseteamos el estado INMEDIATAMENTE
+  // (antes de que se dibuje nada en pantalla) para evitar flash de datos antiguos.
+  if (state.url !== url) {
+    setState({
+      url,
+      blocks: (url && resultCache.has(url)) ? resultCache.get(url) : [],
+      loading: !url || !resultCache.has(url),
+      error: null,
+    });
+  }
+
   const load = useCallback(async (forceRefresh = false) => {
+    const currentUrl = url;
     const nextToken = Date.now() + Math.random();
     latestRequestTokenRef.current = nextToken;
 
-    if (!url) {
-      setBlocks([]);
-      setError(null);
-      setLoading(false);
+    if (!currentUrl) {
+      if (latestRequestTokenRef.current === nextToken) {
+        setState({ url: currentUrl, blocks: [], loading: false, error: null });
+      }
       return;
     }
 
-    // Serve from cache instantly, then refresh in background
-    const cached = resultCache.get(url);
+    const cached = resultCache.get(currentUrl);
     if (cached && !forceRefresh) {
-      setBlocks(cached);
-      setLoading(false);
-      setError(null);
+      if (latestRequestTokenRef.current === nextToken) {
+        setState({ url: currentUrl, blocks: cached, loading: false, error: null });
+      }
       return;
     }
 
-    const start = Date.now();
-    setLoading(true);
-    setError(null);
+    // Ya hemos puesto loading: true de forma síncrona en el if (state.url !== url),
+    // pero si es un forceRefresh explícito desde el botón, lo forzamos visualmente.
+    if (forceRefresh) {
+      setState(prev => ({ ...prev, loading: true, error: null }));
+    }
 
     try {
-      let pending = inFlightByUrl.get(url);
+      let pending = inFlightByUrl.get(currentUrl);
       if (!pending) {
-        pending = fetchAndParse(url).finally(() => {
-          if (inFlightByUrl.get(url) === pending) {
-            inFlightByUrl.delete(url);
+        pending = fetchAndParse(currentUrl).finally(() => {
+          if (inFlightByUrl.get(currentUrl) === pending) {
+            inFlightByUrl.delete(currentUrl);
           }
         });
-        inFlightByUrl.set(url, pending);
+        inFlightByUrl.set(currentUrl, pending);
       }
 
       const result = await pending;
       if (latestRequestTokenRef.current === nextToken) {
-        const elapsed = Date.now() - start;
-        resultCache.set(url, result);
-        setBlocks(result);
+        resultCache.set(currentUrl, result);
+        setState({ url: currentUrl, blocks: result, loading: false, error: null });
       }
     } catch (err) {
       if (latestRequestTokenRef.current === nextToken) {
-        const elapsed = Date.now() - start;
-        setError(err.message || 'Error desconocido');
-      }
-    } finally {
-      if (latestRequestTokenRef.current === nextToken) {
-        setLoading(false);
+        setState(prev => ({ ...prev, loading: false, error: err.message || 'Error desconocido' }));
       }
     }
   }, [url]);
 
   const refresh = useCallback(() => {
-    resultCache.delete(url);
+    if (url) resultCache.delete(url);
     load(true);
   }, [url, load]);
 
   useEffect(() => {
+    // Si la cache ya tiene estos datos, load resolverá de inmediato
     load();
   }, [load]);
 
-  return { blocks, loading, error, refresh };
+  return { blocks: state.blocks, loading: state.loading, error: state.error, refresh };
 }

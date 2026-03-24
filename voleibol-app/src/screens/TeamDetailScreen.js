@@ -23,6 +23,7 @@ import { toAbsoluteUrl } from '../utils/htmlParser';
 import { getDominantBorderColor } from '../utils/imageColor';
 import { Colors, Spacing, Typography, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { getMatchSummary, parseMatchDateTime, MatchCard, rowToMatch } from '../components/MatchList';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -158,6 +159,41 @@ export default function TeamDetailScreen({ route, navigation }) {
     pointsScored: Number.isFinite(pointsScoredTotal) ? pointsScoredTotal : pointsFromCalendar,
   }), [leagueStatsFromRoute, pointsScoredTotal, pointsFromCalendar]);
 
+  const teamMatches = useMemo(() => {
+    const list = [];
+    (blocks || []).forEach(b => {
+      if (b.type === 'table') {
+        if (Array.isArray(b.matches) && b.matches.length > 0) {
+          list.push(...b.matches);
+        } else if (Array.isArray(b.rows) && Array.isArray(b.headers)) {
+          b.rows.forEach(r => list.push(rowToMatch(r, b.headers)));
+        }
+      }
+    });
+    return list;
+  }, [blocks]);
+
+  const { upcomingMatches, playedMatches } = useMemo(() => {
+    const withSummary = teamMatches.map(m => {
+      const summary = getMatchSummary(m);
+      const dateObj = parseMatchDateTime(summary.rawDate);
+      const ts = dateObj ? dateObj.getTime() : 0;
+      return { match: m, ts, state: summary.state };
+    });
+
+    const upcoming = withSummary
+      .filter(m => m.state === 'upcoming' || m.state === 'live')
+      .sort((a, b) => a.ts - b.ts)
+      .map(m => m.match);
+
+    const played = withSummary
+      .filter(m => m.state === 'finished')
+      .sort((a, b) => b.ts - a.ts)
+      .map(m => m.match);
+
+    return { upcomingMatches: upcoming, playedMatches: played };
+  }, [teamMatches]);
+
 
   if (loading) return <LoadingView message={`Cargando ${teamName}…`} />;
 
@@ -185,6 +221,13 @@ export default function TeamDetailScreen({ route, navigation }) {
     errorText: { color: '#f87171', fontSize: Typography.size.sm, flex: 1 },
     retryText: { color: Colors.primary, fontSize: Typography.size.sm, fontWeight: Typography.weight.semiBold, marginLeft: Spacing.md },
     section: { marginHorizontal: Spacing.sm, marginBottom: Spacing.xl, backgroundColor: Colors.surface, borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: Colors.border },
+    sectionTitle: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.md, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary },
+    separatorContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: Spacing.xl, paddingHorizontal: Spacing.xl, opacity: 0.6 },
+    separatorLine: { flex: 1, height: 1, backgroundColor: Colors.border },
+    separatorIcon: { marginHorizontal: Spacing.md },
+    matchesWrap: { paddingHorizontal: Spacing.md, gap: Spacing.sm },
+    emptyState: { paddingVertical: Spacing.xl, paddingHorizontal: Spacing.md, alignItems: 'center', justifyContent: 'center' },
+    emptyStateText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
   });
 
   return (
@@ -253,6 +296,48 @@ export default function TeamDetailScreen({ route, navigation }) {
           </View>
         ) : null}
 
+        {/* Próximos partidos */}
+        {(upcomingMatches.length > 0) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Próximos Partidos</Text>
+            <View style={styles.matchesWrap}>
+              {upcomingMatches.map((m, i) => (
+                <MatchCard key={`upcoming-${i}`} match={m} headers={[]} calendarUrl={calendarUrl} />
+              ))}
+            </View>
+            <View style={{ height: Spacing.md }} />
+          </View>
+        )}
+
+        {/* Separador Visual Moderno */}
+        {(upcomingMatches.length > 0 && playedMatches.length > 0) && (
+          <View style={styles.separatorContainer}>
+            <View style={styles.separatorLine} />
+            <Text style={{ color: Colors.textMuted, fontSize: 18, marginHorizontal: 12 }}>✦</Text>
+            <View style={styles.separatorLine} />
+          </View>
+        )}
+
+        {/* Partidos jugados */}
+        {(playedMatches.length > 0) && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Partidos Jugados</Text>
+            <View style={styles.matchesWrap}>
+              {playedMatches.map((m, i) => (
+                <MatchCard key={`played-${i}`} match={m} headers={[]} calendarUrl={calendarUrl} />
+              ))}
+            </View>
+            <View style={{ height: Spacing.md }} />
+          </View>
+        )}
+
+        {/* Si no hay NINGÚN partido, en vez de placeholders, se muestra el estado limpio */}
+        {(upcomingMatches.length === 0 && playedMatches.length === 0 && !loading && !error) && (
+          <View style={styles.emptyState}>
+            <Text style={{ fontSize: 42, marginBottom: Spacing.md }}>📋</Text>
+            <Text style={styles.emptyStateText}>Aún no hay partidos programados para el equipo</Text>
+          </View>
+        )}
 
         <View style={{ height: Spacing.xxxl }} />
       </ScrollView>

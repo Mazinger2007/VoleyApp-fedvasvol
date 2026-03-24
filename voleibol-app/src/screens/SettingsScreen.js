@@ -2,7 +2,7 @@
 // Pantalla de Perfil — nueva UI basada en el mockup de la comunidad.
 
 import React, { useMemo, useState } from 'react';
-import { View, Text, StyleSheet, StatusBar, Switch, ScrollView, TouchableOpacity, Linking, Alert, ActivityIndicator, Modal, Platform } from 'react-native';
+import { View, Text, StyleSheet, StatusBar, Switch, ScrollView, TouchableOpacity, Linking, Alert, ActivityIndicator, Modal, Platform, Animated } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
@@ -16,7 +16,7 @@ import StatusModal from '../components/StatusModal';
 import { DarkTheme } from '@react-navigation/native';
 
 export default function SettingsScreen() {
-  const { colors: Colors, isDark, toggleTheme, accentKey, changeAccent } = useTheme();
+  const { colors: Colors, isDark, toggleTheme, accentKey, changeAccent, animColors } = useTheme();
   
   const [isChecking, setIsChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
@@ -96,14 +96,13 @@ export default function SettingsScreen() {
   const styles = useMemo(() => StyleSheet.create({
     safe: {
       flex: 1,
-      backgroundColor: Colors.background,
+      paddingTop: 0,
     },
     headerBar: {
       paddingHorizontal: Spacing.lg,
       paddingTop: Spacing.md,
       paddingBottom: Spacing.md,
       borderBottomWidth: 0,
-      backgroundColor: Colors.surface,
       alignItems: 'center',
       elevation: 4,
       shadowColor: Colors.primary,
@@ -221,19 +220,19 @@ export default function SettingsScreen() {
   const COLOR_OPTIONS = ['navy', 'blue', 'red', 'emerald', 'amber', 'purple'];
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <Animated.View style={[styles.safe, { backgroundColor: animColors.background }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.surface} />
 
-      <View style={styles.headerBar}>
-        <Text style={styles.headerTitle}>Ajustes</Text>
-      </View>
+      <Animated.View style={[styles.headerBar, { backgroundColor: animColors.surface }]}>
+        <Text style={[styles.headerTitle, { color: Colors.textPrimary }]}>Ajustes</Text>
+      </Animated.View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         
         {/* Personalización */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Personalización</Text>
-          <View style={styles.card}>
+          <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Personalización</Animated.Text>
+          <Animated.View style={[styles.card, { backgroundColor: animColors.surface, borderColor: animColors.border }]}>
             <View style={styles.cardPadding}>
               <Text style={styles.settingLabel}>Color de acento</Text>
               <View style={styles.colorsWrap}>
@@ -285,13 +284,13 @@ export default function SettingsScreen() {
                 thumbColor="#ffffff"
               />
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
 
         {/* Sobre la App */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sobre la App</Text>
-          <View style={styles.card}>
+          <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Sobre la App</Animated.Text>
+          <Animated.View style={[styles.card, { backgroundColor: animColors.surface, borderColor: animColors.border }]}>
             <View style={styles.cardPadding}>
               <Text style={styles.textBody}>
                 Esta aplicación es un aporte independiente para mejorar la experiencia de la comunidad del voleibol vasco.
@@ -320,13 +319,13 @@ export default function SettingsScreen() {
                 <MaterialIcons name="chevron-right" size={24} color={Colors.textMuted} />
               )}
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
 
         {/* Mantenimiento */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Sistema y Datos</Text>
-          <View style={styles.card}>
+          <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Sistema y Datos</Animated.Text>
+          <Animated.View style={[styles.card, { backgroundColor: animColors.surface, borderColor: animColors.border }]}>
             <TouchableOpacity 
               style={[styles.cardPadding, styles.settingRow]}
               onPress={handleClearCache}
@@ -343,13 +342,13 @@ export default function SettingsScreen() {
               </View>
               <MaterialIcons name="chevron-right" size={24} color={Colors.textMuted} />
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
 
         {/* Legal */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Legal y Propiedad Intelectual</Text>
-          <View style={[styles.card, styles.cardPadding]}>
+          <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Legal y Propiedad Intelectual</Animated.Text>
+          <Animated.View style={[styles.card, styles.cardPadding, { backgroundColor: animColors.surface, borderColor: animColors.border }]}>
             <View style={styles.legalBlock}>
               <Text style={styles.legalTitle}>Propiedad</Text>
               <Text style={styles.textBody}>
@@ -363,7 +362,7 @@ export default function SettingsScreen() {
                 Esta aplicación no es oficial y no tiene afiliación comercial con la federación. Se exime de toda responsabilidad legal derivada del uso de la información mostrada.
               </Text>
             </View>
-          </View>
+          </Animated.View>
         </View>
 
         {/* Footer */}
@@ -494,6 +493,6 @@ export default function SettingsScreen() {
         type={statusModal.type}
         onClose={() => setStatusModal({ ...statusModal, visible: false })}
       />
-    </SafeAreaView>
+    </Animated.View>
   );
 }

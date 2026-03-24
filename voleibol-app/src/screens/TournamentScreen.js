@@ -975,21 +975,19 @@ export default function TournamentScreen({ route, navigation }) {
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: Colors.background }]}>
       {!isFullscreen && (
-        <View style={[styles.header, { backgroundColor: Colors.surface, borderBottomColor: Colors.border, borderBottomWidth: 1 }]}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
-            <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+        <View style={[styles.header, { backgroundColor: Colors.background }]}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+            <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
           </TouchableOpacity>
-          <View style={styles.headerTitleContainer}>
-            <MaterialIcons name="emoji-events" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[styles.headerTitleText, { color: Colors.primary }]}>
-              {title ? title.toUpperCase() : 'TORNEO'}
-            </Text>
-          </View>
+          <Text style={[styles.headerTitleText, { color: isDark ? Colors.textPrimary : Colors.primary }]} numberOfLines={2}>
+            {title ? title.toUpperCase() : 'TORNEO'}
+          </Text>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.navigate('Info', { tournamentUrl: url, title: title || 'Información' })}
+            activeOpacity={0.7}
           >
-            <MaterialIcons name="info-outline" size={24} color={Colors.primary} />
+            <MaterialIcons name="info-outline" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
           </TouchableOpacity>
         </View>
       )}
@@ -1019,17 +1017,20 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md, 
+    paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
   },
-  headerTitleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  headerTitleText: {
     flex: 1,
-    justifyContent: 'center',
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+    paddingHorizontal: Spacing.sm,
+    letterSpacing: -0.5,
+    textTransform: 'uppercase',
   },
-  headerTitleText: { fontSize: 16, fontWeight: '900', letterSpacing: -0.5 },
-  backBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+  backBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
 
   // ── Editorial header ─────────────────────────────────────────────────────
   editorialHeader: {

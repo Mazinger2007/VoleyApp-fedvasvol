@@ -20,6 +20,7 @@ import {
   discoverSeasonLabel,
   toRankingUrl,
   extractPhaseLinks,
+  discoverAllPhases,
   fetchChampionshipData,
 } from '../utils/htmlParser';
 import { getDominantBorderColor } from '../utils/imageColor';
@@ -199,9 +200,9 @@ function FeaturedMatch({ match, onPress }) {
               {homeTeam} vs {awayTeam}
             </Text>
             {homeScore !== null && (
-               <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
-                 {homeScore} - {awayScore}
-               </Text>
+              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
+                {homeScore} - {awayScore}
+              </Text>
             )}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 16 }}>
@@ -230,7 +231,7 @@ const getMonthDays = (year, month) => {
   const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const days = [];
-  
+
   // Adjusted for Monday start (0=Mon, ..., 6=Sun)
   const offset = (firstDay === 0 ? 6 : firstDay - 1);
   for (let i = 0; i < offset; i++) days.push(null);
@@ -274,8 +275,6 @@ export default function LeagueScreen({ route, navigation }) {
 
   const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDate;
 
-  const headerIconAnim = useRef(new Animated.Value(0)).current;
-  
   // ── Animación sincronizada con Scroll (PagerView) ──
   // Usamos position + offset para saber la posición exacta decimal (ej: 0.5 es mitad de camino)
   const positionAnim = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
@@ -289,7 +288,7 @@ export default function LeagueScreen({ route, navigation }) {
   // Handler de scroll definido a nivel superior para evitar error de hooks
   const onPageScrollHandler = useMemo(() => Animated.event(
     [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
-    { useNativeDriver: false } 
+    { useNativeDriver: false }
   ), [positionAnim, offsetAnim]);
 
   useEffect(() => {
@@ -334,23 +333,63 @@ export default function LeagueScreen({ route, navigation }) {
     }
   }, [activeTab]);
 
+  const initialRankingUrl = useMemo(() => getUrlWithSeason(toRankingUrl(url)), [url, season]);
+  const [currentRankingUrl, setCurrentRankingUrl] = useState(initialRankingUrl);
+  // Remove currentPhaseTitle and only use original title for header
+  const [isSubgroupModalVisible, setIsSubgroupModalVisible] = useState(false);
+  const [availableSubgroups, setAvailableSubgroups] = useState([]);
+  const [isSwitchingSubgroup, setIsSwitchingSubgroup] = useState(false);
+
   useEffect(() => {
-    Animated.timing(headerIconAnim, {
-      toValue: activeTab === 'calendar' ? 1 : 0,
-      duration: 300,
-      useNativeDriver: true,
-    }).start();
-  }, [activeTab]);
+    setCurrentRankingUrl(initialRankingUrl);
+  }, [initialRankingUrl]);
+
+  // Load phases exactly once when the screen mounts (for the initialURL)
+  useEffect(() => {
+    let mounted = true;
+    async function fetchSubgroups() {
+      try {
+        const phases = await discoverAllPhases(initialRankingUrl);
+        const filtered = phases.filter(p => {
+          const low = (p.title || '').toLowerCase();
+          // Remove garbage options
+          if (/excel|exportar|imprimir|csv|pdf|seleccionar competición|competiciones/.test(low)) return false;
+          // Avoid showing exactly the main league title in the subgroup list to avoid confusion
+          if (title && low === title.toLowerCase()) return false;
+          return true;
+        });
+
+        if (mounted) {
+           setAvailableSubgroups(filtered);
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+    fetchSubgroups();
+    return () => { mounted = false; };
+  }, [initialRankingUrl, title]);
 
 
-  const rankingUrl = useMemo(() => getUrlWithSeason(toRankingUrl(url)), [url, season]);
-  
+  const rankingUrl = currentRankingUrl;
+
   const {
     blocks: rankingBlocks,
-    loading: rankingLoading,
+    loading: _rankingLoading,
     error: rankingError,
     refresh: refreshRanking,
   } = useFetch(rankingUrl);
+
+  const rankingLoading = _rankingLoading || isSwitchingSubgroup;
+
+  // React to successful fetch to clear switching state
+  useEffect(() => {
+    if (!_rankingLoading && isSwitchingSubgroup) {
+       setIsSwitchingSubgroup(false);
+       setIsSubgroupModalVisible(false); // Make sure modal gets closed
+    }
+  }, [_rankingLoading, isSwitchingSubgroup]);
+
 
   const calendarUrlFromBlocks = useMemo(() => {
     const linkBlocks = (rankingBlocks || []).filter((b) => b.type === 'link');
@@ -363,8 +402,8 @@ export default function LeagueScreen({ route, navigation }) {
     );
     if (calendarByText?.href) return calendarByText.href;
 
-    const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i) || 
-                  rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
+    const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i) ||
+      rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
     return match ? `${match[1]}/calendar` : null;
   }, [rankingBlocks, rankingUrl]);
 
@@ -461,7 +500,7 @@ export default function LeagueScreen({ route, navigation }) {
     () => (rankingBlocks || []).filter((b) => b.type === 'table'),
     [rankingBlocks]
   );
-  
+
   const rankingBrackets = useMemo(
     () => (rankingBlocks || []).filter((b) => b.type === 'bracket'),
     [rankingBlocks]
@@ -479,7 +518,7 @@ export default function LeagueScreen({ route, navigation }) {
   const filteredMatches = useMemo(() => {
     if (!hasActiveFilters) return [];
     let result = [...flattenedMatches];
-    
+
     if (searchTeams.length > 0) {
       if (searchTeams.length === 2) {
         const [teamA, teamB] = searchTeams;
@@ -494,15 +533,15 @@ export default function LeagueScreen({ route, navigation }) {
         );
       }
     }
-    
+
     if (searchLocations.length > 0) {
       result = result.filter(m => searchLocations.includes(m.venue || 'Sede por confirmar'));
     }
-    
+
     if (searchDate) {
       result = result.filter(m => (m.rawDate || m.date) === searchDate);
     }
-    
+
     return result;
   }, [flattenedMatches, searchTeams, searchLocations, searchDate, hasActiveFilters]);
 
@@ -538,8 +577,8 @@ export default function LeagueScreen({ route, navigation }) {
     } else if (isDatePickerVisible && searchDate) {
       const match = searchDate.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
       if (match) {
-         const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
-         if (mIdx !== -1) setCalendarMonth(mIdx);
+        const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
+        if (mIdx !== -1) setCalendarMonth(mIdx);
       }
     }
   }, [isDatePickerVisible, searchDate, allAvailableDates]);
@@ -638,21 +677,21 @@ export default function LeagueScreen({ route, navigation }) {
   };
 
   const RT_LABELS = {
-    ranking: 'Clasificación',
-    calendar: 'Calendario',
+    ranking: isChampionship ? 'Cuadro' : 'Clasificación',
+    calendar: isChampionship ? 'Partidos' : 'Calendario',
   };
 
-  const TABS = [
-    { key: 'ranking', label: 'Clasificación' },
-    { key: 'calendar', label: 'Calendario' },
-  ];
+  const TABS = useMemo(() => [
+    { key: 'ranking', label: isChampionship ? 'Cuadro' : 'Clasificación' },
+    { key: 'calendar', label: isChampionship ? 'Partidos' : 'Calendario' },
+  ], [isChampionship]);
 
   const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
     header: {
-      flexDirection: 'row', 
+      flexDirection: 'row',
       alignItems: 'center',
-      paddingHorizontal: Spacing.md, 
+      paddingHorizontal: Spacing.md,
       paddingVertical: Spacing.sm,
       backgroundColor: Colors.background,
     },
@@ -674,7 +713,7 @@ export default function LeagueScreen({ route, navigation }) {
     },
     tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative' },
     tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center' },
-    tabItemActive: { },
+    tabItemActive: {},
     tabIndicator: { position: 'absolute', bottom: 0, left: 0, height: 3, backgroundColor: Colors.primary, borderTopLeftRadius: 3, borderTopRightRadius: 3, zIndex: 10 },
     tabLabel: { fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
     mainPagerClip: { flex: 1, overflow: 'hidden' },
@@ -693,7 +732,7 @@ export default function LeagueScreen({ route, navigation }) {
     emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
     retryBtn: { backgroundColor: Colors.primary, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.xl, borderRadius: Radius.full, marginTop: Spacing.sm },
     retryText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.semiBold, fontSize: Typography.size.sm },
-    
+
     // Search Styles
     searchContainer: { padding: Spacing.md, paddingTop: 0, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: Colors.background },
     searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
@@ -706,7 +745,7 @@ export default function LeagueScreen({ route, navigation }) {
     emptySearchText: { fontSize: 14, color: Colors.textMuted, textAlign: 'center', opacity: 0.7, marginBottom: Spacing.xl },
     clearBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: Radius.xl, backgroundColor: Colors.primary },
     clearBtnText: { color: Colors.textOnPrimary, fontWeight: 'bold' },
-    
+
     // Premium Search Modal
     centeredModalWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
     premiumSearchCard: { width: '100%', maxWidth: 400, borderRadius: Radius.xxl, padding: Spacing.lg, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20, elevation: 10 },
@@ -717,13 +756,13 @@ export default function LeagueScreen({ route, navigation }) {
     searchFilterPill: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
     searchModalBtn: { height: 54, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', marginTop: Spacing.md },
     searchModalBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
-    
+
     // Selection Modal
     selectionModal: { width: '90%', maxHeight: '80%', borderRadius: Radius.xxl, padding: Spacing.lg },
     selectionModalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: Spacing.md, textAlign: 'center' },
     selectionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
     selectionItemText: { fontSize: 16 },
-    
+
     // Date Grid
     dateGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, justifyContent: 'space-between' },
     dateGridItem: { width: '30%', padding: Spacing.sm, borderRadius: Radius.lg, alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
@@ -747,7 +786,7 @@ export default function LeagueScreen({ route, navigation }) {
     matchDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
     modalFooterBtn: { height: 50, borderRadius: Radius.lg, justifyContent: 'center', alignItems: 'center' },
     modalFooterBtnText: { fontSize: 14, fontWeight: 'bold', letterSpacing: 0.5 },
-    
+
     // ── Full-screen match modal ───────────────────────────────────────────
     modalRoot: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: Colors.background },
     modalHeader: {
@@ -804,35 +843,35 @@ export default function LeagueScreen({ route, navigation }) {
       paddingBottom: insets.bottom > 0 ? insets.bottom : Spacing.md,
       borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background,
     },
-    modalFooterBtn: { 
-      backgroundColor: Colors.primary, 
-      borderRadius: Radius.lg, 
-      paddingVertical: Spacing.md + 4, 
-      alignItems: 'center', 
+    modalFooterBtn: {
+      backgroundColor: Colors.primary,
+      borderRadius: Radius.lg,
+      paddingVertical: Spacing.md + 4,
+      alignItems: 'center',
       elevation: 4,
       ...(Platform.OS !== 'web' ? {
-        shadowColor: Colors.primary, 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.3, 
+        shadowColor: Colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
         shadowRadius: 8,
-      } : { 
-        boxShadow: `0 4px 8px ${Colors.primary}4D` 
+      } : {
+        boxShadow: `0 4px 8px ${Colors.primary}4D`
       })
     },
     modalFooterBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
     // Map tab
     mapPlaceholder: { height: 220, backgroundColor: isDark ? '#0c1929' : '#b8cfe2', margin: Spacing.md, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    mapPinCircle: { 
-      width: 64, height: 64, borderRadius: Radius.full, 
-      backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center', 
+    mapPinCircle: {
+      width: 64, height: 64, borderRadius: Radius.full,
+      backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center',
       elevation: 6,
       ...(Platform.OS !== 'web' ? {
-        shadowColor: Colors.primary, 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.4, 
+        shadowColor: Colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
         shadowRadius: 12,
-      } : { 
-        boxShadow: `0 4px 12px ${Colors.primary}66` 
+      } : {
+        boxShadow: `0 4px 12px ${Colors.primary}66`
       })
     },
     mapInfoSection: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
@@ -840,18 +879,18 @@ export default function LeagueScreen({ route, navigation }) {
     mapVenueTitle: { color: Colors.textPrimary, fontSize: Typography.size.xxl, fontWeight: Typography.weight.bold, letterSpacing: -0.5 },
     mapSportsBadge: { backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.xl, padding: Spacing.md },
     mapBtns: { gap: Spacing.sm },
-    mapPrimaryBtn: { 
-      backgroundColor: Colors.primary, borderRadius: Radius.xl, 
-      paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg, 
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm, 
+    mapPrimaryBtn: {
+      backgroundColor: Colors.primary, borderRadius: Radius.xl,
+      paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg,
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
       elevation: 3,
       ...(Platform.OS !== 'web' ? {
-        shadowColor: Colors.primary, 
-        shadowOffset: { width: 0, height: 4 }, 
-        shadowOpacity: 0.25, 
+        shadowColor: Colors.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.25,
         shadowRadius: 8,
-      } : { 
-        boxShadow: `0 4px 8px ${Colors.primary}40` 
+      } : {
+        boxShadow: `0 4px 8px ${Colors.primary}40`
       })
     },
     mapPrimaryBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
@@ -923,17 +962,17 @@ export default function LeagueScreen({ route, navigation }) {
   });
 
   const rankingContent = useMemo(() => {
-    const isTournament = /\b(torneo|copa|final|txapelketa|sector)\b/i.test(title || '');
+    const isTournament = /\b(torneo|copa|final|txapelketa|topaketa|sector)\b/i.test(title || '');
     if (rankingLoading && !rankingTables.length) {
       return <LoadingView variant="clean" message="Cargando clasificación..." />;
     }
 
     const hasData = rankingTables.length > 0 || rankingBrackets.length > 0;
 
-    
+
     if (hasData) {
       return (
-        <View>
+        <View style={{ paddingBottom: Spacing.xxxl }}>
           {rankingTables.map((table, i) => (
             <CompetitionTable
               key={`ranking-${i}`}
@@ -1014,13 +1053,13 @@ export default function LeagueScreen({ route, navigation }) {
 
               const sectionKey = `jornada-${i}`;
               const isOpen = !!expandedCalendar[sectionKey];
-              
+
               const matches = table.matches || [];
               const hasMatches = matches.length > 0;
               const summaries = matches.map(m => getMatchSummary(m));
               const hasLive = summaries.some(s => s.state === 'live');
               const allFinished = hasMatches && summaries.every(s => s.state === 'finished');
-              
+
               const status = hasLive ? 'live' : allFinished ? 'finished' : 'upcoming';
 
               return (
@@ -1044,8 +1083,8 @@ export default function LeagueScreen({ route, navigation }) {
                     activeOpacity={0.8}
                     onPress={() => {
                       setSelectedJornadaIndex(i);
-                      navigation.navigate('JornadaDetail', { 
-                        tableBlock: table, 
+                      navigation.navigate('JornadaDetail', {
+                        tableBlock: table,
                         title: displayTitle,
                         subtitle: seasonLabel,
                         calendarUrl: resolvedCalendarUrl,
@@ -1071,10 +1110,10 @@ export default function LeagueScreen({ route, navigation }) {
                           {!hasMatches ? 'Sin información' : status === 'live' ? 'Esta semana' : status === 'finished' ? 'Finalizada' : 'Próxima'}
                         </Text>
                       </View>
-                      <MaterialIcons 
-                        name="chevron-right" 
-                        size={24} 
-                        color={isDark ? Colors.textMuted : 'rgba(15, 23, 42, 0.3)'} 
+                      <MaterialIcons
+                        name="chevron-right"
+                        size={24}
+                        color={isDark ? Colors.textMuted : 'rgba(15, 23, 42, 0.3)'}
                       />
                     </View>
                   </TouchableOpacity>
@@ -1096,7 +1135,7 @@ export default function LeagueScreen({ route, navigation }) {
           <Text style={[styles.emptySearchText, { color: Colors.textMuted }]}>
             No se han encontrado partidos que coincidan con los filtros seleccionados.
           </Text>
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.clearBtn, { backgroundColor: Colors.primary }]}
             onPress={() => {
               setSearchTeams([]);
@@ -1117,14 +1156,14 @@ export default function LeagueScreen({ route, navigation }) {
             {filteredMatches.length} {filteredMatches.length === 1 ? 'partido encontrado' : 'partidos encontrados'}
           </Text>
           <TouchableOpacity onPress={() => {
-             setSearchTeams([]);
-             setSearchDate(null);
-             setSearchLocations([]);
+            setSearchTeams([]);
+            setSearchDate(null);
+            setSearchLocations([]);
           }}>
             <Text style={{ color: Colors.primary, fontWeight: 'bold', fontSize: 13 }}>Limpiar</Text>
           </TouchableOpacity>
         </View>
-        <MatchList 
+        <MatchList
           matches={filteredMatches}
           onPressMatch={openMatchModal}
           onTeamPress={(name) => handlePressTeam(name, null, null, null)}
@@ -1135,11 +1174,44 @@ export default function LeagueScreen({ route, navigation }) {
     );
   }, [filteredMatches, Colors, hasActiveFilters, openMatchModal, handlePressTeam]);
 
-  
+
   // Manejo de temporada en configuración
   const isConfiguring = rankingError === 'SEASON_CONFIGURING' || calendarError === 'SEASON_CONFIGURING';
 
   if (rankingError && !isConfiguring) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
+
+  // If loading is done and there is absolutely no data, show a minimal empty state
+  const hasNoData = !rankingLoading && !calendarLoading && !isConfiguring &&
+    rankingTables.length === 0 && rankingBrackets.length === 0 && calendarTables.length === 0;
+
+  if (hasNoData) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+        {/* Minimal header */}
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
+            <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={2}>
+            {(title || 'Liga').toUpperCase()}
+          </Text>
+          {/* Spacer to keep title centered */}
+          <View style={styles.backBtn} />
+        </View>
+        {/* Empty state */}
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xxl }}>
+          <MaterialIcons name="sports-volleyball" size={64} color={Colors.textMuted} style={{ opacity: 0.35, marginBottom: Spacing.lg }} />
+          <Text style={{ color: Colors.textPrimary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', marginBottom: Spacing.sm }}>
+            Sin información disponible
+          </Text>
+          <Text style={{ color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center', lineHeight: 22 }}>
+            No se encontró información acerca de esta competición.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -1159,7 +1231,7 @@ export default function LeagueScreen({ route, navigation }) {
             >
               <MaterialIcons name="settings" size={48} color="#ffffff" />
             </LinearGradient>
-            
+
             <View style={styles.configModalBody}>
               <Text style={[styles.configModalTitle, { color: Colors.textPrimary }]}>
                 Temporada en Configuración
@@ -1170,8 +1242,8 @@ export default function LeagueScreen({ route, navigation }) {
               <Text style={[styles.configModalSubtext, { color: Colors.textMuted }]}>
                 Vuelve a intentarlo en unos días para ver los calendarios y clasificaciones actualizados.
               </Text>
-              
-              <TouchableOpacity 
+
+              <TouchableOpacity
                 style={[styles.configModalBtn, { backgroundColor: Colors.primary }]}
                 activeOpacity={0.9}
                 onPress={() => navigation.goBack()}
@@ -1188,61 +1260,71 @@ export default function LeagueScreen({ route, navigation }) {
         <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
           <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle} numberOfLines={2}>
-          {(title || 'Liga').toUpperCase()}
-        </Text>
+        
         <TouchableOpacity 
-          style={styles.backBtn} 
-          onPress={activeTab === 'calendar' ? () => setIsSearchModalVisible(true) : handleOpenInfo} 
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }} 
+          onPress={() => setIsSubgroupModalVisible(true)}
+          disabled={availableSubgroups.length <= 1}
           activeOpacity={0.7}
         >
-          <Animated.View style={{
-            opacity: headerIconAnim.interpolate({
-              inputRange: [0, 0.4, 0.6, 1],
-              outputRange: [1, 0, 0, 1]
-            }),
-            transform: [{
-              rotate: headerIconAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: ['0deg', '90deg']
-              })
-            }, {
-              scale: headerIconAnim.interpolate({
-                inputRange: [0, 0.5, 1],
-                outputRange: [1, 0.7, 1]
-              })
-            }]
-          }}>
-            <MaterialIcons 
-              name={activeTab === 'calendar' ? 'search' : 'info-outline'} 
-              size={24} 
-              color={isDark ? Colors.textPrimary : Colors.primary}
-              style={activeTab === 'calendar' ? { transform: [{ rotate: '-90deg' }] } : undefined}
-            />
-          </Animated.View>
+          <Text style={[styles.headerTitle, { flex: 0 }]} numberOfLines={1}>
+            {(title || 'Liga').toUpperCase()}
+          </Text>
+          {availableSubgroups.length > 1 && (
+            <MaterialIcons name="keyboard-arrow-down" size={22} color={isDark ? Colors.textPrimary : Colors.primary} />
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.backBtn}
+          onPress={activeTab === 'calendar' ? () => setIsSearchModalVisible(true) : handleOpenInfo}
+          activeOpacity={0.7}
+        >
+          <View style={{ width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
+            <Animated.View style={{
+              position: 'absolute',
+              opacity: pagerScrollNative.interpolate({ inputRange: [0, 0.4, 0.6, 1], outputRange: [1, 0, 0, 0] }),
+              transform: [
+                { rotate: pagerScrollNative.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'] }) },
+                { scale: pagerScrollNative.interpolate({ inputRange: [0, 0.5], outputRange: [1, 0.3] }) }
+              ]
+            }}>
+              <MaterialIcons name="info-outline" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
+            </Animated.View>
+
+            <Animated.View style={{
+              position: 'absolute',
+              opacity: pagerScrollNative.interpolate({ inputRange: [0, 0.4, 0.6, 1], outputRange: [0, 0, 0, 1] }),
+              transform: [
+                { rotate: pagerScrollNative.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '0deg'] }) },
+                { scale: pagerScrollNative.interpolate({ inputRange: [0.5, 1], outputRange: [0.3, 1] }) }
+              ]
+            }}>
+              <MaterialIcons name="search" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
+            </Animated.View>
+          </View>
         </TouchableOpacity>
       </View>
 
       {/* Tab bar */}
       <View style={styles.tabBar}>
         {TABS.map((tab) => (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
-              onPress={() => switchTab(tab.key)}
-              activeOpacity={0.8}
-            >
+          <TouchableOpacity
+            key={tab.key}
+            style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
+            onPress={() => switchTab(tab.key)}
+            activeOpacity={0.8}
+          >
             <Animated.Text style={[styles.tabLabel, { color: tab.key === 'ranking' ? rankingTextColor : calendarTextColor }]}>
-                {tab.label}
+              {tab.label}
             </Animated.Text>
-            </TouchableOpacity>
-          ))}
-          {/* Indicador animado */}
-          <Animated.View style={[styles.tabIndicator, { 
-            width: tabWidth, 
+          </TouchableOpacity>
+        ))}
+        {/* Indicador animado */}
+        <Animated.View style={[styles.tabIndicator, {
+          width: tabWidth,
           transform: [{ translateX: tabIndicatorTranslateX }]
-          }]} />
-        </View>
+        }]} />
+      </View>
 
       {/* Premium Search Modal */}
       <Modal visible={isSearchModalVisible} transparent animationType="fade">
@@ -1261,15 +1343,15 @@ export default function LeagueScreen({ route, navigation }) {
             <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
               {/* Equipo Select */}
               <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Equipos ({searchTeams.length})</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setIsTeamPickerVisible(true)}
                 style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}
               >
                 <MaterialIcons name="sports-volleyball" size={20} color={searchTeams.length > 0 ? Colors.primary : Colors.textMuted} />
                 <Text style={{ flex: 1, fontSize: 14, color: searchTeams.length > 0 ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }} numberOfLines={1}>
-                  {searchTeams.length === 0 ? 'Todos los equipos' 
-                   : searchTeams.length === 1 ? searchTeams[0]
-                   : `${searchTeams.length} seleccionados`}
+                  {searchTeams.length === 0 ? 'Todos los equipos'
+                    : searchTeams.length === 1 ? searchTeams[0]
+                      : `${searchTeams.length} seleccionados`}
                 </Text>
                 {searchTeams.length > 0 && (
                   <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchTeams([]); }} style={{ padding: 4 }}>
@@ -1280,7 +1362,7 @@ export default function LeagueScreen({ route, navigation }) {
 
               {/* Fecha Select */}
               <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Fecha</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setIsDatePickerVisible(true)}
                 style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}
               >
@@ -1297,15 +1379,15 @@ export default function LeagueScreen({ route, navigation }) {
 
               {/* Ubicación Select */}
               <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Sedes ({searchLocations.length})</Text>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={() => setIsLocationPickerVisible(true)}
                 style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.xl }]}
               >
                 <MaterialIcons name="location-on" size={20} color={searchLocations.length > 0 ? Colors.primary : Colors.textMuted} />
                 <Text style={{ flex: 1, fontSize: 14, color: searchLocations.length > 0 ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }} numberOfLines={1}>
-                  {searchLocations.length === 0 ? 'Todas las sedes' 
-                   : searchLocations.length === 1 ? searchLocations[0]
-                   : `${searchLocations.length} seleccionadas`}
+                  {searchLocations.length === 0 ? 'Todas las sedes'
+                    : searchLocations.length === 1 ? searchLocations[0]
+                      : `${searchLocations.length} seleccionadas`}
                 </Text>
                 {searchLocations.length > 0 && (
                   <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchLocations([]); }} style={{ padding: 4 }}>
@@ -1314,7 +1396,7 @@ export default function LeagueScreen({ route, navigation }) {
                 )}
               </TouchableOpacity>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
                 activeOpacity={0.9}
                 onPress={() => setIsSearchModalVisible(false)}
@@ -1335,9 +1417,9 @@ export default function LeagueScreen({ route, navigation }) {
               {allAvailableTeams.map((team) => {
                 const isSelected = searchTeams.includes(team);
                 return (
-                  <TouchableOpacity 
-                    key={team} 
-                    style={styles.selectionItem} 
+                  <TouchableOpacity
+                    key={team}
+                    style={styles.selectionItem}
                     onPress={() => {
                       if (isSelected) {
                         setSearchTeams(searchTeams.filter(t => t !== team));
@@ -1346,10 +1428,10 @@ export default function LeagueScreen({ route, navigation }) {
                       }
                     }}
                   >
-                    <MaterialIcons 
-                      name={isSelected ? "check-box" : "check-box-outline-blank"} 
-                      size={24} 
-                      color={isSelected ? Colors.primary : Colors.textMuted} 
+                    <MaterialIcons
+                      name={isSelected ? "check-box" : "check-box-outline-blank"}
+                      size={24}
+                      color={isSelected ? Colors.primary : Colors.textMuted}
                     />
                     <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isSelected && { fontWeight: 'bold' }]}>
                       {team}
@@ -1358,13 +1440,74 @@ export default function LeagueScreen({ route, navigation }) {
                 );
               })}
             </ScrollView>
-            <TouchableOpacity 
-              style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]} 
+            <TouchableOpacity
+              style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]}
               activeOpacity={0.9}
               onPress={() => setIsTeamPickerVisible(false)}
             >
               <Text style={styles.modalFooterBtnText}>LISTO</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Subgroup/Phase Picker Modal */}
+      <Modal visible={isSubgroupModalVisible} transparent animationType="fade">
+        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsSubgroupModalVisible(false)} activeOpacity={1} />
+        </BlurView>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: Spacing.xl }} pointerEvents="box-none">
+          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface, padding: 0, overflow: 'hidden', borderRadius: Radius.xl, maxHeight: screenHeight * 0.7 }]}>
+            <View style={{ padding: Spacing.xl, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+              <Text style={{ fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary }}>
+                {isSwitchingSubgroup ? 'Cargando Competición...' : 'Seleccionar Competición'}
+              </Text>
+              {!isSwitchingSubgroup ? (
+                <TouchableOpacity onPress={() => setIsSubgroupModalVisible(false)}>
+                  <MaterialIcons name="close" size={24} color={Colors.textMuted} />
+                </TouchableOpacity>
+              ) : (
+                <View style={{ padding: 4 }}>
+                   <MaterialIcons name="hourglass-empty" size={20} color={Colors.primary} />
+                </View>
+              )}
+            </View>
+            <ScrollView style={{ paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md }} showsVerticalScrollIndicator={false}>
+              {availableSubgroups.map((sub, idx) => {
+                const isActive = rankingUrl === sub.href;
+                return (
+                  <TouchableOpacity
+                    key={`phase-${idx}`}
+                    style={[
+                      styles.selectionItem, 
+                      { 
+                        borderRadius: Radius.md, 
+                        marginVertical: 4, 
+                        borderWidth: 1, 
+                        borderColor: isActive ? Colors.primary : 'transparent',
+                        backgroundColor: isActive ? (isDark ? 'rgba(13,14,242,0.1)' : '#f0f4ff') : 'transparent'
+                      }
+                    ]}
+                    onPress={() => {
+                      if (!isActive && !isSwitchingSubgroup) {
+                         setIsSwitchingSubgroup(true);
+                         setCurrentRankingUrl(sub.href);
+                      }
+                    }}
+                    disabled={isSwitchingSubgroup}
+                  >
+                    <MaterialIcons
+                      name={isActive ? "radio-button-checked" : "radio-button-unchecked"}
+                      size={24}
+                      color={isActive ? Colors.primary : Colors.textMuted}
+                    />
+                    <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isActive && { fontWeight: 'bold' }]}>
+                      {sub.title}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1378,9 +1521,9 @@ export default function LeagueScreen({ route, navigation }) {
               {allAvailableLocations.map((loc) => {
                 const isSelected = searchLocations.includes(loc);
                 return (
-                  <TouchableOpacity 
-                    key={loc} 
-                    style={styles.selectionItem} 
+                  <TouchableOpacity
+                    key={loc}
+                    style={styles.selectionItem}
                     onPress={() => {
                       if (isSelected) {
                         setSearchLocations(searchLocations.filter(l => l !== loc));
@@ -1389,10 +1532,10 @@ export default function LeagueScreen({ route, navigation }) {
                       }
                     }}
                   >
-                    <MaterialIcons 
-                      name={isSelected ? "check-box" : "check-box-outline-blank"} 
-                      size={24} 
-                      color={isSelected ? Colors.primary : Colors.textMuted} 
+                    <MaterialIcons
+                      name={isSelected ? "check-box" : "check-box-outline-blank"}
+                      size={24}
+                      color={isSelected ? Colors.primary : Colors.textMuted}
                     />
                     <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isSelected && { fontWeight: 'bold' }]}>
                       {loc}
@@ -1401,8 +1544,8 @@ export default function LeagueScreen({ route, navigation }) {
                 );
               })}
             </ScrollView>
-            <TouchableOpacity 
-              style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]} 
+            <TouchableOpacity
+              style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]}
               activeOpacity={0.9}
               onPress={() => setIsLocationPickerVisible(false)}
             >
@@ -1435,48 +1578,48 @@ export default function LeagueScreen({ route, navigation }) {
             </View>
 
             <View style={styles.calendarDaysHeader}>
-               {DAYS.map(d => <Text key={d} style={[styles.calendarDayLabel, { color: Colors.textMuted }]}>{d}</Text>)}
+              {DAYS.map(d => <Text key={d} style={[styles.calendarDayLabel, { color: Colors.textMuted }]}>{d}</Text>)}
             </View>
 
             <View style={styles.calendarGrid}>
               {getMonthDays(calendarYear, calendarMonth).map((day, idx) => {
-                 if (!day) return <View key={`empty-${idx}`} style={styles.calendarDayCell} />;
-                 
-                 // Check if this date has matches
-                 const formattedDate = `${day} de ${MONTHS[calendarMonth].toLowerCase()}`;
-                 const hasMatch = allAvailableDates.some(d => d.toLowerCase().startsWith(formattedDate));
-                 const isSelected = searchDate && searchDate.toLowerCase().startsWith(formattedDate);
-                 
-                 return (
-                   <TouchableOpacity 
-                     key={day} 
-                     style={[
-                       styles.calendarDayCell,
-                       hasMatch && { backgroundColor: isDark ? 'rgba(13,143,242,0.1)' : 'rgba(13,143,242,0.05)' },
-                       isSelected && { backgroundColor: Colors.primary, borderRadius: 8 }
-                     ]}
-                     disabled={!hasMatch}
-                     onPress={() => {
-                        const actualDate = allAvailableDates.find(d => d.toLowerCase().startsWith(formattedDate));
-                        setSearchDate(actualDate);
-                        setIsDatePickerVisible(false);
-                     }}
-                   >
-                     <Text style={[
-                       styles.calendarDayText, 
-                       { color: hasMatch ? Colors.textPrimary : Colors.textMuted },
-                       isSelected && { color: '#fff', fontWeight: 'bold' }
-                     ]}>
-                       {day}
-                     </Text>
-                     {hasMatch && !isSelected && <View style={[styles.matchDot, { backgroundColor: Colors.primary }]} />}
-                   </TouchableOpacity>
-                 );
+                if (!day) return <View key={`empty-${idx}`} style={styles.calendarDayCell} />;
+
+                // Check if this date has matches
+                const formattedDate = `${day} de ${MONTHS[calendarMonth].toLowerCase()}`;
+                const hasMatch = allAvailableDates.some(d => d.toLowerCase().startsWith(formattedDate));
+                const isSelected = searchDate && searchDate.toLowerCase().startsWith(formattedDate);
+
+                return (
+                  <TouchableOpacity
+                    key={day}
+                    style={[
+                      styles.calendarDayCell,
+                      hasMatch && { backgroundColor: isDark ? 'rgba(13,143,242,0.1)' : 'rgba(13,143,242,0.05)' },
+                      isSelected && { backgroundColor: Colors.primary, borderRadius: 8 }
+                    ]}
+                    disabled={!hasMatch}
+                    onPress={() => {
+                      const actualDate = allAvailableDates.find(d => d.toLowerCase().startsWith(formattedDate));
+                      setSearchDate(actualDate);
+                      setIsDatePickerVisible(false);
+                    }}
+                  >
+                    <Text style={[
+                      styles.calendarDayText,
+                      { color: hasMatch ? Colors.textPrimary : Colors.textMuted },
+                      isSelected && { color: '#fff', fontWeight: 'bold' }
+                    ]}>
+                      {day}
+                    </Text>
+                    {hasMatch && !isSelected && <View style={[styles.matchDot, { backgroundColor: Colors.primary }]} />}
+                  </TouchableOpacity>
+                );
               })}
             </View>
 
-            <TouchableOpacity 
-              style={[styles.modalFooterBtn, { backgroundColor: Colors.surfaceAlt, marginTop: Spacing.xl }]} 
+            <TouchableOpacity
+              style={[styles.modalFooterBtn, { backgroundColor: Colors.surfaceAlt, marginTop: Spacing.xl }]}
               activeOpacity={0.9}
               onPress={() => { setSearchDate(null); setIsDatePickerVisible(false); }}
             >
@@ -1503,38 +1646,37 @@ export default function LeagueScreen({ route, navigation }) {
         <View key="0" style={styles.mainPage}>
           <ScrollView
             style={styles.scroll}
+            contentContainerStyle={{ flexGrow: 1 }}
             refreshControl={
               <RefreshControl
-                refreshing={rankingLoading}
+                refreshing={false}
                 onRefresh={refreshRanking}
-                colors={[Colors.primary]}
-                tintColor={Colors.primary}
+                colors={['transparent']}
+                tintColor="transparent"
+                progressViewOffset={-9999}
               />
             }
           >
-            <View>
-              {rankingContent}
-            </View>
-            <View style={{ height: Spacing.xxxl }} />
+            {rankingContent}
           </ScrollView>
         </View>
 
         <View key="1" style={styles.mainPage}>
           <ScrollView
             style={styles.scroll}
+            contentContainerStyle={{ flexGrow: 1 }}
             refreshControl={
               <RefreshControl
-                refreshing={calendarLoading}
+                refreshing={false}
                 onRefresh={refreshCalendar}
-                colors={[Colors.primary]}
-                tintColor={Colors.primary}
+                colors={['transparent']}
+                tintColor="transparent"
+                progressViewOffset={-9999}
               />
             }
           >
             {calendarLoading ? (
-              <View style={styles.emptyWrap}>
-                <LoadingView variant="clean" message="Cargando calendario..." />
-              </View>
+              <LoadingView variant="clean" message="Cargando calendario..." />
             ) : calendarError ? (
               <View style={styles.emptyWrap}>
                 <Text style={styles.emptyText}>{calendarError}</Text>
@@ -1547,7 +1689,6 @@ export default function LeagueScreen({ route, navigation }) {
             ) : (
               calendarContent
             )}
-            <View style={{ height: Spacing.xxxl }} />
           </ScrollView>
         </View>
       </PagerView>

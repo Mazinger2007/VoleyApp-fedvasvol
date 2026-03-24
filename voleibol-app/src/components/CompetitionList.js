@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { memo, useMemo, useState } from 'react';
 import { View, Text, FlatList, TouchableOpacity, Image, Platform } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
@@ -6,28 +6,63 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
 import { toRankingUrl } from '../utils/htmlParser';
 
-function LeagueShields({ href, isDark, isConfiguring }) {
+const LeagueShields = memo(function LeagueShields({ href, isDark, isConfiguring }) {
   const rankingUrl = (!href || isConfiguring) ? null : toRankingUrl(href);
   const { blocks, loading } = useFetch(rankingUrl);
   const [imageErrs, setImageErrs] = useState({});
 
   const logosData = useMemo(() => {
-    if (!blocks) return [];
-    const tables = blocks.filter(b => b.type === 'table');
-    const firstTable = tables[0];
-    if (!firstTable || !firstTable.rows) return [];
-    
-    // Find the team name column (usually 1 or 0)
-    const headers = firstTable.headers || [];
-    const teamCol = headers.findIndex((h) => String(h || '').toLowerCase().includes('equipo'));
-    const colIdx = teamCol >= 0 ? teamCol : 1;
+    if (!blocks || blocks.length === 0) return [];
 
-    return firstTable.rows.slice(0, 3).map((row, i) => {
-      const logoUrl = firstTable.rowLogos?.[i];
-      const teamName = row[colIdx] || row[0] || 'EQ';
-      const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(teamName)}&background=random&color=fff&rounded=true&bold=true`;
-      return { url: logoUrl || fallbackUrl, fallbackUrl, isPlaceholder: false };
-    });
+    // First, try to find logos in a standard table
+    const tableTable = blocks.find(b => b.type === 'table');
+    if (tableTable && tableTable.rows && tableTable.rows.length > 0) {
+      const headers = tableTable.headers || [];
+      const teamCol = headers.findIndex((h) => String(h || '').toLowerCase().includes('equipo'));
+      const colIdx = teamCol >= 0 ? teamCol : 1;
+
+      return tableTable.rows.slice(0, 3).map((row, i) => {
+        const logoUrl = tableTable.rowLogos?.[i];
+        const teamName = row[colIdx] || row[0] || 'EQ';
+        const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(teamName)}&background=random&color=fff&rounded=true&bold=true`;
+        return { url: logoUrl || fallbackUrl, fallbackUrl, isPlaceholder: false };
+      });
+    }
+
+    // Fallback: try to find logos in tournament brackets
+    const bracketBlocks = blocks.filter(b => b.type === 'bracket');
+    if (bracketBlocks.length > 0) {
+      const extractedTeams = [];
+      const seenTeams = new Set();
+
+      for (const bracket of bracketBlocks) {
+        if (!bracket.columns) continue;
+        for (const col of bracket.columns) {
+          if (!col.matches) continue;
+          for (const match of col.matches) {
+            if (extractedTeams.length >= 3) break;
+
+            if (match.homeTeam && match.homeTeam.trim() !== '' && match.homeTeam.trim() !== 'TBD' && !seenTeams.has(match.homeTeam)) {
+              seenTeams.add(match.homeTeam);
+              const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(match.homeTeam)}&background=random&color=fff&rounded=true&bold=true`;
+              extractedTeams.push({ url: match.homeLogo || fallbackUrl, fallbackUrl, isPlaceholder: false });
+            }
+            if (extractedTeams.length >= 3) break;
+
+            if (match.awayTeam && match.awayTeam.trim() !== '' && match.awayTeam.trim() !== 'TBD' && !seenTeams.has(match.awayTeam)) {
+              seenTeams.add(match.awayTeam);
+              const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(match.awayTeam)}&background=random&color=fff&rounded=true&bold=true`;
+              extractedTeams.push({ url: match.awayLogo || fallbackUrl, fallbackUrl, isPlaceholder: false });
+            }
+          }
+          if (extractedTeams.length >= 3) break;
+        }
+        if (extractedTeams.length >= 3) break;
+      }
+      return extractedTeams;
+    }
+
+    return [];
   }, [blocks]);
 
   if (!rankingUrl || loading) {
@@ -46,11 +81,11 @@ function LeagueShields({ href, isDark, isConfiguring }) {
             marginLeft: idx === 0 ? 0 : -12, elevation: 1, overflow: 'hidden',
             zIndex: 10 - idx
           }}>
-            <Image 
-              source={{ uri: imageErrs[idx] ? logo.fallbackUrl : logo.url }} 
-              onError={() => setImageErrs(p => ({...p, [idx]: true}))}
-              style={{ width: '95%', height: '95%' }} 
-              resizeMode="contain" 
+            <Image
+              source={{ uri: imageErrs[idx] ? logo.fallbackUrl : logo.url }}
+              onError={() => setImageErrs(p => ({ ...p, [idx]: true }))}
+              style={{ width: '95%', height: '95%' }}
+              resizeMode="contain"
             />
           </View>
         ))}
@@ -59,7 +94,7 @@ function LeagueShields({ href, isDark, isConfiguring }) {
   }
 
   return <DefaultShields isDark={isDark} />;
-}
+}, (prev, next) => prev.href === next.href && prev.isDark === next.isDark && prev.isConfiguring === next.isConfiguring);
 
 function DefaultShields({ isDark }) {
   return (
@@ -114,7 +149,7 @@ function isActive(status) {
 
 function CompetitionCard({ item, onPress }) {
   const { colors: Colors, isDark } = useTheme();
-  const { name, status, season, category, sex, teamCount, organizer } = item;
+  const { name, status, season, category, sex, teamCount, organizer, logo } = item;
   const active = isActive(status);
 
   return (
@@ -136,23 +171,38 @@ function CompetitionCard({ item, onPress }) {
         })
       }}
       activeOpacity={0.8}
-      onPress={onPress}
+      onPress={() => {
+        if (/(txapelketa|topaketa)/i.test(name || '')) {
+          onPress && onPress('torneo');
+        } else {
+          onPress && onPress('liga');
+        }
+      }}
     >
       <View style={{ flexDirection: 'column', gap: Spacing.lg }}>
         {/* Top Tag & Status */}
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.md }}>
-            <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1 }}>
-              {category || 'Competición'}
-            </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            {/* Logo a la izquierda */}
+            {logo ? (
+              <Image
+                source={{ uri: logo }}
+                style={{ width: 36, height: 36, borderRadius: 18, marginRight: 8, backgroundColor: isDark ? '#1e293b' : '#f1f5f9', borderWidth: 1, borderColor: '#e5e7eb' }}
+                resizeMode="contain"
+              />
+            ) : null}
+            <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.md }}>
+              <Text style={{ color: '#ffffff', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1 }}>
+                {category || 'Competición'}
+              </Text>
+            </View>
           </View>
-          
           {!!status && (
             <View style={{
-              backgroundColor: /curso|activo|activado/i.test(status) 
-                ? 'rgba(34,197,94,0.1)' 
-                : /finalizad|terminad|fin$|^fin\s/i.test(status) 
-                  ? 'rgba(148,163,184,0.1)' 
+              backgroundColor: /curso|activo|activado/i.test(status)
+                ? 'rgba(34,197,94,0.1)'
+                : /finalizad|terminad|fin$|^fin\s/i.test(status)
+                  ? 'rgba(148,163,184,0.1)'
                   : /configurando/i.test(status)
                     ? 'rgba(59,130,246,0.1)'
                     : isDark ? '#334155' : '#f8fafc',
@@ -171,8 +221,8 @@ function CompetitionCard({ item, onPress }) {
               <Text style={{
                 color: /curso|activo|activado/i.test(status)
                   ? '#22c55e'
-                : /finalizad|terminad|fin$|^fin\s|finalizada/i.test(status)
-                  ? '#94a3b8'
+                  : /finalizad|terminad|fin$|^fin\s|finalizada/i.test(status)
+                    ? '#94a3b8'
                     : /configurando/i.test(status)
                       ? '#3b82f6'
                       : isDark ? '#cbd5e1' : '#64748b',
@@ -198,16 +248,13 @@ function CompetitionCard({ item, onPress }) {
 
         {/* Bottom Section */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', justifyContent: 'space-between' }}>
-          
           <LeagueShields href={item.href} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
-
           <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>
-              {/txapelketa/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
+              {/txapelketa|topaketa/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
             </Text>
             <MaterialIcons name="chevron-right" size={18} color="#ffffff" />
           </View>
-
         </View>
       </View>
     </TouchableOpacity>
@@ -237,6 +284,7 @@ export default function CompetitionList({ tableBlock, onOpenTournament }) {
     teamCount: getCell(row, headers, 'equipos') || getCell(row, headers, 'clubs'),
     organizer: getCell(row, headers, 'federación') || getCell(row, headers, 'federacion') || getCell(row, headers, 'organiza') || getCell(row, headers, 'asociación') || getCell(row, headers, 'asociacion'),
     href: tableBlock.rowLinks?.[i] || null,
+    logo: tableBlock.rowLogos?.[i] || tableBlock.rowImages?.[i] || null,
   }));
 
   return (
@@ -248,7 +296,7 @@ export default function CompetitionList({ tableBlock, onOpenTournament }) {
       renderItem={({ item }) => (
         <CompetitionCard
           item={item}
-          onPress={() => item.href && onOpenTournament?.(item.href, item.name)}
+          onPress={(tipo) => item.href && onOpenTournament?.(item.href, item.name, tipo)}
         />
       )}
       scrollEnabled={false}

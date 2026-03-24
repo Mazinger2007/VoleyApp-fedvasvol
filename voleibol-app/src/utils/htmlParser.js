@@ -278,29 +278,15 @@ function parseBlocksFromHtml(html = '') {
     (dom.children || []).forEach((child) => domToBlocks(child, blocks));
   }
 
-  // ── 2. Detectar si es una página de bracket (Clupik) ────────────────────────
-  const matchBoxes = DomUtils.findAll(
-    (n) => n.type === 'tag' && (
-      /\b(match-box|box)\b/.test(n.attribs?.class || '') ||
-      // Fallback: cualquier nodo que contenga links con clase 'team' y 'match'
-      (DomUtils.findOne(child => /\bteam\b/.test(child.attribs?.class || ''), [n], true) &&
-       DomUtils.findOne(child => /\bmatch\b/.test(child.attribs?.class || ''), [n], true))
-    ),
-    root.children || [],
-    true
-  );
 
-  if (matchBoxes.length > 0) {
-    // Parsear como bracket
-    const bracketData = parseBracketFromDom(root);
-    if (bracketData && bracketData.columns && bracketData.columns.length > 0) {
-      blocks.push({ type: 'bracket', ...bracketData });
-    }
+  const bracketData = parseBracketFromDom(root);
+  if (bracketData && bracketData.columns && bracketData.columns.length > 0) {
+    blocks.push({ type: 'bracket', ...bracketData });
   }
 
   return blocks;
 }
-
+      try { console.log('[PARSE_MATCH_ROW] Usando celda para sets/puntos:', getTextContent(bestCell)); } catch (e) {}
 function parseCalendarBlocksFromAllHtml(html = '') {
   const dom = parseHTML(String(html || ''));
   const calendarRoot = DomUtils.findOne(
@@ -308,14 +294,14 @@ function parseCalendarBlocksFromAllHtml(html = '') {
     dom.children,
     true
   );
-
-  if (!calendarRoot) {
-    return parseBlocksFromHtml(html);
-  }
-
+  try { 
+    console.log('[PARSE_MATCH_ROW] Equipos:', teams); 
+    console.log('[PARSE_MATCH_ROW] Periodos:', periods); 
+    console.log('[PARSE_MATCH_ROW] Fecha:', dateData); 
+  } catch (e) {}
   const blocks = [];
   domToBlocks(calendarRoot, blocks);
-  return blocks;
+    try { console.log('[PARSE_MATCH_ROW] Fila descartada por falta de datos.'); } catch (e) {}
 }
 
 async function fetchAjaxTableHtml(params = {}, referer = '') {
@@ -894,6 +880,45 @@ function parseTable(tableNode) {
 
   if (headers.length === 0 && filteredRows.length === 0) return null;
 
+  // Nuevo log para logos cargados
+  try {
+    // Detectar si la tabla es solo de info/metadata (no partidos ni equipos)
+    const infoHeaders = [
+      'estado','nombre','modalidad','temporada','categoría','sexo','dirección','organiza','federación','participantes','equipos','grupo','año','registered','start date','end date','category','sport','gender','federation','organizer','teams','group','year'
+    ];
+    const lowerHeaders = headers.map(h => h.trim().toLowerCase());
+    const isInfoTable = lowerHeaders.every(h => infoHeaders.includes(h));
+    if (isInfoTable) return {
+      type: 'table',
+      headers,
+      rows: filteredRows.map((r) => r.cells),
+      rowLinks: filteredRows.map((r) => r.href),
+      rowImages: filteredRows.map((r) => r.image),
+      rowLogos: filteredRows.map((r) => r.image),
+      matches: filteredRows.map((r) => r.match).filter(Boolean),
+    };
+
+    const logos = filteredRows.map((r) => r.image).filter(Boolean);
+    let tipo = 'desconocido';
+    // Mejor heurística: más palabras clave
+    const headersStr = headers.join(' ').toLowerCase();
+    if (/jornada|clasificaci[oó]n|equipo|partido|fecha|puntos|local|visitante/.test(headersStr)) tipo = 'liga';
+    else if (/grupo|fase|eliminatoria|bracket|semifinal|final|torneo|cuadro|playoff/.test(headersStr)) tipo = 'torneo';
+    if (logos.length > 0) {
+      console.log(`logos cargados de ${tipo}`);
+    } else {
+      // Extra debug: muestra headers y todas las celdas de todas las filas
+      console.error(`error: no se cargaron logos de ${tipo}`);
+      console.error('headers:', headers);
+      if (filteredRows.length > 0) {
+        filteredRows.forEach((row, idx) => {
+          console.error(`fila ${idx}:`, row.cells);
+        });
+      }
+    }
+  } catch (e) {
+    console.error('error al loguear logos cargados:', e);
+  }
   return {
     type: 'table',
     headers,
@@ -912,36 +937,30 @@ function parseTable(tableNode) {
 function normalizeTeamLogoUrl(url = '') {
   if (!url) return null;
 
-  try {
-    const parsed = new URL(url);
-    const isLeveradeThumb = /cdn\.leverade\.com$/i.test(parsed.hostname)
-      && /\/thumbnails\//i.test(parsed.pathname);
-
-    if (!isLeveradeThumb) return url;
-
-    parsed.pathname = parsed.pathname.replace(
-      /\.\d+x\d+(?=\.[a-zA-Z0-9]+$)/,
-      '.200x200'
-    );
-
-    return parsed.toString();
-  } catch (_) {
-    return url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '.200x200');
-  }
+  // Reemplazar siempre el patrón de resolución (ej: .30x30.) por .200x200.
+  // Esto aplica para leverade y cualquier otro host, forzando la imagen de alta calidad.
+  return url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '.200x200');
 }
 
 function extractRowPrimaryImage(rowNode) {
   if (!rowNode) return null;
 
-  const rowImgs = DomUtils.findAll(
-    (n) => n.type === 'tag' && n.name === 'img',
+  const candidates = DomUtils.findAll(
+    (n) => n.type === 'tag' && (
+      n.name === 'img' || 
+      /\b(logo|escudo)\b/i.test(n.attribs?.class || '')
+    ),
     rowNode.children || []
   );
 
-  const urls = rowImgs
-    .map((img) => toAbsoluteUrl(img?.attribs?.src || img?.attribs?.['data-src'] || ''))
+  // Removed noisy log
+
+  const urls = candidates
+    .map((node) => toAbsoluteUrl(node?.attribs?.src || node?.attribs?.['data-src'] || node?.attribs?.['data-logo'] || ''))
     .map((url) => normalizeTeamLogoUrl(url))
     .filter(Boolean);
+
+  // Removed noisy log
 
   if (!urls.length) return null;
 
@@ -1122,8 +1141,7 @@ function parseDateCell(cellNode) {
 }
 
 function parseMatchRow(rowNode) {
-  // LOG: inicio de parseo de fila
-  try { console.log('[PARSE_MATCH_ROW] Raw rowNode:', JSON.stringify(rowNode, null, 2)); } catch {}
+  // Removed noisy log
   const cells = DomUtils.findAll(
     (n) => n.type === 'tag' && (n.name === 'th' || n.name === 'td'),
     rowNode.children || []
@@ -1135,11 +1153,7 @@ function parseMatchRow(rowNode) {
   let periodsCell = cells.find((cell) => /colstyle-parciales/.test(getNodeClass(cell)));
   const dateCell = cells.find((cell) => /colstyle-fecha/.test(getNodeClass(cell)));
 
-  // LOG: mostrar celdas detectadas
-  try {
-    console.log('[PARSE_MATCH_ROW] cells:', cells.map(c => getTextContent(c)));
-    if (!periodsCell) console.log('[PARSE_MATCH_ROW] No periodsCell encontrada, buscando mejor celda de sets/puntos...');
-  } catch {}
+  // Removed noisy log
 
   // --- ADAPTACIÓN TORNEOS: Si no hay periodsCell, buscar la celda con más números ---
   if (!periodsCell) {
@@ -1155,7 +1169,7 @@ function parseMatchRow(rowNode) {
     });
     if (bestCell) {
       periodsCell = bestCell;
-      try { console.log('[PARSE_MATCH_ROW] Usando celda para sets/puntos:', getTextContent(bestCell)); } catch {}
+      // Removed noisy log
     }
   }
 
@@ -1163,15 +1177,10 @@ function parseMatchRow(rowNode) {
   const periods = parsePeriodsCell(periodsCell);
   const dateData = parseDateCell(dateCell);
 
-  // LOG: resultado del parseo de sets/puntos
-  try {
-    console.log('[PARSE_MATCH_ROW] Equipos:', teams);
-    console.log('[PARSE_MATCH_ROW] Periodos:', periods);
-    console.log('[PARSE_MATCH_ROW] Fecha:', dateData);
-  } catch {}
+  // Removed noisy log
 
   if (!teams || !periods) {
-    try { console.log('[PARSE_MATCH_ROW] Fila descartada por falta de datos.'); } catch {}
+    // Removed noisy log
     return null;
   }
 
@@ -1288,6 +1297,32 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
 }
 
 /**
+ * Devuelve TODAS las fases (incluyendo la actual identificada heurísticamente)
+ */
+export function extractAllPhases(url = '', html = '', blocks = []) {
+  const currentTitle = guessPhaseTitle(url, html);
+  const otherPhases = extractPhaseLinks(blocks, url);
+  
+  // normalizar urls
+  const currentUrlNorm = toAbsoluteUrl(url).replace(/\/$/, '').toLowerCase();
+  
+  // Limpiar posibles duplicados
+  const otherPhasesCleaned = otherPhases.filter(p => toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase() !== currentUrlNorm);
+
+  return [{ title: currentTitle, href: url }, ...otherPhasesCleaned];
+}
+
+export async function discoverAllPhases(url) {
+  try {
+    const html = await fetchHTML(url);
+    const blocks = parseBlocksFromHtml(html);
+    return extractAllPhases(url, html, blocks);
+  } catch (e) {
+    return [{ title: 'Liga', href: url }];
+  }
+}
+
+/**
  * Descarga y parsea todos los datos de un campeonato (Txapelketa) de forma unificada.
  * Utiliza scraping HTML directo (sin AJAX) para evitar problemas de CORS y AJAX.
  */
@@ -1378,24 +1413,24 @@ function guessPhaseTitle(url = '', html = '') {
   const dom = parseHTML(html);
   const normalizedUrl = toAbsoluteUrl(url).replace(/\/$/, '').toLowerCase();
 
-  // Intentar encontrar el ancla que apunta a la URL actual
-  const allLinks = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
-  
-  // 1. Prioridad: Link que sea active/selected
-  const activeTab = allLinks.find(n => /\b(active|selected|current)\b/i.test(n.attribs?.class || ''));
-  if (activeTab) {
-    const text = getTextContent(activeTab).trim();
-    if (text.length > 1 && text.length < 50) return text;
+  // 1. Check for any active element inside a tab or pill structure
+  const activeTabs = DomUtils.findAll(n => n.type === 'tag' && /\b(active|selected|current)\b/i.test(n.attribs?.class || ''), dom.children || [], true);
+  for (const tab of activeTabs) {
+    const text = getTextContent(tab).replace(/\s+/g, ' ').trim();
+    if (text.length > 0 && text.length < 40 && !/clasificaci|calendar|informaci|inicio|home/i.test(text)) {
+      return text;
+    }
   }
 
-  // 2. Prioridad: Link que coincida con la URL actual
+  // 2. Intentar encontrar el ancla que apunta a la URL actual
+  const allLinks = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
   const matchTab = allLinks.find(n => toAbsoluteUrl(n.attribs?.href || '').replace(/\/$/, '').toLowerCase() === normalizedUrl);
   if (matchTab) {
     const text = getTextContent(matchTab).trim();
     if (text.length > 1 && text.length < 50) return text;
   }
 
-  // 3. Fallback: Buscar un h1 descriptivo
+  // 3. Fallback: Buscar un h1 descriptivo (que no sea el nombre de navegacion standard)
   const h1 = DomUtils.findOne(n => n.type === 'tag' && n.name === 'h1', dom.children || [], true);
   if (h1) {
     const text = getTextContent(h1)
@@ -1405,7 +1440,7 @@ function guessPhaseTitle(url = '', html = '') {
     if (text.length > 1 && text.length < 50) return text;
   }
 
-  return 'Fase';
+  return 'Fase Regular';
 }
 
 
@@ -1762,7 +1797,7 @@ function findMatchBoxes(rootOrArray) {
     }
 
     // Forzar logo 200x200
-    const fixLogo = url => url ? url.replace(/\.(\d+)x\1(\.[a-zA-Z0-9]+)$/, '.200x200$2') : null;
+    const fixLogo = url => url ? url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '.200x200') : null;
 
     // Extraer sets de <span class="partial"><span>home</span><span>away</span></span>
     const setNodes = DomUtils.findAll(

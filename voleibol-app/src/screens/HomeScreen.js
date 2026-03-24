@@ -33,8 +33,12 @@ export default function HomeScreen({ navigation }) {
     return tables[0] || null;
   }, [blocks]);
 
-  const handleOpenTournament = (tournament) => {
-    openTournamentDetail(navigation, tournament);
+  const handleOpenTournament = (url, name, tipo) => {
+    if (tipo === 'torneo') {
+      openTournamentDetail(navigation, { href: url, name, isTorneo: true });
+    } else {
+      openTournamentDetail(navigation, { href: url, name });
+    }
   };
 
   const styles = useMemo(() => StyleSheet.create({

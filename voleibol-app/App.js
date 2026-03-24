@@ -4,7 +4,7 @@
 // Cada pestaña corresponde a una pantalla principal.
 
 import React, { useEffect } from 'react';
-import { StyleSheet, Text, View, Platform, TouchableOpacity } from 'react-native';
+import { StyleSheet, Text, View, Platform, TouchableOpacity, Animated } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
@@ -219,16 +219,18 @@ export default function App() {
 }
 
 function AppContent() {
-  const { colors: Colors, isDark } = useTheme();
+  const { colors: Colors, isDark, animColors } = useTheme();
   return (
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={Colors.background} />
+      {/* Animated background layer — transitions smoothly on theme change */}
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: animColors.background }]} pointerEvents="none" />
       <NavigationContainer
         theme={{
           dark: isDark,
           colors: {
             primary: Colors.primary,
-            background: Colors.background,
+            background: 'transparent',
             card: Colors.surface,
             text: Colors.textPrimary,
             border: Colors.border,
@@ -236,7 +238,7 @@ function AppContent() {
           },
         }}
       >
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
+        <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
           <Stack.Screen name="MainTabs" component={MainTabs} />
           <Stack.Screen name="League" component={LeagueScreen} />
           <Stack.Screen name="Tournament" component={TournamentScreen} />
