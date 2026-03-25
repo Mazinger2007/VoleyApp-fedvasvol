@@ -262,6 +262,12 @@ function extractRoundHeadings(html = '') {
     .filter(Boolean);
 }
 
+/**
+ * Parsea HTML y devuelve array de bloques estructurados.
+ * Adicionalmente asocia el heading (h2/h3) previo a cada tabla o bracket
+ * como `block.title`, de modo que páginas multi-liga (ej. Liga Alavesa)
+ * puedan extraer el nombre real de cada sub-competición.
+ */
 function parseBlocksFromHtml(html = '') {
   const dom = parseHTML(String(html || ''));
   const body =
@@ -270,23 +276,38 @@ function parseBlocksFromHtml(html = '') {
   const root = body || dom;
 
   const blocks = [];
-  
-  // ── 1. Parseo genérico de bloques (Metadata, Links de fases, etc) ────────────
+
+  // ── 1. Parseo genérico de bloques (Metadata, Links de fases, etc) ─────────
   if (body) {
     domToBlocks(body, blocks);
   } else {
     (dom.children || []).forEach((child) => domToBlocks(child, blocks));
   }
 
+  // ── 2. Propagar el último heading encontrado antes de cada tabla/bracket ──
+  //    Esto permite detectar "Liga Alavesa Juvenil" / "Liga Alavesa Senior" etc.
+  let lastHeading = '';
+  for (const b of blocks) {
+    if (b.type === 'heading') {
+      lastHeading = b.content || '';
+    } else if ((b.type === 'table' || b.type === 'bracket') && !b.title && lastHeading) {
+      b.title = lastHeading;
+    }
+  }
 
+  // ── 3. Parseo de bracket/eliminatoria (si existe en el DOM) ──────────────
   const bracketData = parseBracketFromDom(root);
   if (bracketData && bracketData.columns && bracketData.columns.length > 0) {
-    blocks.push({ type: 'bracket', ...bracketData });
+    // Avoid duplicate if already parsed via domToBlocks
+    const alreadyHasBracket = blocks.some(b => b.type === 'bracket');
+    if (!alreadyHasBracket) {
+      blocks.push({ type: 'bracket', ...bracketData });
+    }
   }
 
   return blocks;
 }
-      try { console.log('[PARSE_MATCH_ROW] Usando celda para sets/puntos:', getTextContent(bestCell)); } catch (e) {}
+
 function parseCalendarBlocksFromAllHtml(html = '') {
   const dom = parseHTML(String(html || ''));
   const calendarRoot = DomUtils.findOne(
@@ -294,14 +315,9 @@ function parseCalendarBlocksFromAllHtml(html = '') {
     dom.children,
     true
   );
-  try { 
-    console.log('[PARSE_MATCH_ROW] Equipos:', teams); 
-    console.log('[PARSE_MATCH_ROW] Periodos:', periods); 
-    console.log('[PARSE_MATCH_ROW] Fecha:', dateData); 
-  } catch (e) {}
   const blocks = [];
-  domToBlocks(calendarRoot, blocks);
-    try { console.log('[PARSE_MATCH_ROW] Fila descartada por falta de datos.'); } catch (e) {}
+  if (calendarRoot) domToBlocks(calendarRoot, blocks);
+  return blocks;
 }
 
 async function fetchAjaxTableHtml(params = {}, referer = '') {
@@ -848,6 +864,16 @@ function parseTable(tableNode) {
   );
   const headers = firstRowCells.map((cell) => extractCellText(cell));
 
+  // Exclude player/roster information entirely
+  const hStr = headers.join(' ').toLowerCase();
+  const isPlayerTable = /(jugador|dorsal\b|altura|año de nac|peso\b)/i.test(hStr) && 
+                        !/(local|visitante|jornada|fecha|resultado)/i.test(hStr) &&
+                        !/(puntos|partidos|sets)/i.test(hStr);
+                        
+  if (isPlayerTable) {
+    return null;
+  }
+
   // Resto de filas como datos + link de fila (si existe)
   const parsedRows = rows.slice(1).map((row) => {
     const cells = DomUtils.findAll(
@@ -1221,6 +1247,73 @@ function extractCellText(cellNode) {
   return cleaned || iconTitle || '';
 }
 
+// ─── Añadido para procesar dinámicamente las pestañas AJAX de un equipo ───
+async function fetchTeamContextViaAjax(teamUrl) {
+  const currentUrl = toAbsoluteUrl(teamUrl);
+  let html = '';
+  let cookieHeader = '';
+
+  try {
+    const response = await axios.get(currentUrl, {
+      timeout: 15000,
+      headers: defaultRequestHeaders(),
+    });
+    html = typeof response.data === 'string' ? response.data : '';
+    cookieHeader = (response.headers?.['set-cookie'] || [])
+      .map((item) => String(item || '').split(';')[0].trim())
+      .filter(Boolean)
+      .join('; ');
+  } catch(e) {
+    if (e.message === 'SEASON_CONFIGURING') throw e;
+    console.error('Error en carga inicial de equipo:', e.message);
+    return [];
+  }
+
+  const initialBlocks = parseBlocksFromHtml(html);
+
+  const csrfMatch = html.match(/name="csrf_token"\s+value="([^"]+)"/i);
+  const csrf = csrfMatch ? csrfMatch[1] : null;
+  const baseUrlMatch = currentUrl.match(/^(https?:\/\/[^\/]+)/i);
+  const siteBase = baseUrlMatch ? baseUrlMatch[1] : BASE_URL;
+  const langMatch = currentUrl.match(/https?:\/\/[^\/]+\/([a-z]{2})/i);
+  const lang = langMatch ? langMatch[1] : 'es';
+
+  if (!csrf) return initialBlocks;
+
+  const mId = currentUrl.match(/\/team\/(\d+)/i)?.[1];
+  if (!mId) return initialBlocks;
+
+  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information'];
+  
+  const extraHtmlPromises = tabsToFetch.map(async (tab) => {
+    try {
+      const resp = await axios.post(
+        `${siteBase}/${lang}/ajax/team/${mId}/change-tab`,
+        `csrf_token=${csrf}&tab=${tab}`,
+        {
+          headers: {
+            ...defaultRequestHeaders(),
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Cookie': cookieHeader,
+          },
+          timeout: 10000,
+        }
+      );
+      return resp.data?.content || resp.data?.html || '';
+    } catch (err) {
+      console.warn(`[WARN] No se pudo cargar pestaña de equipo AJAX ${tab}: ${err.message}`);
+      return '';
+    }
+  });
+
+  const rawTabs = await Promise.all(extraHtmlPromises);
+  const extraHtml = rawTabs.join('\n\n<br>\n\n');
+  const extraBlocks = parseBlocksFromHtml(extraHtml);
+
+  return [...initialBlocks, ...extraBlocks];
+}
+
 // ─── Función principal: URL → array de bloques listos para renderizar ─────────
 export async function fetchAndParse(url) {
   const t0 = Date.now();
@@ -1235,6 +1328,9 @@ export async function fetchAndParse(url) {
     blocks = parseBlocksFromHtml(html);
   } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
     blocks = await fetchCalendarBlocksViaAjax(absoluteUrl);
+  } else if (/\/team\/\d+/i.test(absoluteUrl)) {
+    // Carga de equipo mediante peticiones AJAX combinadas simulando Vue
+    blocks = await fetchTeamContextViaAjax(absoluteUrl);
   } else {
     const html = await fetchHTML(absoluteUrl);
     blocks = parseBlocksFromHtml(html);
@@ -1281,7 +1377,7 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
   links.forEach(l => {
     if (!l.href) return;
     const absHref = toAbsoluteUrl(l.href);
-    if (!phasePattern.test(absHref) || absHref.includes('google') || absHref.includes('facebook')) return;
+    if (!phasePattern.test(absHref) || /google|facebook|export|print|xls|pdf/i.test(absHref) || /exportar|imprimir/i.test(l.content || '')) return;
     
     const norm = absHref.replace(/\/$/, '').toLowerCase();
     if (!seenHrefs.has(norm)) {
@@ -1309,18 +1405,45 @@ export function extractAllPhases(url = '', html = '', blocks = []) {
   // Limpiar posibles duplicados
   const otherPhasesCleaned = otherPhases.filter(p => toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase() !== currentUrlNorm);
 
-  if (otherPhasesCleaned.length > 0) {
-    return [{ title: currentTitle, href: url }, ...otherPhasesCleaned];
+  // Si no hay enlaces a otras fases, detectamos si la PÁGINA ACTUAL tiene múltiples
+  // bloques independientes (tablas o brackets = sub-competiciones).
+  const subgroupEntities = (blocks || []).filter(b =>
+    (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket'
+  );
+
+  if (otherPhasesCleaned.length === 0 && subgroupEntities.length > 1) {
+    // Cada entidad se convierte en una "fase virtual", usando su title extraído
+    // del h2/h3 previo (ya propagado por parseBlocksFromHtml).
+    let groupCount = 0;
+    let playoffCount = 0;
+    const NOISE_RE = /Imprimir\s+(clasificaci[oó]n|eliminatoria)\s+de\s+/i;
+    const ELLIPSIS_RE = /[…\.]{2,}/g;
+
+    return subgroupEntities.map((entity, index) => {
+      let title = (entity.title || '').replace(NOISE_RE, '').replace(ELLIPSIS_RE, '').trim();
+
+      // Si no hay título real, generar uno descriptivo
+      if (!title) {
+        if (entity.type === 'bracket') {
+          playoffCount++;
+          title = playoffCount === 1 ? 'Playoffs de ascenso' : `Playoffs (${playoffCount})`;
+        } else {
+          groupCount++;
+          title = groupCount === 1 ? 'Grupo A' : groupCount === 2 ? 'Grupo B' : `Grupo ${String.fromCharCode(64 + groupCount)}`;
+        }
+      }
+
+      return {
+        title,
+        href: `${url}#phase-${index}`,
+        isBracket: entity.type === 'bracket',
+        phaseIndex: index,
+      };
+    });
   }
 
-  // Si no hay enlaces a otras fases en el desplegable, comprobamos si la PÁGINA ACTUAL tiene múltiples tablas independientes (como un "Box Info Full")
-  const tableBlocks = (blocks || []).filter(b => b.type === 'table' && b.rows?.length > 0);
-  if (tableBlocks.length > 1) {
-    // Retornamos cada tabla como una "fase" virtual usando el hash en la URL
-    return tableBlocks.map((tb, index) => {
-       const title = tb.title?.trim() || `Grupo ${index + 1}`;
-       return { title, href: `${url}#phase-${index}` };
-    });
+  if (otherPhasesCleaned.length > 0) {
+    return [{ title: currentTitle, href: url }, ...otherPhasesCleaned];
   }
 
   return [{ title: currentTitle, href: url }];
@@ -1390,9 +1513,9 @@ export async function fetchChampionshipData(rankingUrl) {
   phaseData.forEach(p => {
     const title = (p.title || '').toLowerCase();
     const isPlacement = placementPatterns.some(re => re.test(title));
-    // Solo bloques tipo bracket o calendar (no tablas de clasificación)
-    const hasBracketOrCalendar = p.blocks && p.blocks.some(b => b.type === 'bracket' || b.type === 'calendar');
-    if (hasBracketOrCalendar || p.href === absoluteUrl) {
+    // Buscar bloques tipo bracket, calendar, o tablas que tengan partidos (playoffs mostrados como tabla)
+    const hasMatchData = p.blocks && p.blocks.some(b => b.type === 'bracket' || b.type === 'calendar' || (b.type === 'table' && Array.isArray(b.matches) && b.matches.length > 0));
+    if (hasMatchData || p.href === absoluteUrl) {
       if (isPlacement) {
         placementFlow.push(p);
       } else {
@@ -1586,8 +1709,31 @@ function parseBracketFromDom(dom) {
     // Fallback 1: Buscar contenedores genéricos con muchos match-boxes
     const allMatches = findMatchBoxes(searchRoot);
     if (allMatches.length >= 2) {
-      // Agrupar matches por proximidad o simplemente meterlos en una columna
-      return { columns: [{ header: '', matches: allMatches }] };
+      // Agrupar matches por fase (cuartos, semis, final)
+      const phaseMap = new Map();
+      allMatches.forEach(m => {
+        const ph = m.phase || '';
+        if (!phaseMap.has(ph)) phaseMap.set(ph, []);
+        phaseMap.get(ph).push(m);
+      });
+      
+      const cols = Array.from(phaseMap.entries()).map(([ph, arr]) => ({
+        header: ph,
+        matches: arr
+      }));
+      
+      // Intentar ordenar cronológicamente
+      const getWeight = (t) => {
+        const lower = (t || '').toLowerCase();
+        if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+        if (/semi/.test(lower)) return 80;
+        if (/cuartos/.test(lower)) return 60;
+        if (/octavos/.test(lower)) return 40;
+        return 10;
+      };
+      cols.sort((a, b) => getWeight(a.header) - getWeight(b.header));
+      
+      return { columns: cols };
     }
     // Fallback 2: Si hay al menos un partido (ej: Final), lo damos como bueno
     if (allMatches.length === 1) {

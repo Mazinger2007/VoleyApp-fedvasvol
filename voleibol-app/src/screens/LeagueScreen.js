@@ -340,6 +340,7 @@ export default function LeagueScreen({ route, navigation }) {
   const [isSubgroupModalVisible, setIsSubgroupModalVisible] = useState(false);
   const [availableSubgroups, setAvailableSubgroups] = useState([]);
   const [isSwitchingSubgroup, setIsSwitchingSubgroup] = useState(false);
+  const [isFetchingSubgroups, setIsFetchingSubgroups] = useState(true);
 
   useEffect(() => {
     setCurrentRankingUrl(initialRankingUrl);
@@ -360,9 +361,10 @@ export default function LeagueScreen({ route, navigation }) {
 
         if (mounted) {
           setAvailableSubgroups(filtered);
+          setIsFetchingSubgroups(false);
         }
       } catch (err) {
-        // ignore
+        if (mounted) setIsFetchingSubgroups(false);
       }
     }
     fetchSubgroups();
@@ -376,11 +378,39 @@ export default function LeagueScreen({ route, navigation }) {
   const fetchRankingUrl = phaseIndex >= 0 ? currentRankingUrl.split('#')[0] : currentRankingUrl;
 
   const {
-    blocks: rankingBlocks,
+    blocks: rawRankingBlocks,
     loading: _rankingLoading,
     error: rankingError,
     refresh: refreshRanking,
   } = useFetch(fetchRankingUrl);
+
+  const rankingBlocks = useMemo(() => {
+    if (!rawRankingBlocks) return rawRankingBlocks;
+    const subgroupEntities = rawRankingBlocks.filter(b => (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket');
+    // If a specific virtual phase is selected, filter to that one
+    if (phaseIndex >= 0) {
+      if (phaseIndex >= subgroupEntities.length) return rawRankingBlocks;
+      const targetEntity = subgroupEntities[phaseIndex];
+      return rawRankingBlocks.filter(b => {
+        if ((b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket') {
+          return b === targetEntity;
+        }
+        return true;
+      });
+    }
+    // No phase selected yet: if multiple independent sub-competitions exist, only show the first
+    // so we don’t stack all of them at startup.
+    if (subgroupEntities.length > 1) {
+      const firstEntity = subgroupEntities[0];
+      return rawRankingBlocks.filter(b => {
+        if ((b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket') {
+          return b === firstEntity;
+        }
+        return true;
+      });
+    }
+    return rawRankingBlocks;
+  }, [rawRankingBlocks, phaseIndex]);
 
   const rankingLoading = _rankingLoading || isSwitchingSubgroup;
 
@@ -447,10 +477,33 @@ export default function LeagueScreen({ route, navigation }) {
   }, [rankingBlocks, rankingUrl]);
 
   const isChampionship = useMemo(() => {
-    return (rankingBlocks || []).some(b => b.type === 'bracket');
-  }, [rankingBlocks]);
+    // A phase is treated as a championship if the filtered blocks contain a bracket,
+    // OR when we have a virtual phase with isBracket=true selected.
+    const blocksHaveBracket = (rankingBlocks || []).some(b => b.type === 'bracket');
+    if (blocksHaveBracket) return true;
+    const hasPlayoffTables = (rankingBlocks || []).some(b => 
+      b.type === 'table' && 
+      /cuartos|semi|final|tercer/i.test(b.title || '')
+    );
+    if (hasPlayoffTables) return true;
+    // Check the selected virtual subgroup metadata
+    if (phaseIndex >= 0) {
+      const selectedSubgroup = availableSubgroups.find(s => s.phaseIndex === phaseIndex);
+      if (selectedSubgroup?.isBracket) return true;
+    }
+    return false;
+  }, [rankingBlocks, phaseIndex, availableSubgroups]);
 
-  const fetchCalendarUrl = phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl;
+  // When selected phase is a bracket, don't fetch calendar (there is none)
+  const selectedSubgroupIsBracket = useMemo(() => {
+    if (phaseIndex < 0) return false;
+    const s = availableSubgroups.find(sg => sg.phaseIndex === phaseIndex);
+    return s?.isBracket || false;
+  }, [phaseIndex, availableSubgroups]);
+
+  const fetchCalendarUrl = (selectedSubgroupIsBracket || isChampionship)
+    ? null
+    : (phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl);
 
   const {
     blocks: calendarBlocksRaw,
@@ -500,30 +553,23 @@ export default function LeagueScreen({ route, navigation }) {
     if (logos.length) ensureLogoColorsCached(logos, getDominantBorderColor);
   }, [rankingBlocks]);
 
-  const rankingTables = useMemo(() => {
-    let tables = (rankingBlocks || []).filter((b) => b.type === 'table');
-    if (phaseIndex >= 0 && tables.length > phaseIndex) {
-      tables = [tables[phaseIndex]];
-    }
-    return tables;
-  }, [rankingBlocks, phaseIndex]);
+  // rankingBlocks is already filtered to the active phase entity by the useMemo above.
+  // No additional phaseIndex slicing needed here — it would double-filter.
+  const rankingTables = useMemo(() =>
+    (rankingBlocks || []).filter((b) => b.type === 'table' && b.rows?.length > 0),
+    [rankingBlocks]
+  );
 
-  const rankingBrackets = useMemo(() => {
-    let brackets = (rankingBlocks || []).filter((b) => b.type === 'bracket');
-    if (phaseIndex >= 0 && brackets.length > phaseIndex) {
-      brackets = [brackets[phaseIndex]];
-    }
-    return brackets;
-  }, [rankingBlocks, phaseIndex]);
+  const rankingBrackets = useMemo(() =>
+    (rankingBlocks || []).filter((b) => b.type === 'bracket'),
+    [rankingBlocks]
+  );
 
   const calendarTables = useMemo(() => {
     const allTables = (calendarBlocks || []).filter((b) => b.type === 'table');
-    let tables = allTables;
-    if (phaseIndex >= 0 && allTables.length > phaseIndex) {
-      tables = [allTables[phaseIndex]];
-    }
-    return tables.slice().reverse();
-  }, [calendarBlocks, phaseIndex]);
+    return allTables.slice().reverse();
+  }, [calendarBlocks]);
+
 
   const flattenedMatches = useMemo(() => {
     return calendarTables.flatMap(t => t.matches || []);
@@ -718,12 +764,12 @@ export default function LeagueScreen({ route, navigation }) {
     headerTitle: {
       flex: 1,
       color: isDark ? Colors.textPrimary : Colors.primary,
-      fontSize: 16,
+      fontSize: 15,
       lineHeight: 18,
       fontWeight: '900',
       textAlign: 'center',
-      paddingHorizontal: Spacing.sm,
-      letterSpacing: -0.5,
+      paddingHorizontal: Spacing.xs,
+      letterSpacing: -0.3,
       textTransform: 'uppercase',
     },
     tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative' },
@@ -978,12 +1024,11 @@ export default function LeagueScreen({ route, navigation }) {
 
   const rankingContent = useMemo(() => {
     const isTournament = /\b(torneo|copa|final|txapelketa|topaketa|sector)\b/i.test(title || '');
-    if (rankingLoading && !rankingTables.length) {
+    if (rankingLoading) {
       return <LoadingView variant="clean" message="Cargando clasificación..." />;
     }
 
     const hasData = rankingTables.length > 0 || rankingBrackets.length > 0;
-
 
     if (hasData) {
       return (
@@ -1018,6 +1063,10 @@ export default function LeagueScreen({ route, navigation }) {
   }, [isChampionship, phaseLinks.length, championshipLoading, championshipData, rankingTables, rankingBrackets, rankingLoading, seasonLabel, handlePressTeam, handlePressExpand, Colors, styles.emptyWrap, styles.emptyText, openMatchModal]);
 
   const calendarContent = useMemo(() => {
+    if (calendarLoading || isSwitchingSubgroup) {
+      return <LoadingView variant="clean" message="Cargando calendario..." />;
+    }
+
     if (calendarTables.length === 0) {
       return (
         <View style={styles.emptyWrap}>
@@ -1139,7 +1188,7 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </View>
     );
-  }, [calendarTables, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel]);
+  }, [calendarTables, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel, calendarLoading, isSwitchingSubgroup]);
 
   const renderSearchResults = useCallback(() => {
     if (filteredMatches.length === 0) {
@@ -1208,9 +1257,11 @@ export default function LeagueScreen({ route, navigation }) {
           <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
             <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
           </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={2}>
-            {(title || 'Liga').toUpperCase()}
-          </Text>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={[styles.headerTitle, { flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+              {(title || 'Liga').toUpperCase()}
+            </Text>
+          </View>
           {/* Spacer to keep title centered */}
           <View style={styles.backBtn} />
         </View>
@@ -1272,20 +1323,29 @@ export default function LeagueScreen({ route, navigation }) {
 
       {/* Header with back + title */}
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={[styles.backBtn, { padding: 10 }]}
+          onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}
+          activeOpacity={0.7}
+          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+        >
           <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, alignSelf: 'stretch', paddingHorizontal: 10 }}
           onPress={() => setIsSubgroupModalVisible(true)}
-          disabled={availableSubgroups.length <= 1}
+          disabled={!isFetchingSubgroups && availableSubgroups.length <= 1}
           activeOpacity={0.7}
         >
-          <Text style={[styles.headerTitle, { flex: 0 }]} numberOfLines={1}>
+          <Text
+            style={[styles.headerTitle, { flexShrink: 1 }]}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+          >
             {(title || 'Liga').toUpperCase()}
           </Text>
-          {availableSubgroups.length > 1 && (
+          {(isFetchingSubgroups || availableSubgroups.length > 1) && (
             <MaterialIcons name="keyboard-arrow-down" size={22} color={isDark ? Colors.textPrimary : Colors.primary} />
           )}
         </TouchableOpacity>
@@ -1424,9 +1484,9 @@ export default function LeagueScreen({ route, navigation }) {
       </Modal>
 
       <Modal visible={isTeamPickerVisible} transparent animationType="fade">
-        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsTeamPickerVisible(false)} activeOpacity={1} />
-        </BlurView>
+        </View>
         <View style={styles.centeredModalWrapper} pointerEvents="box-none">
           <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 400 }]}>
             <ScrollView style={{ maxHeight: screenHeight * 0.6 }}>
@@ -1468,51 +1528,94 @@ export default function LeagueScreen({ route, navigation }) {
       </Modal>
 
       <Modal visible={isSubgroupModalVisible} transparent animationType="fade">
-        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }]}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsSubgroupModalVisible(false)} activeOpacity={1} />
-        </BlurView>
+        </View>
         <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-          <View style={{ width: '100%', paddingHorizontal: Spacing.xl, alignItems: 'center' }} pointerEvents="box-none">
-            <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface, padding: 0, overflow: 'hidden', borderRadius: Radius.xl, maxHeight: screenHeight * 0.7, width: '100%', maxWidth: 400 }]}>
-              <View style={{ padding: Spacing.xl, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: Colors.border }}>
-                <Text style={{ fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary }}>
-                  {isSwitchingSubgroup ? 'Cargando Competición...' : 'Seleccionar Competición'}
-                </Text>
+          <View style={{ width: '90%', maxWidth: 400 }} pointerEvents="box-none">
+            <View style={[
+              { backgroundColor: isDark ? '#0f172a' : '#ffffff', borderRadius: 20, overflow: 'hidden',
+                maxHeight: screenHeight * 0.72,
+                ...(Platform.OS !== 'web' ? {
+                  shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 24, elevation: 16
+                } : { boxShadow: '0 8px 32px rgba(0,0,0,0.3)' })
+              }
+            ]}>
+              {/* Modal header — theme-aware */}
+              <View style={{
+                paddingHorizontal: 20,
+                paddingTop: 20,
+                paddingBottom: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: Colors.border,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: Colors.primary,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1.2,
+                    marginBottom: 4,
+                  }}>
+                    {isFetchingSubgroups ? 'Buscando grupos...' : 'Competición'}
+                  </Text>
+                  <Text style={{
+                    fontSize: 18,
+                    fontWeight: '800',
+                    color: Colors.textPrimary,
+                    letterSpacing: -0.3,
+                  }}>
+                    {isSwitchingSubgroup ? 'Cargando...' : 'Seleccionar Grupo'}
+                  </Text>
+                </View>
                 {!isSwitchingSubgroup ? (
-                  <TouchableOpacity onPress={() => setIsSubgroupModalVisible(false)}>
-                    <MaterialIcons name="close" size={24} color={Colors.textMuted} />
+                  <TouchableOpacity
+                    onPress={() => setIsSubgroupModalVisible(false)}
+                    style={{
+                      width: 32, height: 32, borderRadius: 16,
+                      backgroundColor: Colors.surfaceAlt,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
                 ) : (
-                  <View style={{ padding: 4 }}>
+                  <View style={{ padding: 8 }}>
                     <MaterialIcons name="hourglass-empty" size={20} color={Colors.primary} />
                   </View>
                 )}
               </View>
-              <ScrollView style={{ paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md }} showsVerticalScrollIndicator={false}>
+
+              {/* Items */}
+              <ScrollView
+                style={{ padding: 12 }}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 8 }}
+              >
                 {availableSubgroups.map((sub, idx) => {
                   const isActive = rankingUrl === sub.href;
+                  const isBracketType = sub.isBracket || /playoff|ascenso|final|copa|txapelketa|topaketa/i.test(sub.title || '');
                   return (
                     <TouchableOpacity
                       key={`phase-${idx}`}
-                      style={[
-                        styles.selectionItem,
-                        {
-                          borderRadius: Radius.md,
-                          marginVertical: 4,
-                          borderWidth: 1,
-                          borderColor: isActive ? Colors.primary : 'transparent',
-                          backgroundColor: isActive ? (isDark ? 'rgba(13,14,242,0.1)' : '#f0f4ff') : 'transparent'
-                        }
-                      ]}
+                      style={[{
+                        flexDirection: 'row', alignItems: 'center',
+                        paddingHorizontal: 14, paddingVertical: 13,
+                        borderRadius: Radius.lg,
+                        marginVertical: 3,
+                        borderWidth: 1,
+                        borderColor: isActive ? Colors.primary : Colors.border,
+                        backgroundColor: isActive ? Colors.primaryAlpha10 : Colors.surfaceAlt,
+                      }]}
                       onPress={() => {
                         if (!isActive && !isSwitchingSubgroup) {
-                          // If the selected subgroup looks like a knockout phase, navigate to TournamentScreen
-                          if (isTournament(sub.title)) {
+                          if (isTournament(sub.title) && !sub.href.includes('#phase-')) {
                             setIsSubgroupModalVisible(false);
-                            navigation.replace('Tournament', {
-                              url: sub.href,
-                              title: sub.title,
-                            });
+                            navigation.replace('Tournament', { url: sub.href, title: sub.title });
                           } else {
                             setIsSwitchingSubgroup(true);
                             setCurrentRankingUrl(sub.href);
@@ -1521,15 +1624,35 @@ export default function LeagueScreen({ route, navigation }) {
                         }
                       }}
                       disabled={isSwitchingSubgroup}
+                      activeOpacity={0.7}
                     >
-                      <MaterialIcons
-                        name={isActive ? "radio-button-checked" : "radio-button-unchecked"}
-                        size={24}
-                        color={isActive ? Colors.primary : Colors.textMuted}
-                      />
-                      <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isActive && { fontWeight: 'bold' }]}>
-                        {sub.title}
-                      </Text>
+                      {/* Type icon */}
+                      <View style={{
+                        width: 34, height: 34, borderRadius: Radius.md,
+                        backgroundColor: isActive ? Colors.primary : (isBracketType ? Colors.warningSoft : Colors.primaryAlpha10),
+                        alignItems: 'center', justifyContent: 'center', marginRight: 12
+                      }}>
+                        <MaterialIcons
+                          name={isBracketType ? 'emoji-events' : 'table-chart'}
+                          size={18}
+                          color={isActive ? Colors.textOnPrimary : (isBracketType ? Colors.warning : Colors.primary)}
+                        />
+                      </View>
+
+                      {/* Title + type label */}
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '600', color: Colors.textPrimary }} numberOfLines={2}>
+                          {sub.title}
+                        </Text>
+                        <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                          {isBracketType ? 'Eliminatoria / Bracket' : 'Clasificación + Calendario'}
+                        </Text>
+                      </View>
+
+                      {/* Active indicator */}
+                      {isActive && (
+                        <MaterialIcons name="check-circle" size={22} color={Colors.primary} />
+                      )}
                     </TouchableOpacity>
                   );
                 })}

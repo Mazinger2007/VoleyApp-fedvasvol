@@ -116,7 +116,7 @@ function TeamLogo({ teamLogo, initials, Colors }) {
           source={uri}
           style={{ width: 24, height: 24 }}
           contentFit="contain"
-          transition={300}
+          transition={{ effect: 'cross-dissolve', duration: 100 }}
           cachePolicy="memory-disk"
           onError={() => setIndex((current) => (current + 1 < candidates.length ? current + 1 : candidates.length))}
         />
@@ -181,30 +181,8 @@ function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
               ? { borderLeftWidth: 3, borderLeftColor: '#ef4444' }
               : null;
 
-          const RowWrapper = onPressTeam
-            ? ({ children }) => (
-                <TouchableOpacity
-                  key={ri}
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}
-                  activeOpacity={0.75}
-                  onPress={() => onPressTeam(teamName, teamUrl, teamLogo, {
-                    position: posLabel,
-                    played: getCell(row, pjCol, '-'),
-                    won: getCell(row, vCol, '-'),
-                    points: ptsVal,
-                  })}
-                >
-                  {children}
-                </TouchableOpacity>
-              )
-            : ({ children }) => (
-                <View key={ri} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
-                  {children}
-                </View>
-              );
-
-          return (
-            <RowWrapper key={ri}>
+          const rowContent = (
+            <>
               <View style={{ width: 40, flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ color: topColor || (isRelegation ? '#ef4444' : Colors.textPrimary), fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>
                   {posLabel}
@@ -222,7 +200,31 @@ function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
               </View>
 
               <Text style={{ width: 40, textAlign: 'right', color: Colors.primary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold }}>{ptsVal}</Text>
-            </RowWrapper>
+            </>
+          );
+
+          if (onPressTeam) {
+            return (
+              <TouchableOpacity
+                key={ri}
+                style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}
+                activeOpacity={0.75}
+                onPress={() => onPressTeam(teamName, teamUrl, teamLogo, {
+                  position: posLabel,
+                  played: getCell(row, pjCol, '-'),
+                  won: getCell(row, vCol, '-'),
+                  points: ptsVal,
+                })}
+              >
+                {rowContent}
+              </TouchableOpacity>
+            );
+          }
+
+          return (
+            <View key={ri} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+              {rowContent}
+            </View>
           );
         })}
       </View>

@@ -539,17 +539,28 @@ export default function TournamentScreen({ route, navigation }) {
 
     data.mainFlow.forEach((phase) => {
       (phase.blocks || []).forEach((block) => {
-        if (block.type !== 'bracket' || !block.columns) return;
-        block.columns.forEach((col, colIdx) => {
-          const targetCol = upsertColumn(col.header || phase.title, colIdx);
-          (col.matches || []).forEach((m) => {
+        if (block.type === 'bracket' && block.columns) {
+          block.columns.forEach((col, colIdx) => {
+            const targetCol = upsertColumn(col.header || phase.title, colIdx);
+            (col.matches || []).forEach((m) => {
+              if (!m) return;
+              const key = buildMatchKey(m);
+              if (!key || seenMatchKeys.has(key)) return;
+              seenMatchKeys.add(key);
+              targetCol.matches.push(m);
+            });
+          });
+        } else if (block.type === 'table' && Array.isArray(block.matches) && block.matches.length > 0) {
+          const targetColTitle = block.title || phase.title || 'ELIMINATORIA';
+          const targetCol = upsertColumn(targetColTitle, columns.length);
+          block.matches.forEach((m) => {
             if (!m) return;
             const key = buildMatchKey(m);
             if (!key || seenMatchKeys.has(key)) return;
             seenMatchKeys.add(key);
             targetCol.matches.push(m);
           });
-        });
+        }
       });
     });
 
@@ -979,9 +990,11 @@ export default function TournamentScreen({ route, navigation }) {
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
             <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitleText, { color: isDark ? Colors.textPrimary : Colors.primary }]} numberOfLines={2}>
-            {title ? title.toUpperCase() : 'TORNEO'}
-          </Text>
+          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 }}>
+            <Text style={[styles.headerTitleText, { color: isDark ? Colors.textPrimary : Colors.primary, flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+              {title ? title.toUpperCase() : 'TORNEO'}
+            </Text>
+          </View>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.navigate('Info', { tournamentUrl: url, title: title || 'Información' })}
