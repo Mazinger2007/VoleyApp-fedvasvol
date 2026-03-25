@@ -4,13 +4,15 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Image,
   StatusBar,
   StyleSheet,
   useWindowDimensions,
   Platform,
   RefreshControl,
+  InteractionManager,
+  ActivityIndicator,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -50,9 +52,11 @@ function TeamLogo({ uri, name, isDark, colors }) {
     <View style={[styles.logoWrap, { backgroundColor: bgColor }]}>
       {uri ? (
         <Image 
-          source={{ uri }} 
+          source={uri} 
           style={{ width: '95%', height: '95%' }} 
-          resizeMode="contain"
+          contentFit="contain"
+          transition={300}
+          cachePolicy="memory-disk"
         />
       ) : (
         <View style={[styles.logoPlaceholder, { backgroundColor: colors.surfaceAlt }]}>
@@ -157,6 +161,14 @@ export default function JornadaDetailScreen({ route, navigation }) {
 
   const [currentTableBlock, setCurrentTableBlock] = useState(tableBlock);
   const [refreshing, setRefreshing] = useState(false);
+  const [renderReady, setRenderReady] = useState(false);
+
+  useEffect(() => {
+    const handle = InteractionManager.runAfterInteractions(() => {
+      setRenderReady(true);
+    });
+    return () => handle.cancel();
+  }, []);
 
   const onRefresh = useCallback(async () => {
     if (!calendarUrl) return;
@@ -248,7 +260,13 @@ export default function JornadaDetailScreen({ route, navigation }) {
           />
         }
       >
-        {/* LIVE */}
+        {!renderReady ? (
+          <View style={{ padding: Spacing.xxl, alignItems: 'center', justifyContent: 'center' }}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+          </View>
+        ) : (
+          <>
+            {/* LIVE */}
         {sortedMatches.live.length > 0 && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
@@ -292,6 +310,8 @@ export default function JornadaDetailScreen({ route, navigation }) {
              <MaterialIcons name="sports-volleyball" size={48} color={Colors.textMuted} />
              <Text style={{ color: Colors.textMuted, marginTop: 12 }}>No hay partidos para esta jornada</Text>
           </View>
+        )}
+        </>
         )}
       </ScrollView>
 

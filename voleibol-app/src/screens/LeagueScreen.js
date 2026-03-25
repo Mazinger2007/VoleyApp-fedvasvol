@@ -23,6 +23,7 @@ import {
   discoverAllPhases,
   fetchChampionshipData,
 } from '../utils/htmlParser';
+import { isTournament } from '../utils/navigationHelper';
 import { getDominantBorderColor } from '../utils/imageColor';
 import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 import { Radius, Spacing, Typography } from '../styles/theme';
@@ -354,13 +355,11 @@ export default function LeagueScreen({ route, navigation }) {
           const low = (p.title || '').toLowerCase();
           // Remove garbage options
           if (/excel|exportar|imprimir|csv|pdf|seleccionar competición|competiciones/.test(low)) return false;
-          // Avoid showing exactly the main league title in the subgroup list to avoid confusion
-          if (title && low === title.toLowerCase()) return false;
           return true;
         });
 
         if (mounted) {
-           setAvailableSubgroups(filtered);
+          setAvailableSubgroups(filtered);
         }
       } catch (err) {
         // ignore
@@ -372,21 +371,24 @@ export default function LeagueScreen({ route, navigation }) {
 
 
   const rankingUrl = currentRankingUrl;
+  const phaseHashMatch = currentRankingUrl?.match(/#phase-(\d+)/);
+  const phaseIndex = phaseHashMatch ? parseInt(phaseHashMatch[1], 10) : -1;
+  const fetchRankingUrl = phaseIndex >= 0 ? currentRankingUrl.split('#')[0] : currentRankingUrl;
 
   const {
     blocks: rankingBlocks,
     loading: _rankingLoading,
     error: rankingError,
     refresh: refreshRanking,
-  } = useFetch(rankingUrl);
+  } = useFetch(fetchRankingUrl);
 
   const rankingLoading = _rankingLoading || isSwitchingSubgroup;
 
   // React to successful fetch to clear switching state
   useEffect(() => {
     if (!_rankingLoading && isSwitchingSubgroup) {
-       setIsSwitchingSubgroup(false);
-       setIsSubgroupModalVisible(false); // Make sure modal gets closed
+      setIsSwitchingSubgroup(false);
+      setIsSubgroupModalVisible(false); // Make sure modal gets closed
     }
   }, [_rankingLoading, isSwitchingSubgroup]);
 
@@ -448,17 +450,19 @@ export default function LeagueScreen({ route, navigation }) {
     return (rankingBlocks || []).some(b => b.type === 'bracket');
   }, [rankingBlocks]);
 
+  const fetchCalendarUrl = phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl;
+
   const {
     blocks: calendarBlocksRaw,
     loading: calendarLoading,
     error: calendarError,
     refresh: refreshCalendar,
-  } = useFetch(resolvedCalendarUrl);
+  } = useFetch(fetchCalendarUrl);
 
   // Live match polling — automatically starts only when EN CURSO matches detected,
   // updates calendarBlocks in place without full re-render of parent.
   const [liveCalendarBlocks, setLiveCalendarBlocks] = useState(null);
-  useLivePolling(resolvedCalendarUrl, calendarBlocksRaw, setLiveCalendarBlocks, refreshRanking);
+  useLivePolling(fetchCalendarUrl, calendarBlocksRaw, setLiveCalendarBlocks, refreshRanking);
 
   // Use live-updated blocks if available, else use fetched blocks
   const calendarBlocks = liveCalendarBlocks || calendarBlocksRaw;
@@ -496,20 +500,30 @@ export default function LeagueScreen({ route, navigation }) {
     if (logos.length) ensureLogoColorsCached(logos, getDominantBorderColor);
   }, [rankingBlocks]);
 
-  const rankingTables = useMemo(
-    () => (rankingBlocks || []).filter((b) => b.type === 'table'),
-    [rankingBlocks]
-  );
+  const rankingTables = useMemo(() => {
+    let tables = (rankingBlocks || []).filter((b) => b.type === 'table');
+    if (phaseIndex >= 0 && tables.length > phaseIndex) {
+      tables = [tables[phaseIndex]];
+    }
+    return tables;
+  }, [rankingBlocks, phaseIndex]);
 
-  const rankingBrackets = useMemo(
-    () => (rankingBlocks || []).filter((b) => b.type === 'bracket'),
-    [rankingBlocks]
-  );
+  const rankingBrackets = useMemo(() => {
+    let brackets = (rankingBlocks || []).filter((b) => b.type === 'bracket');
+    if (phaseIndex >= 0 && brackets.length > phaseIndex) {
+      brackets = [brackets[phaseIndex]];
+    }
+    return brackets;
+  }, [rankingBlocks, phaseIndex]);
 
-  const calendarTables = useMemo(
-    () => (calendarBlocks || []).filter((b) => b.type === 'table').slice().reverse(),
-    [calendarBlocks]
-  );
+  const calendarTables = useMemo(() => {
+    const allTables = (calendarBlocks || []).filter((b) => b.type === 'table');
+    let tables = allTables;
+    if (phaseIndex >= 0 && allTables.length > phaseIndex) {
+      tables = [allTables[phaseIndex]];
+    }
+    return tables.slice().reverse();
+  }, [calendarBlocks, phaseIndex]);
 
   const flattenedMatches = useMemo(() => {
     return calendarTables.flatMap(t => t.matches || []);
@@ -677,14 +691,15 @@ export default function LeagueScreen({ route, navigation }) {
   };
 
   const RT_LABELS = {
-    ranking: isChampionship ? 'Cuadro' : 'Clasificación',
-    calendar: isChampionship ? 'Partidos' : 'Calendario',
+    ranking: 'Clasificación',
+    calendar: 'Calendario',
   };
 
-  const TABS = useMemo(() => [
-    { key: 'ranking', label: isChampionship ? 'Cuadro' : 'Clasificación' },
-    { key: 'calendar', label: isChampionship ? 'Partidos' : 'Calendario' },
-  ], [isChampionship]);
+  const TABS = [
+    { key: 'ranking', label: 'Clasificación' },
+    { key: 'calendar', label: 'Calendario' },
+  ];
+
 
   const styles = StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
@@ -1260,9 +1275,9 @@ export default function LeagueScreen({ route, navigation }) {
         <TouchableOpacity style={styles.backBtn} onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }} activeOpacity={0.7}>
           <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
         </TouchableOpacity>
-        
-        <TouchableOpacity 
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }} 
+
+        <TouchableOpacity
+          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}
           onPress={() => setIsSubgroupModalVisible(true)}
           disabled={availableSubgroups.length <= 1}
           activeOpacity={0.7}
@@ -1408,11 +1423,12 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Team Picker Modal */}
-      <Modal visible={isTeamPickerVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.selectionModal, { backgroundColor: Colors.surface }]}>
-            <Text style={[styles.selectionModalTitle, { color: Colors.textPrimary }]}>Seleccionar Equipos</Text>
+      <Modal visible={isTeamPickerVisible} transparent animationType="fade">
+        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsTeamPickerVisible(false)} activeOpacity={1} />
+        </BlurView>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 400 }]}>
             <ScrollView style={{ maxHeight: screenHeight * 0.6 }}>
               {allAvailableTeams.map((team) => {
                 const isSelected = searchTeams.includes(team);
@@ -1451,71 +1467,84 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Subgroup/Phase Picker Modal */}
       <Modal visible={isSubgroupModalVisible} transparent animationType="fade">
         <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
           <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsSubgroupModalVisible(false)} activeOpacity={1} />
         </BlurView>
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: Spacing.xl }} pointerEvents="box-none">
-          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface, padding: 0, overflow: 'hidden', borderRadius: Radius.xl, maxHeight: screenHeight * 0.7 }]}>
-            <View style={{ padding: Spacing.xl, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: Colors.border }}>
-              <Text style={{ fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary }}>
-                {isSwitchingSubgroup ? 'Cargando Competición...' : 'Seleccionar Competición'}
-              </Text>
-              {!isSwitchingSubgroup ? (
-                <TouchableOpacity onPress={() => setIsSubgroupModalVisible(false)}>
-                  <MaterialIcons name="close" size={24} color={Colors.textMuted} />
-                </TouchableOpacity>
-              ) : (
-                <View style={{ padding: 4 }}>
-                   <MaterialIcons name="hourglass-empty" size={20} color={Colors.primary} />
-                </View>
-              )}
-            </View>
-            <ScrollView style={{ paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md }} showsVerticalScrollIndicator={false}>
-              {availableSubgroups.map((sub, idx) => {
-                const isActive = rankingUrl === sub.href;
-                return (
-                  <TouchableOpacity
-                    key={`phase-${idx}`}
-                    style={[
-                      styles.selectionItem, 
-                      { 
-                        borderRadius: Radius.md, 
-                        marginVertical: 4, 
-                        borderWidth: 1, 
-                        borderColor: isActive ? Colors.primary : 'transparent',
-                        backgroundColor: isActive ? (isDark ? 'rgba(13,14,242,0.1)' : '#f0f4ff') : 'transparent'
-                      }
-                    ]}
-                    onPress={() => {
-                      if (!isActive && !isSwitchingSubgroup) {
-                         setIsSwitchingSubgroup(true);
-                         setCurrentRankingUrl(sub.href);
-                      }
-                    }}
-                    disabled={isSwitchingSubgroup}
-                  >
-                    <MaterialIcons
-                      name={isActive ? "radio-button-checked" : "radio-button-unchecked"}
-                      size={24}
-                      color={isActive ? Colors.primary : Colors.textMuted}
-                    />
-                    <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isActive && { fontWeight: 'bold' }]}>
-                      {sub.title}
-                    </Text>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={{ width: '100%', paddingHorizontal: Spacing.xl, alignItems: 'center' }} pointerEvents="box-none">
+            <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface, padding: 0, overflow: 'hidden', borderRadius: Radius.xl, maxHeight: screenHeight * 0.7, width: '100%', maxWidth: 400 }]}>
+              <View style={{ padding: Spacing.xl, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+                <Text style={{ fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary }}>
+                  {isSwitchingSubgroup ? 'Cargando Competición...' : 'Seleccionar Competición'}
+                </Text>
+                {!isSwitchingSubgroup ? (
+                  <TouchableOpacity onPress={() => setIsSubgroupModalVisible(false)}>
+                    <MaterialIcons name="close" size={24} color={Colors.textMuted} />
                   </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+                ) : (
+                  <View style={{ padding: 4 }}>
+                    <MaterialIcons name="hourglass-empty" size={20} color={Colors.primary} />
+                  </View>
+                )}
+              </View>
+              <ScrollView style={{ paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md }} showsVerticalScrollIndicator={false}>
+                {availableSubgroups.map((sub, idx) => {
+                  const isActive = rankingUrl === sub.href;
+                  return (
+                    <TouchableOpacity
+                      key={`phase-${idx}`}
+                      style={[
+                        styles.selectionItem,
+                        {
+                          borderRadius: Radius.md,
+                          marginVertical: 4,
+                          borderWidth: 1,
+                          borderColor: isActive ? Colors.primary : 'transparent',
+                          backgroundColor: isActive ? (isDark ? 'rgba(13,14,242,0.1)' : '#f0f4ff') : 'transparent'
+                        }
+                      ]}
+                      onPress={() => {
+                        if (!isActive && !isSwitchingSubgroup) {
+                          // If the selected subgroup looks like a knockout phase, navigate to TournamentScreen
+                          if (isTournament(sub.title)) {
+                            setIsSubgroupModalVisible(false);
+                            navigation.replace('Tournament', {
+                              url: sub.href,
+                              title: sub.title,
+                            });
+                          } else {
+                            setIsSwitchingSubgroup(true);
+                            setCurrentRankingUrl(sub.href);
+                            setIsSubgroupModalVisible(false);
+                          }
+                        }
+                      }}
+                      disabled={isSwitchingSubgroup}
+                    >
+                      <MaterialIcons
+                        name={isActive ? "radio-button-checked" : "radio-button-unchecked"}
+                        size={24}
+                        color={isActive ? Colors.primary : Colors.textMuted}
+                      />
+                      <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isActive && { fontWeight: 'bold' }]}>
+                        {sub.title}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
           </View>
         </View>
       </Modal>
 
-      {/* Location Picker Modal (Multi-select) */}
-      <Modal visible={isLocationPickerVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.selectionModal, { backgroundColor: Colors.surface }]}>
+      <Modal visible={isLocationPickerVisible} transparent animationType="fade">
+        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsLocationPickerVisible(false)} activeOpacity={1} />
+        </BlurView>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 400 }]}>
             <Text style={[styles.selectionModalTitle, { color: Colors.textPrimary }]}>Seleccionar Sedes</Text>
             <ScrollView style={{ maxHeight: screenHeight * 0.5 }}>
               {allAvailableLocations.map((loc) => {
@@ -1555,10 +1584,12 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </Modal>
 
-      {/* Date Picker Modal (7-Column Calendar) */}
-      <Modal visible={isDatePickerVisible} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '95%', maxWidth: 450 }]}>
+      <Modal visible={isDatePickerVisible} transparent animationType="fade">
+        <BlurView intensity={20} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsDatePickerVisible(false)} activeOpacity={1} />
+        </BlurView>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 450 }]}>
             <View style={styles.calendarHeader}>
               <TouchableOpacity onPress={() => {
                 if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(calendarYear - 1); }

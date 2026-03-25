@@ -8,7 +8,8 @@ import { toRankingUrl } from './htmlParser';
 export function isTournament(title = '') {
   const tournamentKeywords = [
     'torneo', 'copa', 'txapelketa', 'topaketa', 'sector', 'campeonato', 
-    'final', 'fase', 'eliminatoria', 'ranking'
+    'final', 'fase', 'eliminatoria', 'ranking', 'playoff', 'play off',
+    'ascenso', 'descenso'
   ];
   const lowerTitle = title.toLowerCase();
   return tournamentKeywords.some(kw => lowerTitle.includes(kw));

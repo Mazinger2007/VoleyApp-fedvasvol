@@ -3,8 +3,8 @@ import {
   View,
   Text,
   TouchableOpacity,
-  Image,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -113,9 +113,11 @@ function TeamLogo({ teamLogo, initials, Colors }) {
     <View style={{ width: 32, height: 32, borderRadius: Radius.sm, backgroundColor: uri ? bgColor : Colors.surfaceAlt, justifyContent: 'center', alignItems: 'center' }}>
       {uri ? (
         <Image
-          source={{ uri }}
+          source={uri}
           style={{ width: 24, height: 24 }}
-          resizeMode="contain"
+          contentFit="contain"
+          transition={300}
+          cachePolicy="memory-disk"
           onError={() => setIndex((current) => (current + 1 < candidates.length ? current + 1 : candidates.length))}
         />
       ) : (
@@ -125,7 +127,7 @@ function TeamLogo({ teamLogo, initials, Colors }) {
   );
 }
 
-export default function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
+function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
   const { colors: Colors } = useTheme();
 
   if (!tableBlock || !tableBlock.rows?.length) {
@@ -249,4 +251,4 @@ export default function CompetitionTable({ tableBlock, title, onPressTeam, onPre
     </View>
   );
 }
-
+export default React.memo(CompetitionTable);

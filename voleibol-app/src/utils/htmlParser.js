@@ -1309,7 +1309,21 @@ export function extractAllPhases(url = '', html = '', blocks = []) {
   // Limpiar posibles duplicados
   const otherPhasesCleaned = otherPhases.filter(p => toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase() !== currentUrlNorm);
 
-  return [{ title: currentTitle, href: url }, ...otherPhasesCleaned];
+  if (otherPhasesCleaned.length > 0) {
+    return [{ title: currentTitle, href: url }, ...otherPhasesCleaned];
+  }
+
+  // Si no hay enlaces a otras fases en el desplegable, comprobamos si la PÁGINA ACTUAL tiene múltiples tablas independientes (como un "Box Info Full")
+  const tableBlocks = (blocks || []).filter(b => b.type === 'table' && b.rows?.length > 0);
+  if (tableBlocks.length > 1) {
+    // Retornamos cada tabla como una "fase" virtual usando el hash en la URL
+    return tableBlocks.map((tb, index) => {
+       const title = tb.title?.trim() || `Grupo ${index + 1}`;
+       return { title, href: `${url}#phase-${index}` };
+    });
+  }
+
+  return [{ title: currentTitle, href: url }];
 }
 
 export async function discoverAllPhases(url) {
@@ -1417,7 +1431,7 @@ function guessPhaseTitle(url = '', html = '') {
   const activeTabs = DomUtils.findAll(n => n.type === 'tag' && /\b(active|selected|current)\b/i.test(n.attribs?.class || ''), dom.children || [], true);
   for (const tab of activeTabs) {
     const text = getTextContent(tab).replace(/\s+/g, ' ').trim();
-    if (text.length > 0 && text.length < 40 && !/clasificaci|calendar|informaci|inicio|home/i.test(text)) {
+    if (text.length > 0 && text.length < 40 && !/clasificaci|calendar|informaci|inicio|home|seleccionar|competiciones|competición/i.test(text)) {
       return text;
     }
   }
@@ -1437,7 +1451,15 @@ function guessPhaseTitle(url = '', html = '') {
       .replace(/clasificaci[oó]n/i, '')
       .replace(/calendar[ií]o/i, '')
       .trim();
-    if (text.length > 1 && text.length < 50) return text;
+    if (text.length > 1 && text.length < 50 && !/seleccionar|competiciones|competición/i.test(text)) {
+      return text;
+    }
+  }
+
+  // 4. Último fallback: Si encontramos las palabras "Grupo A" en el texto, usamos eso.
+  const allText = getTextContent(dom);
+  if (/\bgrupo\s+a\b/i.test(allText)) {
+     return 'Grupo A';
   }
 
   return 'Fase Regular';
