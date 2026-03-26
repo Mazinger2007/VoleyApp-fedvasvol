@@ -3,6 +3,7 @@
 // Muestra: hero con escudo, stats, próximos y partidos jugados.
 
 import React, { useEffect, useMemo, useState } from 'react';
+import { getTeamColor, getClubBaseName } from '../constants/teamColors';
 import {
   View,
   Text,
@@ -60,24 +61,41 @@ function normalizeTeamName(value = '') {
 function parseScorePair(match = {}) {
   const homeRaw = match?.homeScore ?? match?.matchScore?.home;
   const awayRaw = match?.awayScore ?? match?.matchScore?.away;
-  const home = Number(homeRaw);
-  const away = Number(awayRaw);
+  let home = Number(homeRaw);
+  let away = Number(awayRaw);
+
+  if (!Number.isFinite(home) || !Number.isFinite(away)) {
+    // Try to parse from scoreText if available
+    const scoreText = match?.scoreText || '';
+    const matchScore = scoreText.match(/(\d+)\s*-\s*(\d+)/);
+    if (matchScore) {
+      home = Number(matchScore[1]);
+      away = Number(matchScore[2]);
+    }
+  }
+
   if (!Number.isFinite(home) || !Number.isFinite(away)) return null;
   return { home, away };
 }
 
 function sumTeamPointsFromCalendarBlocks(blocks = [], teamName = '') {
-  const normalizedTeam = normalizeTeamName(teamName);
-  if (!normalizedTeam) return 0;
+  const norm = normalizeTeamName(teamName);
+  const clubBase = getClubBaseName(teamName);
+  if (!norm) return 0;
   const tables = (blocks || []).filter((block) => block.type === 'table');
   return tables.reduce((acc, table) => {
     const matches = table?.matches || [];
     return acc + matches.reduce((sum, match) => {
       const homeName = normalizeTeamName(match?.homeTeam || '');
       const awayName = normalizeTeamName(match?.awayTeam || '');
-      const isHome = homeName === normalizedTeam;
-      const isAway = awayName === normalizedTeam;
+      const homeClub = getClubBaseName(match?.homeTeam || '');
+      const awayClub = getClubBaseName(match?.awayTeam || '');
+
+      const isHome = homeName === norm || (clubBase && homeClub === clubBase);
+      const isAway = awayName === norm || (clubBase && awayClub === clubBase);
+
       if (!isHome && !isAway) return sum;
+
       const sets = Array.isArray(match?.sets) ? match.sets : [];
       const fromSets = sets.reduce((setTotal, setItem) => {
         const homeSet = Number(setItem?.home);
@@ -86,6 +104,7 @@ function sumTeamPointsFromCalendarBlocks(blocks = [], teamName = '') {
         return setTotal + (isHome ? homeSet : awaySet);
       }, 0);
       if (fromSets > 0) return sum + fromSets;
+
       const score = parseScorePair(match);
       if (!score) return sum;
       return sum + (isHome ? score.home : score.away);
@@ -93,17 +112,62 @@ function sumTeamPointsFromCalendarBlocks(blocks = [], teamName = '') {
   }, 0);
 }
 
+function sumSetsFromMatches(matches = [], teamName = '', type = 'for') {
+  const norm = normalizeTeamName(teamName);
+  const clubBase = getClubBaseName(teamName);
+  return matches.reduce((acc, m) => {
+    const summary = getMatchSummary(m);
+    const hBase = getClubBaseName(summary.homeTeam);
+    const aBase = getClubBaseName(summary.awayTeam);
+    const isHome = normalizeTeamName(summary.homeTeam) === norm || (clubBase && hBase === clubBase);
+    const isAway = normalizeTeamName(summary.awayTeam) === norm || (clubBase && aBase === clubBase);
+    if (!isHome && !isAway) return acc;
+
+    const sets = summary.sets || [];
+    let setsFor = 0, setsAgainst = 0;
+    if (sets.length > 0) {
+      sets.forEach(s => {
+        const homeS = Number(s.home || 0);
+        const awayS = Number(s.away || 0);
+        if (isHome) {
+          if (homeS > awayS) setsFor++;
+          else if (awayS > homeS) setsAgainst++;
+        } else {
+          if (awayS > homeS) setsFor++;
+          else if (homeS > awayS) setsAgainst++;
+        }
+      });
+    } else {
+      // Fallback a set scores (matchScore)
+      const homeScore = Number(summary.homeScore || 0);
+      const awayScore = Number(summary.awayScore || 0);
+      if (isHome) {
+        setsFor = homeScore;
+        setsAgainst = awayScore;
+      } else {
+        setsFor = awayScore;
+        setsAgainst = homeScore;
+      }
+    }
+    return acc + (type === 'for' ? setsFor : setsAgainst);
+  }, 0);
+}
+
 // Calculate win/loss/draw from played matches for a team
 function calcRecord(matches = [], teamName = '') {
   const norm = normalizeTeamName(teamName);
+  const baseName = getClubBaseName(teamName);
   let wins = 0, losses = 0;
   matches.forEach(m => {
     const summary = getMatchSummary(m);
     if (summary.state !== 'finished') return;
     const homeNorm = normalizeTeamName(summary.homeTeam || '');
     const awayNorm = normalizeTeamName(summary.awayTeam || '');
-    const isHome = homeNorm === norm;
-    const isAway = awayNorm === norm;
+    const hBase = getClubBaseName(summary.homeTeam || '');
+    const aBase = getClubBaseName(summary.awayTeam || '');
+    const isHome = homeNorm === norm || (baseName && hBase === baseName);
+    const isAway = awayNorm === norm || (baseName && aBase === baseName);
+
     if (!isHome && !isAway) return;
     const score = parseScorePair(m);
     if (!score) return;
@@ -161,15 +225,36 @@ export default function TeamDetailScreen({ route, navigation }) {
   const {
     teamName = '',
     teamUrl,
-    teamLogo,
+    teamLogo: teamLogoFromRoute,
     tournamentTitle,
     leagueStats: leagueStatsFromRoute,
-    pointsScoredTotal,
     calendarUrl,
   } = route.params || {};
 
+  const teamBaseName = useMemo(() => getClubBaseName(teamName) || teamName, [teamName]);
+
   const { blocks, loading, error, refresh } = useFetch(teamUrl || null);
   const { blocks: calendarBlocks } = useFetch(calendarUrl || null);
+
+  const teamLogoResolved = useMemo(() => {
+    if (blocks && blocks.length > 0) {
+      for (const block of blocks) {
+        if (block.matches) {
+          for (const match of block.matches) {
+            const hBase = getClubBaseName(match.homeTeam);
+            const aBase = getClubBaseName(match.awayTeam);
+            if ((match.homeTeam === teamName || (hBase && hBase === teamBaseName)) && match.homeLogo) return match.homeLogo;
+            if ((match.awayTeam === teamName || (aBase && aBase === teamBaseName)) && match.awayLogo) return match.awayLogo;
+          }
+        }
+      }
+    }
+    return teamLogoFromRoute;
+  }, [blocks, teamName, teamBaseName, teamLogoFromRoute]);
+
+  // Extraer las nuevas secciones desde los bloques parseados
+  const competitions = useMemo(() => blocks.find(b => b.type === 'competitions')?.items || [], [blocks]);
+  const equipaciones = useMemo(() => blocks.find(b => b.type === 'equipaciones')?.items || [], [blocks]);
 
   useEffect(() => {
     if (blocks && blocks.length > 0) {
@@ -189,7 +274,7 @@ export default function TeamDetailScreen({ route, navigation }) {
   const [logoError, setLogoError] = useState(false);
 
   const initials = useMemo(() => getInitials(teamName), [teamName]);
-  const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogo), [teamLogo]);
+  const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogoResolved), [teamLogoResolved]);
   const teamLogoUri = useMemo(() => teamLogoCandidates[0] || null, [teamLogoCandidates]);
 
   // Extract dominant accent color from logo
@@ -204,7 +289,8 @@ export default function TeamDetailScreen({ route, navigation }) {
     return () => { mounted = false; };
   }, [teamLogoUri]);
 
-  const heroAccent = accentColor || Colors.primary;
+  const manualColor = useMemo(() => getTeamColor(teamName), [teamName]);
+  const heroAccent = manualColor !== '#001f3d' ? manualColor : (accentColor || Colors.primary);
 
   const pointsFromCalendar = useMemo(
     () => sumTeamPointsFromCalendarBlocks(calendarBlocks, teamName),
@@ -214,8 +300,8 @@ export default function TeamDetailScreen({ route, navigation }) {
   const leagueStats = useMemo(() => ({
     position: leagueStatsFromRoute?.position ?? '—',
     played: leagueStatsFromRoute?.played ?? '—',
-    pointsScored: Number.isFinite(pointsScoredTotal) ? pointsScoredTotal : (pointsFromCalendar || '—'),
-  }), [leagueStatsFromRoute, pointsScoredTotal, pointsFromCalendar]);
+    pointsScored: pointsFromCalendar || '—',
+  }), [leagueStatsFromRoute, pointsFromCalendar]);
 
   const { statsTable, matchTables, otherTables } = useMemo(() => {
     let stats = null;
@@ -241,7 +327,7 @@ export default function TeamDetailScreen({ route, navigation }) {
   const teamMatches = useMemo(() => {
     const list = [];
     const norm = normalizeTeamName(teamName);
-    
+
     // De las tablas propias de la página de Resumen de equipo
     matchTables.forEach(b => {
       if (Array.isArray(b.matches) && b.matches.length > 0) {
@@ -255,9 +341,14 @@ export default function TeamDetailScreen({ route, navigation }) {
     (calendarBlocks || []).forEach(b => {
       if (b.type === 'table' && Array.isArray(b.matches)) {
         b.matches.forEach(m => {
-          if (normalizeTeamName(m.homeTeam) === norm || normalizeTeamName(m.awayTeam) === norm) {
+          const hBase = getClubBaseName(m.homeTeam);
+          const aBase = getClubBaseName(m.awayTeam);
+          const isHome = normalizeTeamName(m.homeTeam) === norm || (teamBaseName && hBase === teamBaseName);
+          const isAway = normalizeTeamName(m.awayTeam) === norm || (teamBaseName && aBase === teamBaseName);
+
+          if (isHome || isAway) {
             // Evitar duplicados
-            const alreadyAdded = list.some(existing => 
+            const alreadyAdded = list.some(existing =>
               (existing.homeTeam === m.homeTeam && existing.awayTeam === m.awayTeam && existing.rawDate === m.rawDate) ||
               (existing.matchScore?.home === m.matchScore?.home && existing.homeTeam === m.homeTeam)
             );
@@ -277,7 +368,8 @@ export default function TeamDetailScreen({ route, navigation }) {
       const summary = getMatchSummary(m);
       const dateObj = parseMatchDateTime(summary.rawDate);
       const ts = dateObj ? dateObj.getTime() : 0;
-      return { match: m, ts, state: summary.state };
+      // UNIFICAR: Asegurar que el objeto match tenga los campos de summary
+      return { match: { ...m, ...summary }, ts, state: summary.state };
     });
 
     const upcoming = withSummary
@@ -297,7 +389,7 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   // -- NEW STATS EXTRACTION FROM AJAX TABS --
   const officialStats = useMemo(() => {
-    let pts = null, played = null, wins = null, losses = null;
+    let pts = null, played = null, wins = null, losses = null, setsFor = null, setsAgainst = null;
     if (statsTable?.rows) {
       statsTable.rows.forEach(r => {
         const key = String(r[0] || '').toLowerCase();
@@ -306,15 +398,20 @@ export default function TeamDetailScreen({ route, navigation }) {
         if (key.includes('jugados')) played = val;
         if (key.includes('ganados')) wins = val;
         if (key.includes('perdidos')) losses = val;
+        if (key.includes('favor') && key.includes('sets')) setsFor = val;
+        if (key.includes('contra') && key.includes('sets')) setsAgainst = val;
       });
     }
-    return { pts, played, wins, losses };
+    return { pts, played, wins, losses, setsFor, setsAgainst };
   }, [statsTable]);
 
   // Prioritize official stats over computed ones
   const finalPoints = officialStats.pts ?? leagueStats.pointsScored;
   const finalPlayed = officialStats.played ?? leagueStats.played;
   const finalWins = officialStats.wins ?? record.wins;
+  const finalLosses = officialStats.losses ?? record.losses;
+  const finalSetsFor = officialStats.setsFor ?? sumSetsFromMatches(playedMatches, teamName, 'for');
+  const finalSetsAgainst = officialStats.setsAgainst ?? sumSetsFromMatches(playedMatches, teamName, 'against');
 
   if (loading) return <LoadingView variant="clean" message={`Cargando ${teamName}…`} />;
 
@@ -359,7 +456,7 @@ export default function TeamDetailScreen({ route, navigation }) {
         <View style={{ position: 'relative', overflow: 'hidden', borderRadius: Radius.xl, backgroundColor: heroAccent, padding: 32, marginHorizontal: 16, marginTop: error ? 16 : 24, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 20 }}>
           {/* Background icon */}
           <MaterialIcons name="sports-volleyball" size={200} color="#ffffff" style={{ position: 'absolute', top: 0, right: '-10%', opacity: 0.1, transform: [{ rotate: '-12deg' }] }} />
-          
+
           <View style={{ alignItems: 'center', zIndex: 10 }}>
             {/* Logo */}
             <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: '#ffffff', padding: 4, marginBottom: 16, borderWidth: 4, borderColor: 'rgba(255,255,255,0.2)' }}>
@@ -388,27 +485,27 @@ export default function TeamDetailScreen({ route, navigation }) {
                 <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#ffffff', textTransform: 'uppercase', letterSpacing: 1 }}>Activo</Text>
               </View>
             </View>
-            
+
             {/* Season Stats Bento Row */}
             <View style={{ flexDirection: 'row', width: '100%', gap: 12 }}>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
                 <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Puntos</Text>
                 <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalPoints}</Text>
               </View>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
                 <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Ganados</Text>
                 <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalWins}</Text>
               </View>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
-                <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Jugados</Text>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalPlayed}</Text>
+              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
+                <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Sets +</Text>
+                <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalSetsFor}</Text>
               </View>
             </View>
           </View>
         </View>
 
         {/* ── Next Match ── */}
-        {upcomingMatches.length > 0 && (
+        {upcomingMatches.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
             <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximo Partido</Text>
             <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 24, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderLeftWidth: 4, borderLeftColor: heroAccent, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 }}>
@@ -427,7 +524,7 @@ export default function TeamDetailScreen({ route, navigation }) {
                 {/* VS */}
                 <View style={{ alignItems: 'center', gap: 4 }}>
                   <Text style={{ fontSize: 10, fontWeight: '900', color: heroAccent, backgroundColor: heroAccent + '15', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>VS</Text>
-                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted }}>{(upcomingMatches[0].dateTime || '').split('T')[1]?.substring(0,5) || 'TBD'}</Text>
+                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted }}>{upcomingMatches[0].time || 'TBD'}</Text>
                 </View>
                 {/* Away Team */}
                 <View style={{ flex: 1, alignItems: 'center' }}>
@@ -444,7 +541,7 @@ export default function TeamDetailScreen({ route, navigation }) {
               <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: isDark ? '#2f3033' : '#f8fafc', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <MaterialIcons name="calendar-today" size={14} color={Colors.textMuted} />
-                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted, letterSpacing: 0.5 }}>{getMatchSummary(upcomingMatches[0]).formattedDate || 'Fecha por confirmar'}</Text>
+                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted, letterSpacing: 0.5 }}>{upcomingMatches[0].dateLabel || 'Fecha por confirmar'}</Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                   <MaterialIcons name="location-pin" size={16} color={Colors.textMuted} />
@@ -453,20 +550,86 @@ export default function TeamDetailScreen({ route, navigation }) {
               </View>
             </View>
           </View>
+        ) : (
+          <View style={{ paddingHorizontal: 16, paddingTop: 24, }}>
+            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximo Partido</Text>
+            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 32, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed' }}>
+              <MaterialIcons name="event-busy" size={32} color={Colors.textMuted} style={{ opacity: 0.5, marginBottom: 8 }} />
+              <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textMuted, textAlign: 'center' }}>No hay partidos próximos programados</Text>
+            </View>
+          </View>
         )}
 
+        {/* ── Detailed Stats Table ── */}
+        <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
+          <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 }}>
+            <View style={{ paddingHorizontal: 24, paddingVertical: 16, backgroundColor: isDark ? '#1e293b' : '#f8fafc', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', letterSpacing: 1.5, color: heroAccent, textTransform: 'uppercase' }}>Estadísticas de Temporada</Text>
+              <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted }}>{tournamentTitle ? 'ACTUAL' : ''}</Text>
+            </View>
+            <View style={{ padding: 24, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 16 }}>
+              {[
+                { label: 'Jugados', value: finalPlayed, color: Colors.textPrimary },
+                { label: 'Ganados', value: finalWins, color: Colors.textPrimary },
+                { label: 'Perdidos', value: finalLosses, color: Colors.textPrimary },
+                { label: 'Puntos', value: finalPoints, color: Colors.textPrimary },
+                { label: 'A favor', value: finalSetsFor, color: '#22c55e' },
+                { label: 'En contra', value: finalSetsAgainst, color: '#ef4444' },
+              ].map((stat, i) => (
+                <View key={`stat-${i}`} style={{ width: '45%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', borderBottomWidth: 1, borderBottomColor: isDark ? '#2f3033' : '#f8fafc', paddingBottom: 8 }}>
+                  <Text style={{ fontSize: 12, fontWeight: '500', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: -0.5 }}>{stat.label}</Text>
+                  <Text style={{ fontSize: 18, fontWeight: '900', color: stat.color }}>{stat.value}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+
         {/* ── Competiciones ── */}
-        {tournamentTitle && (
+        <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
+          <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
+          <View style={{ gap: 8 }}>
+            {competitions && competitions.length > 0 ? (
+              competitions.map((comp, idx) => (
+                <View key={`comp-${idx}`} style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
+                  <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
+                    <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{comp.title || comp.name}</Text>
+                    <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>{comp.season || 'Temporada Actual'}</Text>
+                  </View>
+                </View>
+              ))
+            ) : tournamentTitle ? (
+              <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
+                <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
+                  <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{tournamentTitle}</Text>
+                  <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>Temporada Actual</Text>
+                </View>
+              </View>
+            ) : null}
+          </View>
+        </View>
+
+        {/* ── Equipaciones Section ── */}
+        {equipaciones && equipaciones.length > 0 && (
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
-            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
-            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-              <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
-                <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{tournamentTitle}</Text>
-                <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>Temporada Actual</Text>
-              </View>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              {equipaciones.map((eq, idx) => (
+                <View key={`eq-${idx}`} style={{ flex: 1, backgroundColor: isDark ? Colors.surface : '#ffffff', padding: 16, borderRadius: Radius.xl, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderTopWidth: 4, borderTopColor: eq.hexColor || heroAccent, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                    <MaterialIcons name="checkroom" size={20} color={eq.hexColor || heroAccent} />
+                    <Text style={{ fontSize: 10, fontWeight: '900', uppercase: true, letterSpacing: 1.5, color: Colors.textPrimary }}>Equipación {idx + 1}</Text>
+                  </View>
+                  <View style={{ height: 64, width: '100%', backgroundColor: eq.hexColor ? `${eq.hexColor}15` : Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: eq.hexColor ? `${eq.hexColor}30` : Colors.border }}>
+                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: eq.hexColor || heroAccent, textTransform: 'uppercase' }}>{eq.colorName || 'Desconocido'}</Text>
+                  </View>
+                </View>
+              ))}
             </View>
           </View>
         )}
@@ -475,14 +638,16 @@ export default function TeamDetailScreen({ route, navigation }) {
         {playedMatches.length > 0 && (
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
             <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Últimos Resultados</Text>
-            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', overflow: 'hidden' }}>
+            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', overflow: 'hidden', elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
               {playedMatches.slice(0, 5).map((m, i) => {
                 const norm = normalizeTeamName(teamName);
-                const isHome = normalizeTeamName(m.homeTeam) === norm;
+                const clubBase = getClubBaseName(teamName);
+                const hBase = getClubBaseName(m.homeTeam);
+                const isHome = normalizeTeamName(m.homeTeam) === norm || (clubBase && hBase === clubBase);
                 const score = parseScorePair(m);
                 const isWin = score ? (isHome ? score.home > score.away : score.away > score.home) : false;
                 const opponent = isHome ? m.awayTeam : m.homeTeam;
-                
+
                 return (
                   <View key={`last-res-${i}`} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: i < 4 && i < playedMatches.length - 1 ? 1 : 0, borderBottomColor: isDark ? '#2f3033' : '#f8fafc' }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
@@ -490,7 +655,7 @@ export default function TeamDetailScreen({ route, navigation }) {
                       <Text style={{ fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase', color: Colors.textSecondary, flexShrink: 1 }} numberOfLines={1}>vs {opponent}</Text>
                     </View>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-                      <Text style={{ fontSize: 18, fontWeight: '900', color: heroAccent, letterSpacing: -1 }}>
+                      <Text style={{ fontSize: 18, fontWeight: '900', color: Colors.textPrimary, letterSpacing: -1 }}>
                         {score ? (isHome ? `${score.home} - ${score.away}` : `${score.away} - ${score.home}`) : m.scoreText}
                       </Text>
                       <View style={{ backgroundColor: isWin ? '#dcfce7' : '#fee2e2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>

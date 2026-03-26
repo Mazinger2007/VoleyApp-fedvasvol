@@ -6,14 +6,22 @@
     "jsEngine": "jsc",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/Logo.png",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.personal.voleibolvizcaya"
     },
     "android": {
-      "package": "com.personal.voleibolvizcaya"
+      "package": "com.personal.voleibolvizcaya",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/Logo.png",
+        "backgroundColor": "#FFFFFF"
+      }
     },
     "scheme": "voleibolvizcaya",
+    "web": {
+      "favicon": "./assets/Logo.png"
+    },
     "plugins": [
       "expo-font",
       [

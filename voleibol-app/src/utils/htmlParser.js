@@ -210,7 +210,7 @@ function extractSelectedSeasonLabel(html = '') {
 function extractAllSeasons(html = '') {
   const selectMatch = String(html || '').match(/<select[^>]*name="season"[\s\S]*?>([\s\S]*?)<\/select>/i);
   if (!selectMatch) return [];
-  
+
   const options = [...selectMatch[1].matchAll(/<option[^>]*value="([^"]*)"[^>]*>([\s\S]*?)<\/option>/gi)];
   return options.map(m => ({
     value: m[1],
@@ -341,7 +341,7 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
 
     const elapsed = Date.now() - start;
     const contentLength = response.data?.content?.length || 0;
-    
+
 
     return extractHtmlFromAjaxData(response.data);
   } catch (error) {
@@ -406,7 +406,7 @@ async function fetchTournamentContext(inputUrl = '') {
     // Pre-warm calendar context in the background so clicking Calendar tab
     // is fast (only the AJAX call needed, ~400ms instead of ~1800ms).
     if (context.calendarUrl) {
-      prefetchCalendarContext(context.calendarUrl).catch(() => {});
+      prefetchCalendarContext(context.calendarUrl).catch(() => { });
     }
 
     return context;
@@ -568,7 +568,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
 async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
   const tournamentsUrl = toAbsoluteUrl(inputUrl || URLS.home);
-  
+
   // Extract season from URL if present (e.g. ?season=XXXX)
   const urlObj = new URL(tournamentsUrl);
   const requestedSeason = urlObj.searchParams.get('season');
@@ -623,9 +623,9 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
     const ajaxHtml = extractHtmlFromAjaxData(response.data);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
     const metadataBlocks = (context.contextBlocks || []).filter((block) => block.type !== 'table');
-    
+
     // Inyectamos un bloque especial de metadatos con las temporadas si existen
-    const seasonMetadata = context.allSeasons?.length > 0 
+    const seasonMetadata = context.allSeasons?.length > 0
       ? [{ type: 'seasons', items: context.allSeasons, current: seasonToFetch }]
       : [];
 
@@ -698,15 +698,15 @@ const INLINE_TAGS = new Set([
 // ─── Descarga el HTML de una URL y lo devuelve como string ──────────────────
 export async function fetchHTML(url) {
   const start = Date.now();
-  
+
   try {
     const response = await axios.get(url, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
     });
-    
+
     const html = typeof response.data === 'string' ? response.data : '';
-    
+
     // Detectar si la temporada se está configurando
     if (
       /esta temporada se est[áa] configurando/i.test(html) ||
@@ -829,8 +829,8 @@ export function domToBlocks(node, blocks = []) {
       const absHref = toAbsoluteUrl(href);
       // Regex más amplia para capturar rutas de torneos independientemente del idioma (/es/ o /en/)
       const isTournamentRoute = /\/(?:es|en)\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref) ||
-                                /\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref);
-      
+        /\/tournament\/\d+\/(ranking|calendar|summary|information)(?:\/\d+)?/i.test(absHref);
+
       if ((text.length > 1 || isTournamentRoute) && href && !href.startsWith('#')) {
         blocks.push({
           type: 'link',
@@ -866,10 +866,10 @@ function parseTable(tableNode) {
 
   // Exclude player/roster information entirely
   const hStr = headers.join(' ').toLowerCase();
-  const isPlayerTable = /(jugador|dorsal\b|altura|año de nac|peso\b)/i.test(hStr) && 
-                        !/(local|visitante|jornada|fecha|resultado)/i.test(hStr) &&
-                        !/(puntos|partidos|sets)/i.test(hStr);
-                        
+  const isPlayerTable = /(jugador|dorsal\b|altura|año de nac|peso\b)/i.test(hStr) &&
+    !/(local|visitante|jornada|fecha|resultado)/i.test(hStr) &&
+    !/(puntos|partidos|sets)/i.test(hStr);
+
   if (isPlayerTable) {
     return null;
   }
@@ -905,46 +905,6 @@ function parseTable(tableNode) {
   );
 
   if (headers.length === 0 && filteredRows.length === 0) return null;
-
-  // Nuevo log para logos cargados
-  try {
-    // Detectar si la tabla es solo de info/metadata (no partidos ni equipos)
-    const infoHeaders = [
-      'estado','nombre','modalidad','temporada','categoría','sexo','dirección','organiza','federación','participantes','equipos','grupo','año','registered','start date','end date','category','sport','gender','federation','organizer','teams','group','year'
-    ];
-    const lowerHeaders = headers.map(h => h.trim().toLowerCase());
-    const isInfoTable = lowerHeaders.every(h => infoHeaders.includes(h));
-    if (isInfoTable) return {
-      type: 'table',
-      headers,
-      rows: filteredRows.map((r) => r.cells),
-      rowLinks: filteredRows.map((r) => r.href),
-      rowImages: filteredRows.map((r) => r.image),
-      rowLogos: filteredRows.map((r) => r.image),
-      matches: filteredRows.map((r) => r.match).filter(Boolean),
-    };
-
-    const logos = filteredRows.map((r) => r.image).filter(Boolean);
-    let tipo = 'desconocido';
-    // Mejor heurística: más palabras clave
-    const headersStr = headers.join(' ').toLowerCase();
-    if (/jornada|clasificaci[oó]n|equipo|partido|fecha|puntos|local|visitante/.test(headersStr)) tipo = 'liga';
-    else if (/grupo|fase|eliminatoria|bracket|semifinal|final|torneo|cuadro|playoff/.test(headersStr)) tipo = 'torneo';
-    if (logos.length > 0) {
-      console.log(`logos cargados de ${tipo}`);
-    } else {
-      // Extra debug: muestra headers y todas las celdas de todas las filas
-      console.error(`error: no se cargaron logos de ${tipo}`);
-      console.error('headers:', headers);
-      if (filteredRows.length > 0) {
-        filteredRows.forEach((row, idx) => {
-          console.error(`fila ${idx}:`, row.cells);
-        });
-      }
-    }
-  } catch (e) {
-    console.error('error al loguear logos cargados:', e);
-  }
   return {
     type: 'table',
     headers,
@@ -973,7 +933,7 @@ function extractRowPrimaryImage(rowNode) {
 
   const candidates = DomUtils.findAll(
     (n) => n.type === 'tag' && (
-      n.name === 'img' || 
+      n.name === 'img' ||
       /\b(logo|escudo)\b/i.test(n.attribs?.class || '')
     ),
     rowNode.children || []
@@ -1263,7 +1223,7 @@ async function fetchTeamContextViaAjax(teamUrl) {
       .map((item) => String(item || '').split(';')[0].trim())
       .filter(Boolean)
       .join('; ');
-  } catch(e) {
+  } catch (e) {
     if (e.message === 'SEASON_CONFIGURING') throw e;
     console.error('Error en carga inicial de equipo:', e.message);
     return [];
@@ -1283,8 +1243,8 @@ async function fetchTeamContextViaAjax(teamUrl) {
   const mId = currentUrl.match(/\/team\/(\d+)/i)?.[1];
   if (!mId) return initialBlocks;
 
-  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information'];
-  
+  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information', 'competitions'];
+
   const extraHtmlPromises = tabsToFetch.map(async (tab) => {
     try {
       const resp = await axios.post(
@@ -1308,10 +1268,62 @@ async function fetchTeamContextViaAjax(teamUrl) {
   });
 
   const rawTabs = await Promise.all(extraHtmlPromises);
-  const extraHtml = rawTabs.join('\n\n<br>\n\n');
+  const infoHtml = rawTabs[3] || '';
+  const compHtml = rawTabs[4] || '';
+
+  // Parse HTML from the first 4 tabs normally to keep stats, matches, etc.
+  const extraHtml = rawTabs.slice(0, 4).join('\n\n<br>\n\n');
   const extraBlocks = parseBlocksFromHtml(extraHtml);
 
-  return [...initialBlocks, ...extraBlocks];
+  // -- EXTRAER COLORES DE EQUIPACIÓN DE 'information' --
+  const equipacionesExtracted = [];
+  const infoText = infoHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const matchColors = [...infoText.matchAll(/Equipaci[oó]n\s+(\d+)?\s*([a-zA-ZáéíóúÁÉÍÓÚñÑ]+)/gi)];
+  matchColors.forEach(m => {
+    const colorName = m[2].toUpperCase().trim();
+    if (colorName.length > 2 && !/^(SI|NO)$/i.test(colorName)) {
+      let hexColor = '#001f3d'; // fallback
+      const c = colorName.toLowerCase();
+      if (c.includes('roj')) hexColor = '#ef4444';
+      else if (c.includes('verd')) hexColor = '#22c55e';
+      else if (c.includes('azul')) hexColor = '#3b82f6';
+      else if (c.includes('blanc')) hexColor = '#e2e8f0';
+      else if (c.includes('negr')) hexColor = '#0f1923';
+      else if (c.includes('amarill')) hexColor = '#eab308';
+      else if (c.includes('naranj')) hexColor = '#f97316';
+
+      equipacionesExtracted.push({ colorName, hexColor });
+    }
+  });
+
+  // -- EXTRAER COMPETICIONES --
+  // Normally it is a list of links to tournaments, or text.
+  const compBlocks = parseBlocksFromHtml(compHtml);
+  let competitionsExtracted = compBlocks
+    .filter(b => b.type === 'link' && /\/tournament\//i.test(b.href))
+    .map(b => ({ title: b.content, href: b.href, season: 'Actual' }));
+
+  // Fallback si no hay links, buscamos encabezados o links puros en el html
+  if (competitionsExtracted.length === 0) {
+    const dom = parseHTML(compHtml);
+    const links = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
+    competitionsExtracted = links.map(l => ({
+      title: getTextContent(l).replace(/\s+/g, ' ').trim(),
+      href: toAbsoluteUrl(l.attribs?.href || ''),
+      season: 'Actual',
+    })).filter(c => c.title.length > 1 && /\/tournament\//i.test(c.href));
+  }
+
+  // Custom blocks that will be retrieved by useMemo in TeamDetailScreen
+  const customBlocks = [];
+  if (competitionsExtracted.length > 0) {
+    customBlocks.push({ type: 'competitions', items: competitionsExtracted });
+  }
+  if (equipacionesExtracted.length > 0) {
+    customBlocks.push({ type: 'equipaciones', items: equipacionesExtracted });
+  }
+
+  return [...initialBlocks, ...extraBlocks, ...customBlocks];
 }
 
 // ─── Función principal: URL → array de bloques listos para renderizar ─────────
@@ -1368,9 +1380,9 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
   // Atrapa tanto /ranking/ID como /ranking/ID/algo
   // Pero excluimos enlaces que parezcan navegación general (login, home, etc)
   const phasePattern = /\/tournament\/\d+\/ranking\/\d+/i;
-  
+
   const normalizedCurrent = toAbsoluteUrl(currentUrl).replace(/\/$/, '').toLowerCase();
-  
+
   const seenHrefs = new Set([normalizedCurrent]);
   const uniquePhases = [];
 
@@ -1378,7 +1390,7 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
     if (!l.href) return;
     const absHref = toAbsoluteUrl(l.href);
     if (!phasePattern.test(absHref) || /google|facebook|export|print|xls|pdf/i.test(absHref) || /exportar|imprimir/i.test(l.content || '')) return;
-    
+
     const norm = absHref.replace(/\/$/, '').toLowerCase();
     if (!seenHrefs.has(norm)) {
       seenHrefs.add(norm);
@@ -1398,10 +1410,10 @@ export function extractPhaseLinks(blocks = [], currentUrl = '') {
 export function extractAllPhases(url = '', html = '', blocks = []) {
   const currentTitle = guessPhaseTitle(url, html);
   const otherPhases = extractPhaseLinks(blocks, url);
-  
+
   // normalizar urls
   const currentUrlNorm = toAbsoluteUrl(url).replace(/\/$/, '').toLowerCase();
-  
+
   // Limpiar posibles duplicados
   const otherPhasesCleaned = otherPhases.filter(p => toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase() !== currentUrlNorm);
 
@@ -1582,7 +1594,7 @@ function guessPhaseTitle(url = '', html = '') {
   // 4. Último fallback: Si encontramos las palabras "Grupo A" en el texto, usamos eso.
   const allText = getTextContent(dom);
   if (/\bgrupo\s+a\b/i.test(allText)) {
-     return 'Grupo A';
+    return 'Grupo A';
   }
 
   return 'Fase Regular';
@@ -1598,13 +1610,13 @@ export async function fetchInfoData(infoUrl) {
 
   const html = await fetchHTML(infoUrl);
   const dom = parseHTML(html);
-  
+
   const results = [];
-  
+
   // 1. Búsqueda por estructura de rejilla (div.text-light-gray para etiquetas)
   const infoCols = DomUtils.findAll(
     (n) => n.type === 'tag' && (
-      /text-light-gray/i.test(getNodeClass(n)) || 
+      /text-light-gray/i.test(getNodeClass(n)) ||
       n.name === 'strong'
     ),
     dom.children,
@@ -1617,7 +1629,7 @@ export async function fetchInfoData(infoUrl) {
 
     // El valor suele ser el siguiente nodo de texto o el siguiente <div> hermano
     let valueStr = '';
-    
+
     // Si el labelNode es un strong dentro de un div, buscamos en el div hermano
     if (labelNode.name === 'strong') {
       const parentCol = DomUtils.findOne(n => /col-/i.test(getNodeClass(n)), [labelNode], true);
@@ -1663,7 +1675,7 @@ export async function fetchInfoData(infoUrl) {
       if (text.includes(':')) {
         value = text.substring(text.indexOf(':') + 1).trim();
       }
-      
+
       if (!value) {
         let next = tNode.next;
         while (next && !value) {
@@ -1689,7 +1701,7 @@ export async function fetchInfoData(infoUrl) {
 function parseBracketFromDom(dom) {
   const columns = [];
   const searchRoot = dom.children || [];
-  
+
   // Buscar contenedores de columnas (Clupik fullscreen usa bracket-column, otros usan bracket)
   let colNodes = DomUtils.findAll(
     (n) => n.type === 'tag' && /\bbracket-column\b/i.test(n.attribs?.class || ''),
@@ -1716,12 +1728,12 @@ function parseBracketFromDom(dom) {
         if (!phaseMap.has(ph)) phaseMap.set(ph, []);
         phaseMap.get(ph).push(m);
       });
-      
+
       const cols = Array.from(phaseMap.entries()).map(([ph, arr]) => ({
         header: ph,
         matches: arr
       }));
-      
+
       // Intentar ordenar cronológicamente
       const getWeight = (t) => {
         const lower = (t || '').toLowerCase();
@@ -1732,7 +1744,7 @@ function parseBracketFromDom(dom) {
         return 10;
       };
       cols.sort((a, b) => getWeight(a.header) - getWeight(b.header));
-      
+
       return { columns: cols };
     }
     // Fallback 2: Si hay al menos un partido (ej: Final), lo damos como bueno
@@ -1746,7 +1758,7 @@ function parseBracketFromDom(dom) {
     // Buscar cabecera de ronda
     const headerNode = DomUtils.findOne(n => /\bbracket-header\b/i.test(n.attribs?.class || ''), [colNode], true);
     let header = headerNode ? getTextContent(headerNode) : '';
-    
+
     const matches = findMatchBoxes([colNode]);
 
     // Si no hay cabecera explícita, buscar en la primera caja del bracket (bracket-data)
@@ -1787,15 +1799,15 @@ function findMatchBoxes(rootOrArray) {
       if (n.type !== 'tag') return false;
       const cls = (n.attribs?.class || '').toLowerCase();
       const style = n.attribs?.style || '';
-      
+
       // 1. Clase explícita de Clupik
       if (/\b(match-box|box|match-data|bracket-data)\b/.test(cls)) return true;
-      
+
       // 2. Heurística de contenido: 2 enlaces a equipo + 1 enlace a partido
       const links = DomUtils.findAll(c => c.name === 'a', [n], true);
       const teamLinks = links.filter(l => /\b(team|equipo)\b/i.test(l.attribs?.class || '') || /\/team\//i.test(l.attribs?.href || ''));
       const matchLinks = links.filter(l => /\bmatch\b/i.test(l.attribs?.class || '') || /\/match\//i.test(l.attribs?.href || ''));
-      
+
       if (teamLinks.length === 2 && matchLinks.length >= 1) return true;
 
       // 3. Nodos con data-match
@@ -1814,7 +1826,7 @@ function findMatchBoxes(rootOrArray) {
     // Equipos: links con clase 'team/equipo', data-team, o ruta /team/
     const teamNodes = DomUtils.findAll(
       n => n.type === 'tag' && n.name === 'a' && (
-        /\b(team|equipo|club)\b/i.test(n.attribs?.class || '') || 
+        /\b(team|equipo|club)\b/i.test(n.attribs?.class || '') ||
         /\/team\//i.test(n.attribs?.href || '') ||
         'data-team' in (n.attribs || {})
       ),
@@ -1825,7 +1837,7 @@ function findMatchBoxes(rootOrArray) {
     // Marcador: links con clase 'match', data-match, o ruta /match/
     const matchLinkNode = DomUtils.findOne(
       n => n.type === 'tag' && n.name === 'a' && (
-        /\bmatch\b/i.test(n.attribs?.class || '') || 
+        /\bmatch\b/i.test(n.attribs?.class || '') ||
         /\/match\//i.test(n.attribs?.href || '') ||
         'data-match' in (n.attribs || {})
       ) && !/\b(team|equipo|club)\b/i.test(n.attribs?.class || ''),
@@ -1873,7 +1885,7 @@ function findMatchBoxes(rootOrArray) {
       const vals = scoreSpans
         .map(s => getTextContent(s).replace(/\s+/g, '').replace(/[‐\-–—]/g, '-'))
         .filter(s => s === '-' || /^\d+$/.test(s));
-      
+
       if (vals.length >= 2) scoreText = `${vals[0]} - ${vals[1]}`;
       else if (vals.length === 1) scoreText = vals[0];
       else {
