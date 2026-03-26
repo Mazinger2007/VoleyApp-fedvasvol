@@ -34,7 +34,7 @@ export default function InfoScreen({ route, navigation }) {
         const url = toInfoUrl(tournamentUrl);
         const data = await fetchInfoData(url);
         setInfo(data);
-      } catch (err) {
+      } catch (error) {
         setError('No se pudo cargar la información del torneo.');
       } finally {
         setLoading(false);

@@ -9,7 +9,6 @@ import {
   useWindowDimensions,
   Platform,
   RefreshControl,
-  InteractionManager,
   ActivityIndicator,
 } from 'react-native';
 import { Image } from 'expo-image';
@@ -164,10 +163,12 @@ export default function JornadaDetailScreen({ route, navigation }) {
   const [renderReady, setRenderReady] = useState(false);
 
   useEffect(() => {
-    const handle = InteractionManager.runAfterInteractions(() => {
+    // Reemplazamos InteractionManager (deprecado) por un pequeño timeout
+    // para asegurar que las animaciones de transición terminen antes de renderizar la lista pesada
+    const handle = setTimeout(() => {
       setRenderReady(true);
-    });
-    return () => handle.cancel();
+    }, 50);
+    return () => clearTimeout(handle);
   }, []);
 
   const onRefresh = useCallback(async () => {
@@ -192,8 +193,8 @@ export default function JornadaDetailScreen({ route, navigation }) {
       if (newBlock) {
         setCurrentTableBlock(newBlock);
       }
-    } catch (err) {
-      console.error('Error refreshing jornada:', err);
+    } catch (error) {
+      console.error('Error refreshing jornada:', error);
     } finally {
       setRefreshing(false);
     }

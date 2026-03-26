@@ -83,7 +83,7 @@ export default function SettingsScreen() {
         message: 'La caché se ha vaciado correctamente.',
         type: 'success'
       });
-    } catch (err) {
+    } catch (error) {
       setStatusModal({
         visible: true,
         title: 'Error',
@@ -359,7 +359,7 @@ export default function SettingsScreen() {
             <View style={styles.legalBlock}>
               <Text style={styles.legalTitle}>Descargo de Responsabilidad</Text>
               <Text style={[styles.textBody, { fontStyle: 'italic' }]}>
-                Esta aplicación no es oficial y no tiene afiliación comercial con la federación. Se exime de toda responsabilidad legal derivada del uso de la información mostrada.
+                Esta aplicación no es oficial y no tiene afiliación comercial con la federación. Se exime de toda responsabilidad legal derivada del uso de la información mostrada. Esta aplicación es un proyecto independiente de código abierto distribuido bajo la licencia GNU GPL v3. El código fuente está disponible para su consulta y mejora, garantizando que el trabajo realizado para la comunidad del voleibol permanezca siempre accesible y transparente.
               </Text>
             </View>
           </Animated.View>

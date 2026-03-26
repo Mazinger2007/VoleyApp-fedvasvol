@@ -106,16 +106,10 @@ export default function MatchesScreen({ navigation }) {
     };
   }, [tournamentTable, search, activeFilter]);
 
-  const handleOpenLeague = (url, leagueName, tipo) => {
-    if (tipo === 'torneo') {
-      openTournamentDetail(navigation, { href: url, name: leagueName, isTorneo: true }, {
-        season: selectedSeason,
-      });
-    } else {
-      openTournamentDetail(navigation, { href: url, name: leagueName }, {
-        season: selectedSeason,
-      });
-    }
+  const handleOpenLeague = (url, leagueName) => {
+    openTournamentDetail(navigation, { href: url, name: leagueName }, {
+      season: selectedSeason,
+    });
   };
 
   const styles = useMemo(() => StyleSheet.create({

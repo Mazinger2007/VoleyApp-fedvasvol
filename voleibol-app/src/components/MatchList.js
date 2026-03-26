@@ -256,6 +256,8 @@ export function getMatchSummary(match = {}) {
     awayTeam: awayTeam || 'Visitante',
     homeLogo: match.homeLogo || null,
     awayLogo: match.awayLogo || null,
+    homeUrl: match.homeUrl || null,
+    awayUrl: match.awayUrl || null,
     time,
     venue: venue || 'Sede por confirmar',
     state,

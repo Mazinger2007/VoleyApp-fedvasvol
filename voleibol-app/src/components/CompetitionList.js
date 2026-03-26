@@ -1,27 +1,15 @@
-import React, { memo, useMemo, useState } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Platform } from 'react-native';
-import { Image } from 'expo-image';
+import React, { memo, useMemo, useState, useEffect, useCallback } from 'react';
+import { View, Text, FlatList, TouchableOpacity, Image, Platform, ActivityIndicator } from 'react-native';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
 import { toRankingUrl } from '../utils/htmlParser';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const LeagueShields = memo(function LeagueShields({ rankingUrl, blocks, isDark, isConfiguring }) {
+const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfiguring }) {
   const [imageErrs, setImageErrs] = useState({});
-  const [storedLogos, setStoredLogos] = useState([]);
 
-  React.useEffect(() => {
-    if (!rankingUrl) return;
-    AsyncStorage.getItem(`shields_${rankingUrl}`).then(data => {
-      if (data) {
-        try { setStoredLogos(JSON.parse(data)); } catch(e) {}
-      }
-    }).catch(() => {});
-  }, [rankingUrl]);
-
-  const liveLogos = useMemo(() => {
+  const logosData = useMemo(() => {
     if (!blocks || blocks.length === 0) return [];
 
     // First, try to find logos in a standard table
@@ -75,22 +63,14 @@ const LeagueShields = memo(function LeagueShields({ rankingUrl, blocks, isDark, 
     return [];
   }, [blocks]);
 
-  React.useEffect(() => {
-    if (liveLogos.length > 0 && rankingUrl) {
-      AsyncStorage.setItem(`shields_${rankingUrl}`, JSON.stringify(liveLogos)).catch(() => {});
-    }
-  }, [liveLogos, rankingUrl]);
-
   if (isConfiguring) {
     return <DefaultShields isDark={isDark} />;
   }
 
-  const activeLogos = liveLogos.length > 0 ? liveLogos : storedLogos;
-
-  if (activeLogos.length > 0) {
+  if (logosData.length > 0) {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
-        {activeLogos.map((logo, idx) => (
+        {logosData.map((logo, idx) => (
           <View key={idx} style={{
             width: 32, height: 32, borderRadius: 16,
             borderWidth: 2, borderColor: isDark ? '#1e293b' : '#ffffff',
@@ -103,8 +83,7 @@ const LeagueShields = memo(function LeagueShields({ rankingUrl, blocks, isDark, 
               source={{ uri: imageErrs[idx] ? logo.fallbackUrl : logo.url }}
               onError={() => setImageErrs(p => ({ ...p, [idx]: true }))}
               style={{ width: '95%', height: '95%' }}
-              contentFit="contain"
-              transition={150}
+              resizeMode="contain"
             />
           </View>
         ))}
@@ -166,7 +145,7 @@ function isActive(status) {
   return s.includes('curso') || s.includes('activ') || s.includes('en juego');
 }
 
-function CompetitionCard({ item, blocks, rankingUrl, onPress }) {
+function CompetitionCard({ item, blocks, onPress }) {
   const { colors: Colors, isDark } = useTheme();
   const { name, status, season, category, sex, teamCount, organizer, logo } = item;
   const active = isActive(status);
@@ -207,8 +186,7 @@ function CompetitionCard({ item, blocks, rankingUrl, onPress }) {
               <Image
                 source={{ uri: logo }}
                 style={{ width: 36, height: 36, borderRadius: 18, marginRight: 8, backgroundColor: isDark ? '#1e293b' : '#f1f5f9', borderWidth: 1, borderColor: '#e5e7eb' }}
-                contentFit="contain"
-                transition={150}
+                resizeMode="contain"
               />
             ) : null}
             <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 10, paddingVertical: 4, borderRadius: Radius.md }}>
@@ -268,7 +246,7 @@ function CompetitionCard({ item, blocks, rankingUrl, onPress }) {
 
         {/* Bottom Section */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', justifyContent: 'space-between' }}>
-          <LeagueShields rankingUrl={rankingUrl} blocks={blocks} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
+          <LeagueShields blocks={blocks} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
           <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>
               {/txapelketa|topaketa/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
@@ -310,16 +288,22 @@ function SkeletonCompetitionCard() {
   );
 }
 
-function LeagueCardWrapper({ item, onPress }) {
+function LeagueCardWrapper({ item, onPress, onLoaded }) {
   const rankingUrl = (!item.href || /configurando/i.test(item.status)) ? null : toRankingUrl(item.href);
-  const { blocks } = useFetch(rankingUrl);
+  const { blocks, loading } = useFetch(rankingUrl);
 
-  return <CompetitionCard item={item} onPress={onPress} blocks={blocks} rankingUrl={rankingUrl} />;
+  useEffect(() => {
+    if (!loading) {
+      onLoaded();
+    }
+  }, [loading, onLoaded]);
+
+  // Once fetched, reveal the real Card populated fully with its data
+  return <CompetitionCard item={item} onPress={onPress} blocks={blocks} />;
 }
 
 export default function CompetitionList({ tableBlock, onOpenTournament }) {
   const { colors: Colors, isDark } = useTheme();
-
   if (!tableBlock?.rows?.length) {
     return (
       <View style={{ padding: Spacing.xxl, alignItems: 'center', gap: Spacing.sm }}>
@@ -331,7 +315,7 @@ export default function CompetitionList({ tableBlock, onOpenTournament }) {
 
   const headers = tableBlock.headers || [];
 
-  const tournaments = useMemo(() => tableBlock.rows.map((row, i) => ({
+  const tournaments = tableBlock.rows.map((row, i) => ({
     id: String(i),
     name: getCell(row, headers, 'nombre'),
     status: getCell(row, headers, 'estado'),
@@ -342,21 +326,50 @@ export default function CompetitionList({ tableBlock, onOpenTournament }) {
     organizer: getCell(row, headers, 'federación') || getCell(row, headers, 'federacion') || getCell(row, headers, 'organiza') || getCell(row, headers, 'asociación') || getCell(row, headers, 'asociacion'),
     href: tableBlock.rowLinks?.[i] || null,
     logo: tableBlock.rowLogos?.[i] || tableBlock.rowImages?.[i] || null,
-  })), [tableBlock, headers]);
+  }));
+
+  const [loadedCount, setLoadedCount] = useState(0);
+
+  const handleLoaded = useCallback(() => {
+    setLoadedCount(prev => prev + 1);
+  }, []);
+
+  const totalCards = tournaments.length;
+  // Fallback de seguridad: si pasados 5 segundos no cargaron todos, forzamos mostrar para evitar que la app se bloquee
+  const [forcedReady, setForcedReady] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setForcedReady(true), 5000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const isReady = forcedReady || loadedCount >= totalCards;
 
   return (
-    <FlatList
-      data={tournaments}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md }}
-      ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
-      renderItem={({ item }) => (
-        <LeagueCardWrapper
-          item={item}
-          onPress={(tipo) => item.href && onOpenTournament?.(item.href, item.name, tipo)}
-        />
+    <View>
+      {!isReady && (
+        <View style={{ padding: Spacing.xxxl, alignItems: 'center', justifyContent: 'center' }}>
+          <ActivityIndicator size="large" color={Colors.primary} />
+          <Text style={{ marginTop: Spacing.md, color: Colors.textMuted, fontSize: Typography.size.md }}>
+            Cargando competiciones...
+          </Text>
+        </View>
       )}
-      scrollEnabled={false}
-    />
+      <View style={{ opacity: isReady ? 1 : 0, height: isReady ? 'auto' : 0, overflow: 'hidden' }}>
+        <FlatList
+          data={tournaments}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md }}
+          ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
+          renderItem={({ item }) => (
+            <LeagueCardWrapper
+              item={item}
+              onPress={(tipo) => item.href && onOpenTournament?.(item.href, item.name, tipo)}
+              onLoaded={handleLoaded}
+            />
+          )}
+          scrollEnabled={false}
+        />
+      </View>
+    </View>
   );
 }

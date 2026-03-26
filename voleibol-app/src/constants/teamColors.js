@@ -5,8 +5,10 @@
  */
 export const CLUB_BASE_COLORS = {
   // --- CLUBES BASE (Editar códigos HEX aquí) ---
+
   "OCISA": "#36906D",
   "AIDEAN": "#E65900",
+  "AIXERROTA": "#8B0135",
   "ARMENTIA": "#F46B27",
   "ARIZMENDI": "#8C2377",
   "BERA BERA": "#3173C7",
@@ -23,6 +25,7 @@ export const CLUB_BASE_COLORS = {
   "KOLDO": "#EEE300",
   "LEKEITIO": "#EC990D",
   "LOGROÑO": "#941109",
+  "HRV": "#003261",
   "MARIANISTAS": "#E02512",
   "MENDEBALDEA": "#743409",
   "MERCEDARIAS": "#253769",
@@ -37,6 +40,26 @@ export const CLUB_BASE_COLORS = {
 
   // Añade más clubes base aquí en MAYÚSCULAS
 };
+
+/**
+ * Diccionario de coordenadas manuales por CLUB.
+ * Se usa como fallback si la web oficial no tiene el enlace.
+ */
+export const CLUB_VENUE_COORDS = {
+  "AIXERROTA": { latitude: 43.3705, longitude: -3.0039 }, // Fadura
+  "GETXO": { latitude: 43.3705, longitude: -3.0039 },
+  "SESTAO": { latitude: 43.3086, longitude: -3.0061 }, // La Benedicta
+  "GALDAKAO": { latitude: 43.2346, longitude: -2.8455 }, // Urreta
+  "JATORKIDE": { latitude: 42.8534, longitude: -2.6712 }, // Judimendi
+};
+
+/**
+ * Obtiene las coordenadas manuales de un equipo basándose en su nombre.
+ */
+export function getTeamManualCoords(teamName) {
+  const baseName = getClubBaseName(teamName);
+  return baseName ? CLUB_VENUE_COORDS[baseName] : null;
+}
 
 /**
  * Obtiene el nombre base del club para un equipo dado.
@@ -54,7 +77,7 @@ export function getClubBaseName(teamName) {
  * Obtiene el color de un equipo basándose en su nombre base (Club).
  * Realiza una búsqueda por subcadena (case-insensitive).
  */
-export function getTeamColor(teamName, fallback = "#001f3d") {
+export function getTeamColor(teamName, fallback = "#000000ff") {
   const baseName = getClubBaseName(teamName);
   const color = baseName ? CLUB_BASE_COLORS[baseName] : null;
   return color || fallback;

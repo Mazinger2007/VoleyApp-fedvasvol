@@ -208,7 +208,7 @@ export default function App() {
   useEffect(() => {
     // Inicializar y bloquear la orientación vertical por defecto para evitar errores de referencia
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
-      .catch((err) => console.log('Orientation Lock Error:', err));
+      .catch((error) => console.log('Orientation Lock Error:', error));
   }, []);
 
   return (

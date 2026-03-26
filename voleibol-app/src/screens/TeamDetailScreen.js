@@ -2,7 +2,7 @@
 // Pantalla de detalle de un equipo — Diseño premium v2.
 // Muestra: hero con escudo, stats, próximos y partidos jugados.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { getTeamColor, getClubBaseName } from '../constants/teamColors';
 import {
   View,
@@ -13,12 +13,12 @@ import {
   StyleSheet,
   StatusBar,
   Platform,
+  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons } from '@expo/vector-icons';
-
 import LoadingView from '../components/LoadingView';
 import { useFetch } from '../hooks/useFetch';
 import { toAbsoluteUrl } from '../utils/htmlParser';
@@ -26,6 +26,46 @@ import { getDominantBorderColor } from '../utils/imageColor';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getMatchSummary, parseMatchDateTime, MatchCard, rowToMatch } from '../components/MatchList';
+
+// Componente para items de competición reutilizable
+const CompItem = ({ comp, navigation, teamName, isDark, Colors, Radius, heroAccent }) => (
+  <TouchableOpacity
+    activeOpacity={0.7}
+    onPress={() => {
+      if (comp.href.includes('/team/')) {
+        navigation.push('TeamDetail', {
+          teamUrl: comp.href,
+          teamName: teamName
+        });
+      } else {
+        navigation.push('League', {
+          url: comp.href,
+          title: comp.title,
+          season: null,
+          defaultTab: 'ranking'
+        });
+      }
+    }}
+    style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, marginBottom: 4 }}
+  >
+    <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
+      <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
+    </View>
+    <View style={{ flex: 1 }}>
+      <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{comp.title || comp.name}</Text>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 4 }}>
+        <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5 }}>{comp.season || 'Temporada Actual'}</Text>
+        {comp.category && (
+          <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5 }}>• {comp.category}</Text>
+        )}
+        {comp.gender && (
+          <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 0.5 }}>• {comp.gender}</Text>
+        )}
+      </View>
+    </View>
+    <MaterialIcons name="chevron-right" size={20} color={Colors.textMuted} />
+  </TouchableOpacity>
+);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -272,6 +312,18 @@ export default function TeamDetailScreen({ route, navigation }) {
   }, [blocks]);
   const [accentColor, setAccentColor] = useState(null);
   const [logoError, setLogoError] = useState(false);
+  const [showAllCompetitions, setShowAllCompetitions] = useState(false);
+  const expansionAnim = useRef(new Animated.Value(0)).current;
+
+  // Animación para el desplegable de competiciones
+  useEffect(() => {
+    Animated.spring(expansionAnim, {
+      toValue: showAllCompetitions ? 1 : 0,
+      friction: 8,
+      tension: 40,
+      useNativeDriver: false, // height y opacity combinados necesitan false
+    }).start();
+  }, [showAllCompetitions]);
 
   const initials = useMemo(() => getInitials(teamName), [teamName]);
   const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogoResolved), [teamLogoResolved]);
@@ -508,7 +560,18 @@ export default function TeamDetailScreen({ route, navigation }) {
         {upcomingMatches.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
             <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximo Partido</Text>
-            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 24, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderLeftWidth: 4, borderLeftColor: heroAccent, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 }}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => {
+                if (upcomingMatches[0]) {
+                  navigation.push('MatchDetail', {
+                    match: upcomingMatches[0],
+                    calendarUrl: calendarUrl
+                  });
+                }
+              }}
+              style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 24, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderLeftWidth: 4, borderLeftColor: heroAccent, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 }}
+            >
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
                 {/* Home Team */}
                 <View style={{ flex: 1, alignItems: 'center' }}>
@@ -524,6 +587,9 @@ export default function TeamDetailScreen({ route, navigation }) {
                 {/* VS */}
                 <View style={{ alignItems: 'center', gap: 4 }}>
                   <Text style={{ fontSize: 10, fontWeight: '900', color: heroAccent, backgroundColor: heroAccent + '15', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>VS</Text>
+                  <View style={{ backgroundColor: heroAccent, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4 }}>
+                    <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#fff' }}>DETALLES</Text>
+                  </View>
                   <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted }}>{upcomingMatches[0].time || 'TBD'}</Text>
                 </View>
                 {/* Away Team */}
@@ -548,7 +614,7 @@ export default function TeamDetailScreen({ route, navigation }) {
                   <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted, letterSpacing: 0.5, flexShrink: 1 }} numberOfLines={1}>{upcomingMatches[0].venue || 'Por designar'}</Text>
                 </View>
               </View>
-            </View>
+            </TouchableOpacity>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 24, }}>
@@ -588,19 +654,57 @@ export default function TeamDetailScreen({ route, navigation }) {
         {/* ── Competiciones ── */}
         <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
           <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
-          <View style={{ gap: 8 }}>
+          <View style={{ gap: 10 }}>
             {competitions && competitions.length > 0 ? (
-              competitions.map((comp, idx) => (
-                <View key={`comp-${idx}`} style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
-                  <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
-                    <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{comp.title || comp.name}</Text>
-                    <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>{comp.season || 'Temporada Actual'}</Text>
-                  </View>
-                </View>
-              ))
+              <>
+                {competitions.slice(0, 2).map((comp, idx) => (
+                  <CompItem key={`comp-fixed-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
+                ))}
+
+                {competitions.length > 2 && (
+                  <>
+                    <Animated.View style={{
+                      opacity: expansionAnim,
+                      maxHeight: expansionAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0, 800] // Suficiente para varias tarjetas
+                      }),
+                      transform: [{
+                        translateY: expansionAnim.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [-20, 0]
+                        })
+                      }],
+                      overflow: 'hidden',
+                      gap: 10
+                    }}>
+                      {competitions.slice(2).map((comp, idx) => (
+                        <CompItem key={`comp-anim-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
+                      ))}
+                    </Animated.View>
+
+                    <TouchableOpacity
+                      onPress={() => setShowAllCompetitions(!showAllCompetitions)}
+                      activeOpacity={0.7}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        paddingVertical: 12,
+                        backgroundColor: Colors.primaryAlpha10,
+                        borderRadius: Radius.lg,
+                        marginTop: 4
+                      }}
+                    >
+                      <Text style={{ color: heroAccent, fontWeight: '800', fontSize: 12, textTransform: 'uppercase' }}>
+                        {showAllCompetitions ? 'Ocultar competiciones' : `Ver todas (${competitions.length})`}
+                      </Text>
+                      <MaterialIcons name={showAllCompetitions ? "expand-less" : "expand-more"} size={20} color={heroAccent} />
+                    </TouchableOpacity>
+                  </>
+                )}
+              </>
             ) : tournamentTitle ? (
               <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
                 <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
@@ -649,7 +753,12 @@ export default function TeamDetailScreen({ route, navigation }) {
                 const opponent = isHome ? m.awayTeam : m.homeTeam;
 
                 return (
-                  <View key={`last-res-${i}`} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: i < 4 && i < playedMatches.length - 1 ? 1 : 0, borderBottomColor: isDark ? '#2f3033' : '#f8fafc' }}>
+                  <TouchableOpacity
+                    key={`last-res-${i}`}
+                    activeOpacity={0.7}
+                    onPress={() => navigation.push('MatchDetail', { match: m, calendarUrl })}
+                    style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: i < 4 && i < playedMatches.length - 1 ? 1 : 0, borderBottomColor: isDark ? '#2f3033' : '#f8fafc' }}
+                  >
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
                       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: isWin ? '#22c55e' : '#ef4444' }} />
                       <Text style={{ fontSize: 12, fontWeight: 'bold', textTransform: 'uppercase', color: Colors.textSecondary, flexShrink: 1 }} numberOfLines={1}>vs {opponent}</Text>
@@ -659,10 +768,10 @@ export default function TeamDetailScreen({ route, navigation }) {
                         {score ? (isHome ? `${score.home} - ${score.away}` : `${score.away} - ${score.home}`) : m.scoreText}
                       </Text>
                       <View style={{ backgroundColor: isWin ? '#dcfce7' : '#fee2e2', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>
-                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: isWin ? '#15803d' : '#991b1b', textTransform: 'uppercase' }}>{isWin ? 'W' : 'L'}</Text>
+                        <Text style={{ fontSize: 10, fontWeight: 'bold', color: isWin ? '#15803d' : '#991b1b', textTransform: 'uppercase' }}>{isWin ? ' V ' : ' D '}</Text>
                       </View>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               })}
             </View>

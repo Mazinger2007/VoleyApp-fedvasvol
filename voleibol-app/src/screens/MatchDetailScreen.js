@@ -23,8 +23,10 @@ import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
 import { getCachedLogoColorSync } from '../utils/logoColorCache';
+import { getTeamManualCoords } from '../constants/teamColors';
 import { fetchAndParse } from '../utils/htmlParser';
 import VenueMap from '../components/VenueMap';
+import { getTeamFromCache } from '../utils/teamCache';
 import PagerView from '../components/PagerViewWrapper';
 import * as Calendar from 'expo-calendar';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -75,6 +77,7 @@ export default function MatchDetailScreen({ route, navigation }) {
   const [reminderLoading, setReminderLoading] = useState(false);
   const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
   const [isPlaying, setIsPlaying] = useState(false);
+  const [matchBlocks, setMatchBlocks] = useState([]);
 
   // 2. Refs
   const pagerRef = useRef(null);
@@ -108,6 +111,19 @@ export default function MatchDetailScreen({ route, navigation }) {
   // 3. Valores calculados
   const summary = useMemo(() => getMatchSummary(currentMatch), [currentMatch]);
   const TABS = ['detalles', 'mapa', 'repeticion'];
+
+  // 4. Coordenadas
+  const matchCoords = useMemo(() => {
+    const fromBlocks = matchBlocks.find(b => b.type === 'map_coordinates');
+    if (fromBlocks) return { latitude: fromBlocks.latitude, longitude: fromBlocks.longitude };
+    if (currentMatch?.coordinates) return currentMatch.coordinates;
+    
+    // Fallback: Si no hay coordenadas en el acta, intentar por nombre del equipo local en constantes
+    const manual = getTeamManualCoords(summary.homeTeam);
+    if (manual) return manual;
+
+    return null;
+  }, [matchBlocks, currentMatch, summary.homeTeam]);
 
   // 4. Funciones auxiliares
   const OFFICIAL_CHANNELS = [
@@ -322,8 +338,8 @@ export default function MatchDetailScreen({ route, navigation }) {
                     }
                   }
                 }
-              } catch (err) {
-                // console.log(`[YouTube] Search falló en ${host}: ${err.message}`);
+              } catch (error) {
+                // console.log(`[YouTube] Search falló en ${host}: ${error.message}`);
               }
 
               if (channelBest && channelBest.score >= 20) break;
@@ -347,8 +363,8 @@ export default function MatchDetailScreen({ route, navigation }) {
                     }
                   }
                 }
-              } catch (err) {
-                // console.log(`[YouTube] Videos falló en ${host}: ${err.message}`);
+              } catch (error) {
+                // console.log(`[YouTube] Videos falló en ${host}: ${error.message}`);
               }
               
               // Si el host respondió correctamente a algo (Search o Videos), paramos de rotar para no saturar,
@@ -384,8 +400,8 @@ export default function MatchDetailScreen({ route, navigation }) {
                     }
                   }
                 }
-              } catch (err) {
-                console.log(`[YouTube] API Channel Search falló para ${channel.name} (Fallback):`, err.message);
+              } catch (error) {
+                console.log(`[YouTube] API Channel Search falló para ${channel.name} (Fallback):`, error.message);
               }
             }
 
@@ -446,8 +462,8 @@ export default function MatchDetailScreen({ route, navigation }) {
               console.log(`[YouTube] ✓ Directo encontrado vía API LIVE (score ${bestLiveMatch.score})`);
             }
           }
-        } catch (err) {
-          console.warn('[YouTube] Búsqueda LIVE falló:', err.message, err.response?.data?.error || '');
+        } catch (error) {
+          console.warn('[YouTube] Búsqueda LIVE falló:', error.message, error.response?.data?.error || '');
         }
       }
 
@@ -541,8 +557,8 @@ export default function MatchDetailScreen({ route, navigation }) {
           } else if (officialResult) {
             foundId = officialResult.id;
           }
-        } catch (err) {
-          console.warn('[YouTube] Búsqueda general falló:', err.message, err.response?.data?.error || '');
+        } catch (error) {
+          console.warn('[YouTube] Búsqueda general falló:', error.message, error.response?.data?.error || '');
           if (officialResult) foundId = officialResult.id;
         }
         } // fin if apiKey
@@ -562,8 +578,8 @@ export default function MatchDetailScreen({ route, navigation }) {
       } else {
         console.log('[YouTube] No se encontró ningún vídeo');
       }
-    } catch (err) {
-      console.error('[YouTube] Error Fatal:', err.message);
+    } catch (error) {
+      console.error('[YouTube] Error Fatal:', error.message);
     } finally {
       setYoutubeLoading(false);
       setHasSearched(true);
@@ -621,7 +637,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         if (eventId && eventId !== 'active') {
           try {
             await Calendar.deleteEventAsync(eventId);
-          } catch (err) {
+          } catch (error) {
             console.log('Event already deleted or not found');
           }
         }
@@ -706,6 +722,7 @@ export default function MatchDetailScreen({ route, navigation }) {
     if (currentMatch?.href) {
       try {
         const directBlocks = await fetchAndParse(currentMatch.href);
+        setMatchBlocks(directBlocks || []);
         const blockMatches = (directBlocks || [])
           .filter((b) => b.type === 'table')
           .flatMap((b) => b.matches || []);
@@ -726,8 +743,8 @@ export default function MatchDetailScreen({ route, navigation }) {
           }));
           return;
         }
-      } catch (err) {
-        console.warn('[MatchDetail] Error al refrescar desde href:', err?.message || err);
+      } catch (error) {
+        console.warn('[MatchDetail] Error al refrescar desde href:', error?.message || error);
       }
     }
     // Si no hay href, buscar por nombre en los bloques
@@ -828,8 +845,8 @@ export default function MatchDetailScreen({ route, navigation }) {
         const directBlocks = await fetchAndParse(currentMatch.href);
         updateMatchFromDirectMatchBlocks(directBlocks);
       }
-    } catch (err) {
-      console.error('Error refreshing match detail:', err);
+    } catch (error) {
+      console.error('Error refreshing match detail:', error);
     } finally {
       setRefreshing(false);
     }
@@ -843,8 +860,8 @@ export default function MatchDetailScreen({ route, navigation }) {
       try {
         const directBlocks = await fetchAndParse(currentMatch.href);
         if (!cancelled) updateMatchFromDirectMatchBlocks(directBlocks);
-      } catch (err) {
-        console.warn('Error loading direct match data:', err?.message || err);
+      } catch (error) {
+        console.warn('Error loading direct match data:', error?.message || error);
       }
     }
     loadDirectMatchData();
@@ -852,25 +869,14 @@ export default function MatchDetailScreen({ route, navigation }) {
   }, [currentMatch?.href, updateMatchFromDirectMatchBlocks]);
 
   const openVenueInMaps = () => {
-    let venue = summary.venue || '';
-    const lowerVenue = venue.toLowerCase();
-    
-    // Si no contiene palabras clave de polideportivo, las añadimos para mejorar la búsqueda
-    const keywords = ['polideportivo', 'kiroldegia', 'pabellón', 'pista', 'frontón', 'campo', 'estadio'];
-    const hasKeyword = keywords.some(k => lowerVenue.includes(k));
-    
-    if (!hasKeyword && venue.length > 3) {
-      // Intentamos ser inteligentes: si es una palabra corta podría ser un pueblo, 
-      // si es larga ya podría ser el nombre del polideportivo.
-      venue = `Polideportivo ${venue}`;
+    if (!matchCoords?.latitude || !matchCoords?.longitude) {
+      Alert.alert(
+        'Ubicación no disponible',
+        'La federación no ha publicado las coordenadas exactas para este encuentro.'
+      );
+      return;
     }
-
-    const query = encodeURIComponent(venue);
-    const url = Platform.select({
-      ios: `maps:0,0?q=${query}`,
-      android: `geo:0,0?q=${query}`,
-      default: `https://www.google.com/maps/search/?api=1&query=${query}`
-    });
+    const url = `https://www.google.com/maps?q=${matchCoords.latitude},${matchCoords.longitude}`;
     Linking.openURL(url);
   };
 
@@ -932,24 +938,28 @@ export default function MatchDetailScreen({ route, navigation }) {
         );
       case 'mapa':
         const venue = summary.venue || '';
-        const lowerVenue = venue.toLowerCase();
-        // Lógica de búsqueda mejorada
-        const keywords = ['polideportivo', 'kiroldegia', 'pabellón', 'pista', 'frontón', 'campo', 'estadio'];
-        const hasKeyword = keywords.some(k => lowerVenue.includes(k));
-        const searchVenue = (!hasKeyword && venue.length > 3) ? `Polideportivo ${venue}` : venue;
-        const query = encodeURIComponent(searchVenue);
+        const hasCoords = !!(matchCoords?.latitude && matchCoords?.longitude);
 
         return (
           <View style={{ gap: Spacing.lg }}>
             <View style={[styles.mapPlaceholder, { borderColor: Colors.border, backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
-               <VenueMap 
-                venue={venue} 
-                searchVenue={searchVenue} 
-                query={query} 
-                colors={Colors}
-                isDark={isDark}
-                Spacing={Spacing}
-              />
+               {hasCoords ? (
+                 <VenueMap 
+                  venue={venue} 
+                  colors={Colors}
+                  isDark={isDark}
+                  Spacing={Spacing}
+                  latitude={matchCoords.latitude}
+                  longitude={matchCoords.longitude}
+                />
+               ) : (
+                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
+                   <MaterialIcons name="map" size={48} color={isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'} />
+                   <Text style={{ color: Colors.textMuted, textAlign: 'center', marginTop: 12, fontSize: 13, fontWeight: '500' }}>
+                     Ubicación exacta no disponible en el calendario oficial para este partido.
+                   </Text>
+                 </View>
+               )}
             </View>
             <View style={styles.card}>
               <View style={styles.cardPadding}>
@@ -957,15 +967,28 @@ export default function MatchDetailScreen({ route, navigation }) {
                 <View style={styles.addressRow}>
                   <MaterialIcons name="place" size={18} color={Colors.primary} />
                   <Text style={[styles.addressText, { color: Colors.textMuted }]}>
-                    Información de ubicación obtenida del calendario oficial.
-                    {!hasKeyword && venue.length > 3 && "\nSe ha añadido 'Polideportivo' para mejorar la búsqueda."}
+                    {matchCoords 
+                      ? (matchBlocks.find(b => b.type === 'map_coordinates') || currentMatch?.coordinates 
+                          ? "✓ Coordenadas exactas obtenidas del sitio oficial." 
+                          : `✓ Ubicación habitual de ${summary.homeTeam} (Fallback).`)
+                      : "La federación no ha publicado el enlace con coordenadas para este encuentro."}
                   </Text>
                 </View>
                 <View style={{ gap: Spacing.md, marginTop: Spacing.xl }}>
-                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: Colors.primary }]} onPress={openVenueInMaps}>
-                    <MaterialIcons name="map" size={20} color="#fff" />
-                    <Text style={styles.actionBtnText}>Abrir en Google Maps</Text>
-                  </TouchableOpacity>
+                  {hasCoords && (
+                    <TouchableOpacity
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        const url = `https://www.google.com/maps?q=${matchCoords.latitude},${matchCoords.longitude}`;
+                        Linking.openURL(url);
+                      }}
+                      style={[styles.actionBtn, { backgroundColor: Colors.primary }]}
+                    >
+                      <MaterialIcons name="map" size={20} color="#fff" />
+                      <Text style={styles.actionBtnText}>Cómo llegar (Google Maps)</Text>
+                    </TouchableOpacity>
+                  )}
+
                   <TouchableOpacity 
                     style={[styles.actionBtnOutline, { borderColor: isReminderActive ? Colors.success : Colors.primary, opacity: reminderLoading ? 0.6 : 1 }]}
                     onPress={toggleReminder}
@@ -1074,10 +1097,24 @@ export default function MatchDetailScreen({ route, navigation }) {
             <Text style={styles.matchDate}>{summary.dateLabel || summary.weekdayLabel || 'Fecha pendiente'}</Text>
           </View>
           <View style={styles.scoreboard}>
-            <View style={styles.teamSide}>
+            <TouchableOpacity 
+              style={styles.teamSide} 
+              activeOpacity={0.7}
+              onPress={() => {
+                const cached = getTeamFromCache(calendarUrl, summary.homeTeam);
+                navigation.push('TeamDetail', { 
+                  teamName: summary.homeTeam, 
+                  teamUrl: cached?.url || summary.homeUrl, 
+                  calendarUrl,
+                  points: cached?.points,
+                  divisionName: cached?.divisionName,
+                  position: cached?.position
+                });
+              }}
+            >
               <TeamLogo uri={summary.homeLogo} name={summary.homeTeam} isDark={isDark} size={64} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.homeTeam}</Text>
-            </View>
+            </TouchableOpacity>
             <View style={styles.scoreContainer}>
               <Text style={styles.scoreText}>
                 <Text style={summary.homeScore >= summary.awayScore ? styles.scoreBold : styles.scoreDim}>{summary.homeScore}</Text>
@@ -1085,10 +1122,24 @@ export default function MatchDetailScreen({ route, navigation }) {
                 <Text style={summary.awayScore >= summary.homeScore ? styles.scoreBold : styles.scoreDim}>{summary.awayScore}</Text>
               </Text>
             </View>
-            <View style={styles.teamSide}>
+            <TouchableOpacity 
+              style={styles.teamSide} 
+              activeOpacity={0.7}
+              onPress={() => {
+                const cached = getTeamFromCache(calendarUrl, summary.awayTeam);
+                navigation.push('TeamDetail', { 
+                  teamName: summary.awayTeam, 
+                  teamUrl: cached?.url || summary.awayUrl, 
+                  calendarUrl,
+                  points: cached?.points,
+                  divisionName: cached?.divisionName,
+                  position: cached?.position
+                });
+              }}
+            >
               <TeamLogo uri={summary.awayLogo} name={summary.awayTeam} isDark={isDark} size={64} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.awayTeam}</Text>
-            </View>
+            </TouchableOpacity>
           </View>
           <View style={styles.venueRow}>
             <MaterialIcons name="location-pin" size={14} color="rgba(255,255,255,0.7)" />

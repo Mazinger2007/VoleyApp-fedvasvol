@@ -29,6 +29,7 @@ import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtract
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
+import { cacheTeamsFromRanking, getTeamFromCache } from '../utils/teamCache';
 
 function ensureCalendarAllUrl(value = '') {
   if (!value) return value;
@@ -363,7 +364,7 @@ export default function LeagueScreen({ route, navigation }) {
           setAvailableSubgroups(filtered);
           setIsFetchingSubgroups(false);
         }
-      } catch (err) {
+      } catch (error) {
         if (mounted) setIsFetchingSubgroups(false);
       }
     }
@@ -421,6 +422,13 @@ export default function LeagueScreen({ route, navigation }) {
       setIsSubgroupModalVisible(false); // Make sure modal gets closed
     }
   }, [_rankingLoading, isSwitchingSubgroup]);
+
+  // UPDATE CACHE WITH RANKING TEAMS For MatchDetail Navigation
+  useEffect(() => {
+    if (rankingBlocks && rankingBlocks.length > 0) {
+      cacheTeamsFromRanking(rankingUrl, rankingBlocks);
+    }
+  }, [rankingBlocks, rankingUrl]);
 
 
   const calendarUrlFromBlocks = useMemo(() => {
@@ -481,8 +489,8 @@ export default function LeagueScreen({ route, navigation }) {
     // OR when we have a virtual phase with isBracket=true selected.
     const blocksHaveBracket = (rankingBlocks || []).some(b => b.type === 'bracket');
     if (blocksHaveBracket) return true;
-    const hasPlayoffTables = (rankingBlocks || []).some(b => 
-      b.type === 'table' && 
+    const hasPlayoffTables = (rankingBlocks || []).some(b =>
+      b.type === 'table' &&
       /cuartos|semi|final|tercer/i.test(b.title || '')
     );
     if (hasPlayoffTables) return true;
@@ -510,7 +518,7 @@ export default function LeagueScreen({ route, navigation }) {
     loading: calendarLoading,
     error: calendarError,
     refresh: refreshCalendar,
-  } = useFetch(fetchCalendarUrl);
+  } = useFetch(fetchCalendarUrl, { lazy: activeTab !== 'calendar' });
 
   // Live match polling — automatically starts only when EN CURSO matches detected,
   // updates calendarBlocks in place without full re-render of parent.
@@ -1534,7 +1542,8 @@ export default function LeagueScreen({ route, navigation }) {
         <View style={styles.centeredModalWrapper} pointerEvents="box-none">
           <View style={{ width: '90%', maxWidth: 400 }} pointerEvents="box-none">
             <View style={[
-              { backgroundColor: isDark ? '#0f172a' : '#ffffff', borderRadius: 20, overflow: 'hidden',
+              {
+                backgroundColor: isDark ? '#0f172a' : '#ffffff', borderRadius: 20, overflow: 'hidden',
                 maxHeight: screenHeight * 0.72,
                 ...(Platform.OS !== 'web' ? {
                   shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 24, elevation: 16

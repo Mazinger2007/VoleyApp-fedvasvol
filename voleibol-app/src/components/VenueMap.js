@@ -1,49 +1,26 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { View, Image, Platform, StyleSheet } from 'react-native';
+import React from 'react';
+import { View, StyleSheet, Platform } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { WebView } from 'react-native-webview';
-import axios from 'axios';
-import { MaterialIcons } from '@expo/vector-icons';
 
-export default function VenueMap({ venue, searchVenue, query, colors, isDark, Spacing }) {
-  const [location, setLocation] = useState(null);
-  const [error, setError] = useState(false);
-  const mapKey = useMemo(() => `${venue}_${isDark}`, [venue, isDark]);
+export default function VenueMap({ venue, colors, isDark, latitude, longitude }) {
+  // Solo renderizamos si tenemos coordenadas válidas
+  const hasCoords = latitude && longitude && Number.isFinite(latitude) && Number.isFinite(longitude);
 
-  useEffect(() => {
-    let mounted = true;
-    const geocode = async () => {
-      if (!venue || venue.length < 3) return;
-      try {
-        // More specific query for Vizcaya/Euskadi
-        const cleanQuery = searchVenue.replace(/polideportivo polideportivo/gi, 'polideportivo');
-        const res = await axios.get(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(cleanQuery + ', Vizcaya, Spain')}&format=json&limit=1`, {
-          headers: { 'User-Agent': 'VoleibolApp/1.1' },
-          timeout: 5000
-        });
-        
-        if (mounted) {
-          if (res.data?.[0]) {
-            const { lat, lon } = res.data[0];
-            setLocation({
-              latitude: parseFloat(lat),
-              longitude: parseFloat(lon),
-              latitudeDelta: 0.005,
-              longitudeDelta: 0.005,
-            });
-          } else {
-            setError(true);
-          }
-        }
-      } catch (err) {
-        if (mounted) setError(true);
-      }
-    };
-    geocode();
-    return () => { mounted = false; };
-  }, [searchVenue]);
+  if (!hasCoords) return null;
 
-  if (location) {
+  const location = {
+    latitude: latitude,
+    longitude: longitude,
+    latitudeDelta: 0.005,
+    longitudeDelta: 0.005,
+  };
+
+  const mapKey = `map_${latitude}_${longitude}_${isDark}`;
+
+  // En Android el MapView nativo suele ser preferible por rendimiento
+  // En Web o como fallback, el WebView con Google Maps embed
+  if (Platform.OS !== 'web') {
     return (
       <View key={mapKey} style={{ flex: 1, height: '100%', width: '100%' }}>
         <MapView
@@ -63,13 +40,13 @@ export default function VenueMap({ venue, searchVenue, query, colors, isDark, Sp
     );
   }
 
-  // Fallback to WebView (Google Maps embed)
+  // Fallback a WebView para Web o si no hay MapView disponible
   return (
     <View key={`wv_${mapKey}`} style={{ flex: 1, height: '100%', width: '100%', backgroundColor: colors.surfaceAlt }}>
       <WebView
         style={StyleSheet.absoluteFill}
         source={{ 
-          uri: `https://maps.google.com/maps?q=${query}&hl=es&z=14&t=p&output=embed`,
+          uri: `https://maps.google.com/maps?q=${latitude},${longitude}&hl=es&z=17&t=p&output=embed`,
           headers: { 'Referer': 'https://maps.google.com' }
         }}
         scrollEnabled={false}

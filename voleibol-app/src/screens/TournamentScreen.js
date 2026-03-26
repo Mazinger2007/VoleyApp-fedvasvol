@@ -368,8 +368,8 @@ export default function TournamentScreen({ route, navigation }) {
         if (showLoading) setData(null);
         const result = await fetchChampionshipData(url);
         setData(result);
-      } catch (err) {
-        console.error('[Tournament] Error loading data:', err);
+      } catch (error) {
+        console.error('[Tournament] Error loading data:', error);
         setError('No se pudo cargar la información del torneo.');
       } finally {
         if (showLoading) setLoading(false);

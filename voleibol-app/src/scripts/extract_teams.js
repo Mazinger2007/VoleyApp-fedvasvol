@@ -52,8 +52,8 @@ async function extractClubs() {
     fs.writeFileSync('club_bases.json', JSON.stringify(result, null, 2));
     console.log(`Saved ${result.length} club bases to club_bases.json`);
 
-  } catch (err) {
-    console.error('Error:', err.message);
+  } catch (error) {
+    console.error('Error:', error.message);
   }
 }
 
