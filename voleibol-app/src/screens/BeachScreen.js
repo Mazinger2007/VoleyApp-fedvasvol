@@ -10,7 +10,11 @@ import { Colors } from '../styles/theme';
 
 
 export default function BeachScreen({ navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors: Colors, setIsAppReady } = useTheme();
+
+  React.useEffect(() => {
+    setIsAppReady(true);
+  }, [setIsAppReady]);
   const styles = useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
     header: {

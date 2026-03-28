@@ -5,11 +5,11 @@ import { Platform } from 'react-native';
 
 
 export const Colors = {
-  primary: '#0d8ff2',
-  primaryDark: '#0b76ca',
-  primaryAlpha20: 'rgba(13,143,242,0.20)',
-  primaryAlpha15: 'rgba(13,143,242,0.15)',
-  primaryAlpha10: 'rgba(13,143,242,0.10)',
+  primary: '#059669',
+  primaryDark: '#047857',
+  primaryAlpha20: 'rgba(5,150,105,0.20)',
+  primaryAlpha15: 'rgba(5,150,105,0.15)',
+  primaryAlpha10: 'rgba(5,150,105,0.10)',
 
   // Fondos — dark theme
   background: '#101a22',

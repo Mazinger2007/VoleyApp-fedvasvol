@@ -3,7 +3,6 @@
     "name": "Voleibol Vizcaya",
     "slug": "voleibol-vizcaya",
     "version": "0.3.8",
-    "jsEngine": "jsc",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/Logo.png",
@@ -16,7 +15,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo.png",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR"
+      ]
     },
     "scheme": "voleibolvizcaya",
     "web": {
@@ -32,6 +35,11 @@
         }
       ],
       "expo-image"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "087cf1fc-428d-44fc-a44f-0f75666b1e14"
+      }
+    }
   }
 }

@@ -74,38 +74,59 @@ function parseTournamentMatchDetail(html) {
 }
 
 /**
- * Extrae coordenadas de latitud y longitud desde links de Google Maps en el HTML.
+ * Extrae coordenadas de latitud y longitud desde cualquier enlace de Google Maps
+ * presente en el HTML que contenga parámetros q= o @ con coordenadas válidas.
  */
 export function extractMapCoordinates(html = '') {
   const sHtml = String(html || '');
+  if (sHtml.length < 500) return null; // Ignorar respuestas vacías o errores
   
-  // 1. Buscar TODOS los enlaces que huelan a Google Maps
-  const mapsLinkRegex = /href=["']([^"']*(?:google\.com\/maps|maps\.app\.goo\.gl|maps\.google\.es)[^"']+)["']/gi;
-  const matches = [...sHtml.matchAll(mapsLinkRegex)];
-  
-  for (const m of matches) {
-    const url = m[1];
-    // Intentar extraer de q=, ll= o /@
-    const coordsMatch = url.match(/(?:[?&](?:q|ll)=)([\d.-]+),([\d.-]+)/i) || 
-                        url.match(/\/@([\d.-]+),([\d.-]+)/i);
-    if (coordsMatch) {
-       const latitude = parseFloat(coordsMatch[1]);
-       const longitude = parseFloat(coordsMatch[2]);
-       if (!isNaN(latitude) && !isNaN(longitude)) {
-         return { latitude, longitude };
-       }
+  console.log(`[extractMapCoordinates] Buscando en HTML (${sHtml.length} chars)...`);
+
+  // Helper para validar coordenadas reales
+  function parseCoords(latStr, lngStr) {
+    const lat = parseFloat(latStr || '');
+    const lng = parseFloat(lngStr || '');
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+      if (Math.abs(lat) > 0.0001 && Math.abs(lng) > 0.0001) {
+        return { latitude: lat, longitude: lng };
+      }
+    }
+    return null;
+  }
+
+  // 1. Buscar patrón q=lat,lng (Estándar en la federación)
+  const qMatches = [...sHtml.matchAll(/google\.[a-z.]+\/maps[^"']*?[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
+  for (const m of qMatches) {
+    const res = parseCoords(m[1], m[2]);
+    if (res) {
+      console.log(`[extractMapCoordinates] EXITO (q=): ${res.latitude},${res.longitude}`);
+      return res;
     }
   }
 
-  // 2. Fallbacks directos sobre el HTML por si el link no tiene href típico
-  const qMatch = sHtml.match(/(?:[?&](?:q|ll)=)([\d.-]+),([\d.-]+)/i) || 
-                 sHtml.match(/\/@([\d.-]+),([\d.-]+)/i);
-  if (qMatch) {
-     const latitude = parseFloat(qMatch[1]);
-     const longitude = parseFloat(qMatch[2]);
-     if (!isNaN(latitude) && !isNaN(longitude)) return { latitude, longitude };
+  // 2. Buscar patrón moderno /@lat,lng
+  const atMatches = [...sHtml.matchAll(/google\.[a-z.]+\/maps[^"']*?\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
+  for (const m of atMatches) {
+    const res = parseCoords(m[1], m[2]);
+    if (res) {
+      console.log(`[extractMapCoordinates] EXITO (@): ${res.latitude},${res.longitude}`);
+      return res;
+    }
   }
 
+  // 3. Buscar enlaces cortos (goo.gl/maps) - Estos no suelen traer coords en la URL directas
+  // pero a veces sí.
+  const shortMatches = [...sHtml.matchAll(/goo\.gl\/maps\/(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
+  for (const m of shortMatches) {
+    const res = parseCoords(m[1], m[2]);
+    if (res) {
+      console.log(`[extractMapCoordinates] EXITO (short): ${res.latitude},${res.longitude}`);
+      return res;
+    }
+  }
+
+  console.log('[extractMapCoordinates] No se encontraron coordenadas válidas.');
   return null;
 }
 
@@ -345,6 +366,12 @@ function parseBlocksFromHtml(html = '') {
     if (!alreadyHasBracket) {
       blocks.push({ type: 'bracket', ...bracketData });
     }
+  }
+
+  // ── 4. Extraer coordenadas globales (para Mapa en Detalle de Partido) ─────
+  const coords = extractMapCoordinates(html || '');
+  if (coords) {
+    blocks.push({ type: 'map_coordinates', ...coords });
   }
 
   return blocks;
@@ -940,7 +967,10 @@ function parseTable(tableNode) {
     };
 
     const match = parseMatchRow(row);
-    if (match) rowData.match = match;
+    if (match) {
+      match.href = href; // Importante para navegación a MatchDetail con datos completos
+      rowData.match = match;
+    }
 
     return rowData;
   });
@@ -1589,14 +1619,23 @@ export async function fetchAndParse(url, options = {}) {
     // Carga de equipo mediante peticiones AJAX combinadas simulando Vue
     blocks = await fetchTeamContextViaAjax(absoluteUrl, options);
   } else {
+    console.log(`[fetchAndParse] Cargando URL: ${absoluteUrl}`);
     const html = await fetchHTML(absoluteUrl, options);
     blocks = parseBlocksFromHtml(html);
-
-    // Si es una página de partido, intentar extraer coordenadas
+    console.log(`[fetchAndParse] Bloques después de parseBlocksFromHtml: ${blocks.length}`);
+    
+    // Si es una página de partido, asegurar que tenemos las coordenadas (aunque ya debería haberlas extraído parseBlocksFromHtml)
     if (/\/match\/\d+/i.test(absoluteUrl)) {
-      const coords = extractMapCoordinates(html);
-      if (coords) {
-        blocks.push({ type: 'map_coordinates', ...coords });
+      const alreadyHasMap = blocks.some(b => b.type === 'map_coordinates');
+      if (!alreadyHasMap) {
+        const coords = extractMapCoordinates(html);
+        if (coords) {
+          console.log(`[fetchAndParse] Coordenadas extraídas (fallback): ${coords.latitude}, ${coords.longitude}`);
+          blocks.push({ type: 'map_coordinates', ...coords });
+        }
+      } else {
+        const m = blocks.find(b => b.type === 'map_coordinates');
+        console.log(`[fetchAndParse] Coordenadas ya presentes: ${m.latitude}, ${m.longitude}`);
       }
     }
 

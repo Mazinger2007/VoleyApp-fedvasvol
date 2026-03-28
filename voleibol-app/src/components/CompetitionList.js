@@ -302,8 +302,16 @@ function LeagueCardWrapper({ item, onPress, onLoaded }) {
   return <CompetitionCard item={item} onPress={onPress} blocks={blocks} />;
 }
 
-export default function CompetitionList({ tableBlock, onOpenTournament }) {
+export default function CompetitionList({ tableBlock, onOpenTournament, onReady }) {
   const { colors: Colors, isDark } = useTheme();
+
+  // Si no hay ligas, notificar inmediatamente para no bloquear la app
+  useEffect(() => {
+    if (!tableBlock?.rows?.length && onReady) {
+      onReady();
+    }
+  }, [tableBlock, onReady]);
+
   if (!tableBlock?.rows?.length) {
     return (
       <View style={{ padding: Spacing.xxl, alignItems: 'center', gap: Spacing.sm }}>
@@ -335,14 +343,20 @@ export default function CompetitionList({ tableBlock, onOpenTournament }) {
   }, []);
 
   const totalCards = tournaments.length;
-  // Fallback de seguridad: si pasados 5 segundos no cargaron todos, forzamos mostrar para evitar que la app se bloquee
+  // Fallback de seguridad: reducido a 4s para no bloquear demasiado en caso de red lenta
   const [forcedReady, setForcedReady] = useState(false);
   useEffect(() => {
-    const timer = setTimeout(() => setForcedReady(true), 5000);
+    const timer = setTimeout(() => setForcedReady(true), 4000);
     return () => clearTimeout(timer);
   }, []);
 
   const isReady = forcedReady || loadedCount >= totalCards;
+
+  useEffect(() => {
+    if (isReady && onReady) {
+      onReady();
+    }
+  }, [isReady, onReady]);
 
   return (
     <View>

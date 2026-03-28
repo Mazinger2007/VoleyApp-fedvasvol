@@ -25,6 +25,7 @@ import RankingTableScreen from './src/screens/RankingTableScreen';
 import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
 import MatchDetailScreen from './src/screens/MatchDetailScreen';
 import InfoScreen from './src/screens/InfoScreen';
+import LoadingView from './src/components/LoadingView';
 
 // ── Tema ─────────────────────────────────────────────────────────────────────
 import { Typography } from './src/styles/theme';
@@ -219,36 +220,51 @@ export default function App() {
 }
 
 function AppContent() {
-  const { colors: Colors, isDark, animColors } = useTheme();
+  const { colors: Colors, isDark, animColors, isAppReady } = useTheme();
+
   return (
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={Colors.background} />
       {/* Animated background layer — transitions smoothly on theme change */}
       <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: animColors.background }]} pointerEvents="none" />
-      <NavigationContainer
-        theme={{
-          dark: isDark,
-          colors: {
-            primary: Colors.primary,
-            background: 'transparent',
-            card: Colors.surface,
-            text: Colors.textPrimary,
-            border: Colors.border,
-            notification: Colors.primary,
-          },
-        }}
-      >
-        <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
-          <Stack.Screen name="MainTabs" component={MainTabs} />
-          <Stack.Screen name="League" component={LeagueScreen} />
-          <Stack.Screen name="Tournament" component={TournamentScreen} />
-          <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
-          <Stack.Screen name="RankingTable" component={RankingTableScreen} />
-          <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
-          <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
-          <Stack.Screen name="Info" component={InfoScreen} />
-        </Stack.Navigator>
-      </NavigationContainer>
+
+      <View style={{ flex: 1 }}>
+        <NavigationContainer
+          theme={{
+            dark: isDark,
+            colors: {
+              primary: Colors.primary,
+              background: 'transparent',
+              card: Colors.surface,
+              text: Colors.textPrimary,
+              border: Colors.border,
+              notification: Colors.primary,
+            },
+          }}
+        >
+          {/* We keep the navigator ALWAYS rendered so it can mount children (data fetching)
+              but we hide it until everything is ready to avoid jumping/partial rendering. */}
+          <View style={{ flex: 1, opacity: isAppReady ? 1 : 0 }}>
+            <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
+              <Stack.Screen name="MainTabs" component={MainTabs} />
+              <Stack.Screen name="League" component={LeagueScreen} />
+              <Stack.Screen name="Tournament" component={TournamentScreen} />
+              <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
+              <Stack.Screen name="RankingTable" component={RankingTableScreen} />
+              <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
+              <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
+              <Stack.Screen name="Info" component={InfoScreen} />
+            </Stack.Navigator>
+          </View>
+        </NavigationContainer>
+
+        {/* Global Full-Screen Loader */}
+        {!isAppReady && (
+          <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
+            <LoadingView message="Preparando ligas y torneos..." />
+          </View>
+        )}
+      </View>
     </SafeAreaProvider>
   );
 }

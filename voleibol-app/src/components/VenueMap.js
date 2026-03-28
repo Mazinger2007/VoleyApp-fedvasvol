@@ -5,7 +5,9 @@ import { WebView } from 'react-native-webview';
 
 export default function VenueMap({ venue, colors, isDark, latitude, longitude }) {
   // Solo renderizamos si tenemos coordenadas válidas
-  const hasCoords = latitude && longitude && Number.isFinite(latitude) && Number.isFinite(longitude);
+  const hasCoords = typeof latitude === 'number' && typeof longitude === 'number' && 
+                    Number.isFinite(latitude) && Number.isFinite(longitude) &&
+                    (Math.abs(latitude) > 0.0001 || Math.abs(longitude) > 0.0001);
 
   if (!hasCoords) return null;
 
@@ -18,9 +20,11 @@ export default function VenueMap({ venue, colors, isDark, latitude, longitude })
 
   const mapKey = `map_${latitude}_${longitude}_${isDark}`;
 
-  // En Android el MapView nativo suele ser preferible por rendimiento
-  // En Web o como fallback, el WebView con Google Maps embed
-  if (Platform.OS !== 'web') {
+  // En iOS el MapView nativo es seguro y preferible.
+  // En Android, si el usuario exporta la app sin configurar la Google Maps API Key en el manifest,
+  // la app se cerrará sola al intentar cargar el mapa nativo. 
+  // Por robustez en la exportación, usamos WebView (Google Maps Embed) en Android y Web.
+  if (Platform.OS === 'ios') {
     return (
       <View key={mapKey} style={{ flex: 1, height: '100%', width: '100%' }}>
         <MapView
@@ -40,7 +44,8 @@ export default function VenueMap({ venue, colors, isDark, latitude, longitude })
     );
   }
 
-  // Fallback a WebView para Web o si no hay MapView disponible
+  // Fallback a WebView para Android/Web o si no hay MapView disponible
+  // Esto evita crasheos por falta de configuración de API Keys nativas
   return (
     <View key={`wv_${mapKey}`} style={{ flex: 1, height: '100%', width: '100%', backgroundColor: colors.surfaceAlt }}>
       <WebView
@@ -53,7 +58,7 @@ export default function VenueMap({ venue, colors, isDark, latitude, longitude })
         javaScriptEnabled={true}
         domStorageEnabled={true}
         allowsInlineMediaPlayback={true}
-        userAgent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        userAgent={Platform.OS === 'android' ? undefined : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}
       />
     </View>
   );

@@ -121,10 +121,22 @@ function formatDateDMY(rawDate) {
 }
 
 function formatWeekdayEs(rawDate) {
-  const date = parseMatchDateTime(rawDate);
-  if (!date) return null;
-  const weekday = new Intl.DateTimeFormat('es-ES', { weekday: 'long' }).format(date);
-  return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+  try {
+    const date = parseMatchDateTime(rawDate);
+    if (!date) return null;
+    // Intl can fail on some Android environments in production
+    if (typeof Intl !== 'undefined' && Intl.DateTimeFormat) {
+      try {
+        const weekday = new Intl.DateTimeFormat('es-ES', { weekday: 'long' }).format(date);
+        return weekday.charAt(0).toUpperCase() + weekday.slice(1);
+      } catch (intlErr) {
+        return null;
+      }
+    }
+  } catch (e) {
+    console.warn('[formatWeekdayEs] Error:', e.message);
+  }
+  return null;
 }
 
 function stripLogoResolution(url = '') {
@@ -202,9 +214,10 @@ const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 
 export function formatMatchDisplayDate(rawDate, isLive = false) {
   if (isLive) return 'EN DIRECTO';
   const dateObj = parseMatchDateTime(rawDate);
-  if (!dateObj) return rawDate || 'Por definir';
+  if (!dateObj) return (typeof rawDate === 'string' ? rawDate : 'Por definir');
   const day = dateObj.getDate();
-  const month = SPANISH_MONTHS[dateObj.getMonth()];
+  const monthIdx = dateObj.getMonth();
+  const month = SPANISH_MONTHS[monthIdx] || '???';
   return `${day} ${month}`;
 }
 
@@ -221,53 +234,80 @@ export function formatMatchTime(rawDate, timeStr) {
 }
 
 export function getMatchSummary(match = {}) {
-  if (match.dateLabel !== undefined && match.state !== undefined) {
-    return match;
+  try {
+    if (!match) return { homeTeam: 'Local', awayTeam: 'Visitante', homeScore: null, awayScore: null, time: '--:--', sets: [], venue: 'Sede desconocida' };
+    
+    // Si ya es un resumen (tiene dateLabel), devolverlo pero asegurar tipos
+    if (match.dateLabel !== undefined && match.state !== undefined) {
+      if (typeof match.homeTeam !== 'string') match.homeTeam = String(match.homeTeam || 'Local');
+      if (typeof match.awayTeam !== 'string') match.awayTeam = String(match.awayTeam || 'Visitante');
+      if (!Array.isArray(match.sets)) match.sets = [];
+      return match;
+    }
+
+    const structured = !!(match.homeTeam && match.awayTeam);
+    const homeTeam = structured ? match.homeTeam : getMatchField(match, 'local', 'equipo a', 'home', 'equipo');
+    const awayTeam = structured ? match.awayTeam : getMatchField(match, 'visitante', 'equipo b', 'away');
+
+    const resultRaw = structured
+      ? (match.matchScore?.home !== undefined && match.matchScore?.away !== undefined)
+        ? `${match.matchScore.home}-${match.matchScore.away}`
+        : (match.homeScore !== undefined && match.awayScore !== undefined)
+           ? `${match.homeScore}-${match.awayScore}`
+           : null
+      : getMatchField(match, 'resultado', 'marcador', 'result', 'sets');
+
+    const score = resultRaw ? parseNumericScore(resultRaw) : { home: null, away: null };
+    
+    // Intentar sacar scores directos si falló lo anterior
+    if (score.home === null && typeof match.homeScore === 'number') score.home = match.homeScore;
+    if (score.away === null && typeof match.awayScore === 'number') score.away = match.awayScore;
+
+    const rawDate = structured ? match.date : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
+    const timeMatch = String(rawDate || '').match(/\b\d{1,2}:\d{2}\b/);
+    const rawTime = structured ? (match.time || timeMatch?.[0] || null) : (timeMatch?.[0] || null);
+
+    const isLive = computeMatchState(rawDate, null, score.home, score.away) === 'live';
+    const dateLabel = isLive ? 'EN DIRECTO' : formatMatchDisplayDate(rawDate);
+    const weekdayLabel = formatWeekdayEs(rawDate);
+    const time = formatMatchTime(rawDate, rawTime);
+    const venue = structured ? (match.venue || match.location || getMatchField(match, 'lugar', 'sede', 'campo', 'pabellón')) : getMatchField(match, 'lugar', 'sede', 'campo', 'pabellón');
+
+    const state = computeMatchState(rawDate, getMatchField(match, 'estado', 'status'), score.home, score.away);
+
+    return {
+      state,
+      homeTeam: String(homeTeam || 'Local'),
+      awayTeam: String(awayTeam || 'Visitante'),
+      homeScore: score.home,
+      awayScore: score.away,
+      time: time || '--:--',
+      rawDate: (typeof rawDate === 'string' ? rawDate : null),
+      dateLabel: String(dateLabel || 'Fecha desconocida'),
+      weekdayLabel: String(weekdayLabel || ''),
+      venue: String(venue || 'Sede por confirmar'),
+      homeLogo: match.homeLogo || match.homeImage || null,
+      awayLogo: match.awayLogo || match.awayImage || null,
+      sets: Array.isArray(match.sets) ? match.sets : [],
+      coordinates: match.coordinates || null,
+      href: match.href || null,
+    };
+  } catch (e) {
+    console.warn("Error parseando partido en getMatchSummary:", e.message);
+    return {
+      homeTeam: String(match?.homeTeam || 'Local'),
+      awayTeam: String(match?.awayTeam || 'Visitante'),
+      homeScore: typeof match?.homeScore === 'number' ? match.homeScore : null,
+      awayScore: typeof match?.awayScore === 'number' ? match.awayScore : null,
+      time: '--:--',
+      rawDate: null,
+      dateLabel: 'Fecha desconocida',
+      weekdayLabel: '',
+      venue: 'Sede por confirmar',
+      sets: [],
+      isError: true
+    };
   }
-
-  const structured = match.homeTeam && match.awayTeam;
-  const homeTeam = structured ? match.homeTeam : getMatchField(match, 'local', 'equipo a', 'home');
-  const awayTeam = structured ? match.awayTeam : getMatchField(match, 'visitante', 'equipo b', 'away');
-  
-  const rawDate = structured ? match.date : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
-  const venue = structured ? match.venue : getMatchField(match, 'pabell', 'pista', 'lugar', 'sede', 'venue');
-  const explicitState = getMatchField(match, 'estado', 'status');
-  
-  const resultRaw = structured
-    ? [match.matchScore?.home, match.matchScore?.away].every((v) => v !== null && v !== undefined && v !== '')
-      ? `${match.matchScore.home}-${match.matchScore.away}`
-      : null
-    : getMatchField(match, 'resultado', 'marcador', 'result', 'sets');
-
-  const score = resultRaw ? parseNumericScore(resultRaw) : { home: null, away: null };
-  const timeMatch = String(rawDate || '').match(/\b\d{1,2}:\d{2}\b/);
-  const rawTime = structured ? (match.time || timeMatch?.[0] || null) : (timeMatch?.[0] || null);
-  
-  const state = computeMatchState(rawDate, explicitState, score?.home ?? null, score?.away ?? null);
-  const isLive = state === 'live';
-  
-  // Use formatting helpers
-  const time = formatMatchTime(rawDate, rawTime);
-  const dateLabel = isLive ? 'EN DIRECTO' : formatMatchDisplayDate(rawDate);
-  const weekdayLabel = formatWeekdayEs(rawDate);
-
-  return {
-    homeTeam: homeTeam || 'Local',
-    awayTeam: awayTeam || 'Visitante',
-    homeLogo: match.homeLogo || null,
-    awayLogo: match.awayLogo || null,
-    homeUrl: match.homeUrl || null,
-    awayUrl: match.awayUrl || null,
-    time,
-    venue: venue || 'Sede por confirmar',
-    state,
-    dateLabel,
-    weekdayLabel,
-    homeScore: score?.home ?? null,
-    awayScore: score?.away ?? null,
-    rawDate: rawDate || null,
-    sets: match.sets || [],
-  };
 }
 
 export function MatchCard({ match, headers, onPress, calendarUrl }) {
@@ -450,7 +490,11 @@ export default function MatchList({ tableBlock, matches, onPressMatch, calendarU
     if (matches && matches.length > 0) return matches;
     if (tableBlock && tableBlock.matches?.length) return tableBlock.matches;
     if (tableBlock && tableBlock.rows?.length) {
-      return tableBlock.rows.map((row) => rowToMatch(row, tableBlock.headers));
+      return tableBlock.rows.map((row, i) => {
+        const matchObj = rowToMatch(row, tableBlock.headers);
+        if (tableBlock.rowLinks?.[i]) matchObj.href = tableBlock.rowLinks[i];
+        return matchObj;
+      });
     }
     return [];
   }, [tableBlock, matches]);

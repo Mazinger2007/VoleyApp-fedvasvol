@@ -8,7 +8,11 @@ import { Text, StatusBar, StyleSheet, View, TouchableOpacity } from 'react-nativ
 import { useTheme } from '../contexts/ThemeContext';
 
 export default function NewsScreen({ navigation }) {
-  const { colors: Colors } = useTheme();
+  const { colors: Colors, setIsAppReady } = useTheme();
+
+  React.useEffect(() => {
+    setIsAppReady(true);
+  }, [setIsAppReady]);
   const styles = useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.primary },
     header: {

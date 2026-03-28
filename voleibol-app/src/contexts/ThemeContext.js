@@ -105,11 +105,11 @@ const lightColors = {
 // ─── Colores de Acento ────────────────────────────────────────────────────────
 export const ACCENT_COLORS = {
   emerald: { primary: '#059669', primaryDark: '#047857' },
-  blue:    { primary: '#0d8ff2', primaryDark: '#0b76ca' },
-  navy:    { primary: '#001f3d', primaryDark: '#001224' },
-  red:     { primary: '#dc2626', primaryDark: '#b91c1c' },
-  amber:   { primary: '#f59e0b', primaryDark: '#d97706' },
-  purple:  { primary: '#9333ea', primaryDark: '#7e22ce' },
+  blue: { primary: '#0d8ff2', primaryDark: '#0b76ca' },
+  navy: { primary: '#001f3d', primaryDark: '#001224' },
+  red: { primary: '#dc2626', primaryDark: '#b91c1c' },
+  amber: { primary: '#f59e0b', primaryDark: '#d97706' },
+  purple: { primary: '#9333ea', primaryDark: '#7e22ce' },
 };
 
 function hexToRgba(hex, alpha) {
@@ -135,16 +135,19 @@ const THEME_DURATION = 200; // ms
 const ThemeContext = createContext({
   colors: darkColors,
   isDark: false,
-  accentKey: 'blue',
+  accentKey: 'emerald',
   animColors: {},        // Animated.Value-based color strings (for backgroundColor etc.)
   themeProgress: null,   // Animated.Value 0=light 1=dark
-  toggleTheme: () => {},
-  changeAccent: () => {},
+  toggleTheme: () => { },
+  changeAccent: () => { },
+  isAppReady: false,
+  setIsAppReady: () => { },
 });
 
 export function ThemeProvider({ children }) {
   const [isDark, setIsDark] = useState(false);
-  const [accentKey, setAccentKey] = useState('blue');
+  const [accentKey, setAccentKey] = useState('emerald');
+  const [isAppReady, setIsAppReady] = useState(false);
 
   // Animated value: 0 = light, 1 = dark
   const themeProgress = useRef(new Animated.Value(0)).current;
@@ -174,14 +177,14 @@ export function ThemeProvider({ children }) {
         duration: THEME_DURATION,
         useNativeDriver: false, // color interpolation requires JS driver
       }).start();
-      AsyncStorage.setItem('@theme_preference', next ? 'dark' : 'light').catch(() => {});
+      AsyncStorage.setItem('@theme_preference', next ? 'dark' : 'light').catch(() => { });
       return next;
     });
   }, [themeProgress]);
 
   const changeAccent = useCallback((key) => {
     setAccentKey(key);
-    AsyncStorage.setItem('@theme_accent', key).catch(() => {});
+    AsyncStorage.setItem('@theme_accent', key).catch(() => { });
   }, []);
 
   // Static colors (instant, for logic / non-animated use)
@@ -222,8 +225,8 @@ export function ThemeProvider({ children }) {
   }, [accentKey, themeProgress]);
 
   const value = useMemo(
-    () => ({ colors, isDark, toggleTheme, accentKey, changeAccent, animColors, themeProgress }),
-    [colors, isDark, accentKey, toggleTheme, changeAccent, animColors, themeProgress],
+    () => ({ colors, isDark, toggleTheme, accentKey, changeAccent, animColors, themeProgress, isAppReady, setIsAppReady }),
+    [colors, isDark, accentKey, toggleTheme, changeAccent, animColors, themeProgress, isAppReady],
   );
 
   return (

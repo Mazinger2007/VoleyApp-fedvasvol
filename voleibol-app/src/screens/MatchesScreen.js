@@ -3,6 +3,7 @@
 // abre TournamentDetailScreen directamente en la pestaña Calendario.
 
 import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useCallback } from 'react';
 import {
   View,
   Text,
@@ -36,7 +37,7 @@ const FILTERS = [
 ];
 
 export default function MatchesScreen({ navigation }) {
-  const { colors: Colors, isDark } = useTheme();
+  const { colors: Colors, isDark, setIsAppReady, isAppReady } = useTheme();
   const [search, setSearch] = useState('');
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedSeason, setSelectedSeason] = useState(null);
@@ -69,6 +70,17 @@ export default function MatchesScreen({ navigation }) {
     const tables = blocks.filter((b) => b.type === 'table');
     return tables[0] || null;
   }, [blocks]);
+
+  // Si la carga terminó y no hay datos, desbloquear el app loader para mostrar la UI vacía
+  useEffect(() => {
+    if (!loading && !tournamentTable && !isAppReady) {
+      setIsAppReady(true);
+    }
+  }, [loading, tournamentTable, isAppReady, setIsAppReady]);
+
+  const handleReady = useCallback(() => {
+    setIsAppReady(true);
+  }, [setIsAppReady]);
 
   const filteredTable = useMemo(() => {
     if (!tournamentTable) return null;
@@ -269,6 +281,7 @@ export default function MatchesScreen({ navigation }) {
           <CompetitionList
             tableBlock={filteredTable}
             onOpenTournament={handleOpenLeague}
+            onReady={handleReady}
           />
         ) : (
           <View style={styles.emptyWrap}>

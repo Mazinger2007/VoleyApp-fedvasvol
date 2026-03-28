@@ -29,7 +29,7 @@ import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtract
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
-import { cacheTeamsFromRanking, getTeamFromCache } from '../utils/teamCache';
+import { cacheTeamsFromRanking, getTeamFromCache, clearTeamCache } from '../utils/teamCache';
 
 function ensureCalendarAllUrl(value = '') {
   if (!value) return value;
@@ -429,6 +429,13 @@ export default function LeagueScreen({ route, navigation }) {
       cacheTeamsFromRanking(rankingUrl, rankingBlocks);
     }
   }, [rankingBlocks, rankingUrl]);
+
+  // Limpiar el caché de equipos al desmontar la pantalla (cambio de liga)
+  useEffect(() => {
+    return () => {
+      clearTeamCache(rankingUrl);
+    };
+  }, [rankingUrl]);
 
 
   const calendarUrlFromBlocks = useMemo(() => {
@@ -1071,17 +1078,30 @@ export default function LeagueScreen({ route, navigation }) {
   }, [isChampionship, phaseLinks.length, championshipLoading, championshipData, rankingTables, rankingBrackets, rankingLoading, seasonLabel, handlePressTeam, handlePressExpand, Colors, styles.emptyWrap, styles.emptyText, openMatchModal]);
 
   const calendarContent = useMemo(() => {
+    // Durante carga: mostrar loader, nunca un error prematuro
     if (calendarLoading || isSwitchingSubgroup) {
       return <LoadingView variant="clean" message="Cargando calendario..." />;
     }
 
-    if (calendarTables.length === 0) {
+    // Si el calendario aún no se ha activado (lazy, no hay URL), mostrar loader silencioso
+    if (!fetchCalendarUrl) {
+      // Torneo sin calendario (campeonato)
+      return null;
+    }
+
+    // Datos disponibles pero vacíos
+    if (calendarBlocks && calendarTables.length === 0) {
       return (
         <View style={styles.emptyWrap}>
           <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
           <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
         </View>
       );
+    }
+
+    // Todavía no tenemos datos (carga inicial lazy)
+    if (!calendarBlocks) {
+      return <LoadingView variant="clean" message="Cargando calendario..." />;
     }
 
     // Find all matches to pick a featured one (live first, then next upcoming)
@@ -1196,7 +1216,7 @@ export default function LeagueScreen({ route, navigation }) {
         </View>
       </View>
     );
-  }, [calendarTables, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel, calendarLoading, isSwitchingSubgroup]);
+  }, [calendarTables, calendarBlocks, calendarLoading, isSwitchingSubgroup, fetchCalendarUrl, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel, styles.emptyWrap, styles.emptyText]);
 
   const renderSearchResults = useCallback(() => {
     if (filteredMatches.length === 0) {
@@ -1812,11 +1832,10 @@ export default function LeagueScreen({ route, navigation }) {
             contentContainerStyle={{ flexGrow: 1 }}
             refreshControl={
               <RefreshControl
-                refreshing={false}
+                refreshing={rankingLoading}
                 onRefresh={refreshRanking}
-                colors={['transparent']}
-                tintColor="transparent"
-                progressViewOffset={-9999}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
               />
             }
           >
@@ -1830,11 +1849,10 @@ export default function LeagueScreen({ route, navigation }) {
             contentContainerStyle={{ flexGrow: 1 }}
             refreshControl={
               <RefreshControl
-                refreshing={false}
+                refreshing={calendarLoading}
                 onRefresh={refreshCalendar}
-                colors={['transparent']}
-                tintColor="transparent"
-                progressViewOffset={-9999}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
               />
             }
           >
