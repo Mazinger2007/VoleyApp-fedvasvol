@@ -842,7 +842,7 @@ export default function TournamentScreen({ route, navigation }) {
           <View style={[
             styles.columnWrapper,
             styles.placementsColumn,
-            { borderLeftColor: Colors.border, marginRight: 10 }
+            { borderLeftColor: Colors.border, marginRight: 5 }
           ]}>
             <Text style={styles.phaseTitleText}>CLASIFICACIÓN FINAL</Text>
             <View style={[styles.matchesGroup, { width: PHASE_CARD_WIDTH }]}>
@@ -1012,9 +1012,8 @@ const styles = StyleSheet.create({
   },
   placementsColumn: {
     borderLeftWidth: 1,
-    paddingLeft: 86, // Espacio entre el borde y la tarjeta
-    marginLeft: 80, // Más separación desde la columna anterior
-    // marginRight eliminado para evitar mini-scroll, se pone solo en el render
+    paddingLeft: 40,
+    marginLeft: 40,
     overflow: 'hidden',
   },
   phaseTitleText: {
