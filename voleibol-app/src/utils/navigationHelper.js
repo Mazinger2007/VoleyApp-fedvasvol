@@ -7,9 +7,9 @@ import { toRankingUrl } from './htmlParser';
  */
 export function isTournament(title = '') {
   const tournamentKeywords = [
-    'torneo', 'copa', 'txapelketa', 'topaketa', 'sector', 'campeonato', 
+    'torneo', 'copa', 'kopa', 'txapelketa', 'topaketa', 'sector', 'campeonato', 
     'final', 'fase', 'eliminatoria', 'ranking', 'playoff', 'play off',
-    'ascenso', 'descenso'
+    'ascenso', 'descenso', 'kanporaketak', 'cup'
   ];
   const lowerTitle = title.toLowerCase();
   return tournamentKeywords.some(kw => lowerTitle.includes(kw));
@@ -24,7 +24,7 @@ export function openTournamentDetail(navigation, tournament, extraParams = {}) {
   const title = tournament.name || tournament.title || 'Competición';
   const rankingUrl = toRankingUrl(tournament.href);
   
-  if (isTournament(title)) {
+  if (tournament.isTorneo || isTournament(title)) {
     navigation.navigate('Tournament', {
       url: rankingUrl,
       title: title,

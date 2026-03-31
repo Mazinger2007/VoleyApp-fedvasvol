@@ -25,13 +25,14 @@ import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
 import { getCachedLogoColorSync } from '../utils/logoColorCache';
-import { getTeamManualCoords } from '../constants/teamColors'; 
+import { getTeamManualCoords } from '../constants/teamColors';
 import { fetchAndParse } from '../utils/htmlParser';
 import VenueMap from '../components/VenueMap';
 import { getTeamFromCache } from '../utils/teamCache';
 import PagerView from '../components/PagerViewWrapper';
 import * as Calendar from 'expo-calendar';
 import axios from 'axios';
+import { supabase } from '../utils/supabase';
 
 const { width: SCREEN_WIDTH_PROB } = Dimensions.get('window');
 const SCREEN_WIDTH = SCREEN_WIDTH_PROB || 375;
@@ -119,15 +120,17 @@ export default function MatchDetailScreen({ route, navigation }) {
     outputRange: [0, tabWidth, tabWidth * 2],
   });
 
+  const TABS = ['detalles', 'mapa', 'repeticion'];
+
   // 3. Valores calculados con protección extra
   const summary = useMemo(() => {
     try {
       return getMatchSummary(currentMatch);
     } catch (e) {
       console.warn('[MatchDetail] Error in getMatchSummary:', e.message);
-      return { 
-        homeTeam: 'Local', awayTeam: 'Visitante', sets: [], 
-        homeScore: null, awayScore: null, venue: 'Sede desconocida', time: '--:--' 
+      return {
+        homeTeam: 'Local', awayTeam: 'Visitante', sets: [],
+        homeScore: null, awayScore: null, venue: 'Sede desconocida', time: '--:--'
       };
     }
   }, [currentMatch]);
@@ -136,14 +139,12 @@ export default function MatchDetailScreen({ route, navigation }) {
   const hTargetRef = useRef(summary.homeTeam);
   const aTargetRef = useRef(summary.awayTeam);
   const hrefRef = useRef(currentMatch?.href || null);
-  
+
   useEffect(() => {
     hTargetRef.current = summary.homeTeam;
     aTargetRef.current = summary.awayTeam;
     hrefRef.current = currentMatch?.href || null;
   }, [summary.homeTeam, summary.awayTeam, currentMatch?.href]);
-
-  const TABS = ['detalles', 'mapa', 'repeticion'];
 
   // 4. Coordenadas (Prioridad: Acta > Resumen > Manual)
   const matchCoords = useMemo(() => {
@@ -155,11 +156,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       if (currentMatch?.coordinates?.latitude && currentMatch?.coordinates?.longitude) {
         return currentMatch.coordinates;
       }
-      
-      const manual = getTeamManualCoords(summary?.homeTeam);
-      if (manual && manual.latitude && manual.longitude) {
-        return manual;
-      }
+      // REQUISITO: No usar manualCoords (habituales) si no hay oficiales
     } catch (e) {
       console.warn('[MatchDetail] Error calculating coordinates:', e.message);
     }
@@ -171,20 +168,46 @@ export default function MatchDetailScreen({ route, navigation }) {
     { name: 'Getxo', id: 'UCYHKUaL8kC4QDe5Cx7TgMyg', patterns: [/getxo/i], priority: true },
     { name: 'Jatorkide', id: 'UCDv0NQL_EFWtPC3i5v_Drbw', patterns: [/jatorkide/i], priority: true },
     { name: 'Galdakao', id: 'UCheRHnoAnFsI7Ogd9xSYAFQ', patterns: [/galdakao/i] },
-    { name: 'C.V. Sestao', id: 'UC0RH2gitr2hjNYHhCENpzLg', patterns: [/sestao/i] },
+    { name: 'C.V.Sestao', id: 'UC0RH2gitr2hjNYHhCENpzLg', patterns: [/sestao/i] },
     { name: 'Cafés Foronda Ekialde', id: 'UCEeow14MIifOsTXS4uSCB5g', patterns: [/ekialde/i] },
-    { name: 'Madre de Dios Deusto', id: 'UCxGbXULdYqJJTn97vBhK8cw', patterns: [/madre de dios/i, /madi/i] },
-    { name: 'Ocisa Logroño', id: 'UC9bIaWAOGv4hGkGgN-FDnhQ', patterns: [/logroño/i] },
+    // Ostadar SKT: pendiente verificar ID correcto del canal
+    // { name: 'Ostadar SKT', id: 'PENDIENTE', patterns: [/ostadar/i] },
+    { name: 'Madre de Dios Deusto', id: 'UCxGbXULdYqJJTn97vBhK8cw', patterns: [/madre de dios/i, /madi/i, /deusto/i] },
+    { name: 'Ocisa Logroño', id: 'UC9bIaWAOGv4hGkGgN-FDnhQ', patterns: [/logrono/i, /logroño/i] },
     { name: 'Gallartaren Ahotsa', id: 'UCi0OUunq4dpoeIDnrRnKaiw', patterns: [/gallarta/i] },
-    { name: 'Bera Bera', id: 'UCs8IABn1087s4X_xrHCHbJQ', patterns: [/bera bera/i] },
+    { name: 'Bera Bera', id: 'UCs8IABn1087s4X_xrHCHbJQ', patterns: [/bera bera/i, /berabera/i] },
     { name: 'Tolobolei', id: 'UC0e86MqCMbNFoJBCWbLyPxQ', patterns: [/tolobolei/i] },
     { name: 'Aidean ZKE', id: 'UChXUSuJD-XCLjmFZUYcCtVg', patterns: [/aidean/i] },
     { name: 'Navarvoley', id: 'UC_utcf6nsss9TBzw0IkTs2w', patterns: [/navar/i] }
   ];
 
+  // ── Extrae el nombre BASE de un equipo eliminando prefijos corporativos y patrocinadores ──
+  // Ejemplo: "Ekialde Cafés Foronda" → "ekialde" | "Ostadar SKT" → "ostadar"
+  const extractBaseName = (fullName) => {
+    if (!fullName) return '';
+    const NOISE_WORDS = [
+      'club', 'voleibol', 'boleibol', 'voley',
+      'c\.v\.', 'c\.d\.', 's\.d\.', 's\.k\.t\.?', 'k\.e\.', 'b\.k\.e\.?', 'vbc',
+      'kiroldegia', 'polideportivo', 'bkk', 'taldea', 'vialki',
+      'cafes', 'foronda', 'dentista', 'ocisa', // patrocinadores frecuentes
+    ];
+    const noiseRx = new RegExp(`\\b(${NOISE_WORDS.join('|')})\\b`, 'gi');
+
+    const normalized = fullName
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quitar acentos
+      .replace(noiseRx, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    // Devolver la PRIMERA palabra significativa (al menos 3 letras)
+    const words = normalized.split(/\s+/).filter(w => w.length >= 3);
+    return words[0] || normalized;
+  };
+
   const INVIDIOUS_HOSTS = [
     // Lista actualizada (eliminados fallidos 403/Network)
-    'https://invidious.jing.rocks',
+    'https://inv.nadeko.net/',
     'https://iv.ggtyler.dev',
     'https://inv.bp.projectsegfau.lt',
     'https://invidious.protokolla.fi',
@@ -205,6 +228,7 @@ export default function MatchDetailScreen({ route, navigation }) {
     'https://pipedapi.ngn.tf',
     'https://pipedapi.system41.com',
   ];
+
   const fetchYouTubeVideo = async () => {
     const apiKey = process.env.EXPO_PUBLIC_YOUTUBE_API_KEY;
 
@@ -213,13 +237,48 @@ export default function MatchDetailScreen({ route, navigation }) {
       // Usar summary que ya es robusto
       const rawDate = summary?.rawDate;
       const matchDateObj = (typeof rawDate === 'string' || rawDate instanceof Date) ? parseMatchDateTime(rawDate) : null;
-      
+
       if (!matchDateObj) {
         console.log('[YouTube] No hay fecha válida para buscar por fecha');
         setHasSearched(true);
         setYoutubeLoading(false);
         return;
       }
+
+      // ── CACHÉ LOCAL y GLOBAL (Supabase) ─────────────
+      const cacheKey = `yt_video_${(summary.homeTeam || '').replace(/\s/g, '_')}_${(summary.awayTeam || '').replace(/\s/g, '_')}_${matchDateObj.toISOString().slice(0, 10)}`;
+      
+      try {
+        // 1. Intentar caché local (ultrarrápido, 0ms)
+        const localCached = await AsyncStorage.getItem(cacheKey);
+        if (localCached) {
+          console.log(`[YouTube] ✅ Cargado desde caché Local: ${localCached}`);
+          setYoutubeVideoId(localCached);
+          setHasSearched(true);
+          setYoutubeLoading(false);
+          return;
+        }
+
+        // 2. Intentar caché global en Supabase (rápido, ahorra cuota de YouTube)
+        const { data: supaData } = await supabase
+          .from('youtube_cache')
+          .select('video_id')
+          .eq('match_key', cacheKey)
+          .single();
+
+        if (supaData && supaData.video_id) {
+          console.log(`[YouTube] ✅ Cargado desde caché Global (Supabase): ${supaData.video_id}`);
+          // Guardar en local para futuras veces
+          await AsyncStorage.setItem(cacheKey, supaData.video_id).catch(() => {});
+          setYoutubeVideoId(supaData.video_id);
+          setHasSearched(true);
+          setYoutubeLoading(false);
+          return;
+        }
+      } catch (e) {
+        console.log(`[YouTube] Error consultando caché:`, e?.message || e);
+      }
+
 
       const matchDay = new Date(matchDateObj.getFullYear(), matchDateObj.getMonth(), matchDateObj.getDate());
       const isLiveMatch = summary.state === 'live';
@@ -228,14 +287,35 @@ export default function MatchDetailScreen({ route, navigation }) {
       const dayEnd = new Date(matchDay);
       dayEnd.setHours(23, 59, 59, 999);
 
+      // Fecha exacta: devuelve true sólo si es el mismo día (sin margen)
+      const isExactDate = (pubDate, targetDay) => {
+        if (!pubDate || isNaN(pubDate.getTime())) return false;
+        const d1 = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate());
+        return d1.getTime() === targetDay.getTime();
+      };
+      // Fecha próxima: margen de 4 días (cubre subidas tardías al canal)
       const isCloseDate = (pubDate, targetDay) => {
         if (!pubDate || isNaN(pubDate.getTime())) return false;
         const d1 = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate());
-        const d2 = targetDay;
-        const diffDays = Math.abs(d1 - d2) / (1000 * 60 * 60 * 24);
-        return diffDays <= 1; // Margen de 1 día (el mismo día o el siguiente)
+        const diffDays = Math.abs(d1 - targetDay) / (1000 * 60 * 60 * 24);
+        return diffDays <= 4;
+      };
+      // Ventana ASIMÉTRICA para canales oficiales RSS:
+      // - Hasta 14 días ANTES (stream puede programarse con antelación)
+      // - Hasta 2 días DESPUÉS (subida tardía del vídeo)
+      // → Rechaza vídeos de partidos futuros (ej: 22 mar cuando el partido fue el 14 mar)
+      const isInMatchWindow = (pubDate, targetDay) => {
+        if (!pubDate || isNaN(pubDate.getTime())) return false;
+        const d1 = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate());
+        const diffMs = d1 - targetDay; // positivo = después del partido
+        const diffDays = diffMs / (1000 * 60 * 60 * 24);
+        return diffDays >= -14 && diffDays <= 2; // 14 días antes, 2 después
       };
       const hasLiveWords = (title = '') => /en\s*directo|directo|live|stream/i.test(title);
+
+      // Nombres base (sin patrocinadores ni prefijos) para matching y canales
+      const homeBase = extractBaseName(summary.homeTeam);
+      const awayBase = extractBaseName(summary.awayTeam);
 
       const cleanName = (n) => String(n || '').replace(/Club Voleibol|Voleibol|Boleibol|Voley|C\.V\.|C\.D\.|S\.D\.|S\.K\.T\.|S\.K\.T|K\.E\.|Club|Kiroldegia|Polideportivo|BKK|Taldea|Vialki|BKE|B.K.E.|VBC/gi, '').trim();
       const homeClean = cleanName(summary.homeTeam);
@@ -244,39 +324,71 @@ export default function MatchDetailScreen({ route, navigation }) {
       let foundId = null;
 
       const normalizar = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').trim();
-      const calcularScore = (titulo, local, visitante) => {
-        const t = normalizar(titulo);
-        const palabras = (n) => normalizar(n).split(/\s+/).filter(p => p.length >= 2);
-        let score = 0;
-        const pl = palabras(local);
-        const pv = palabras(visitante);
 
-        const matchHome = pl.some(p => t.includes(p));
-        const matchAway = pv.some(p => t.includes(p));
+      // ── Sistema de puntuación mejorado ────────────────────────────────────────────
+      // IMPORTANTE: La fecha es un BONUS, no un requisito estricto.
+      // Los streams de YouTube en canales oficiales tienen como fecha RSS la de
+      // programación (puede ser días antes del partido).
+      const calcularScore = (titulo, local, visitante, pubDate = null, strictDate = false) => {
+        // Solo descartar si strictDate=true y la fecha no encaja
+        // En búsquedas de canal oficial: strictDate=false → nunca se descarta por fecha
+        if (strictDate && pubDate && !isCloseDate(pubDate, matchDay)) return 0;
+
+        const t = normalizar(titulo);
+
+        // Palabras de los nombres originales Y de los nombres base
+        const palabras = (n) => normalizar(n).split(/\s+/).filter(p => p.length >= 2);
+        const homeWords = palabras(local);
+        const awayWords = palabras(visitante);
+
+        // También chequear con nombres base (cortos, sin patrocinador)
+        const homeBaseNorm = normalizar(homeBase);
+        const awayBaseNorm = normalizar(awayBase);
+
+        const matchHome = homeWords.some(p => t.includes(p)) || (homeBaseNorm.length >= 3 && t.includes(homeBaseNorm));
+        const matchAway = awayWords.some(p => t.includes(p)) || (awayBaseNorm.length >= 3 && t.includes(awayBaseNorm));
 
         if (!matchHome && !matchAway) return 0;
 
-        if (matchHome) score += 5; 
-        if (matchAway) score += 5;
-        if (matchHome && matchAway) score += 20; 
+        let score = 0;
+        if (matchHome) score += 6;   // +++ un equipo
+        if (matchAway) score += 6;   // +++ otro equipo
+        if (matchHome && matchAway) score += 20; // ++++ ambos equipos
 
+        // Bonus por fecha: cuántos días de diferencia entre pubDate y matchDay
+        if (pubDate && !isNaN(pubDate.getTime())) {
+          const d1 = new Date(pubDate.getFullYear(), pubDate.getMonth(), pubDate.getDate());
+          const diffDays = Math.abs(d1 - matchDay) / (1000 * 60 * 60 * 24);
+          if (diffDays === 0) score += 15;       // ++++ mismo día (crítico)
+          else if (diffDays <= 1) score += 8;    // +++ día siguiente
+          else if (diffDays <= 4) score += 3;    // ++ dentro de la semana
+          // más de 4 días: sin bonus de fecha (pero el vídeo no se descarta)
+        }
+
+        // Bonus por partido/voleibol
         if (t.includes('vs') || t.includes('contra') || t.includes('-')) score += 2;
-        if (t.includes('voley') || t.includes('voleibol') || t.includes('boleibola') || t.includes('boleibol') || t.includes('partido')) score += 1;
-        if (t.includes('jornada') || t.includes('fecha') || t.includes('liga')) score += 1;
+        if (t.includes('voley') || t.includes('voleibol') || t.includes('boleibola') || t.includes('boleibol') || t.includes('partido')) score += 2;
+
+        // Bonus por liga
+        if (t.includes('jornada') || t.includes('fecha') || t.includes('liga') || t.includes('primera') || t.includes('segunda')) score += 3; // ++++ liga
+
+        // Bonus por género femenino/masculino
+        if (t.includes('femenin') || t.includes('femeni') || t.includes('masculin') || t.includes('masc')) score += 3; // +++ género
 
         return score;
       };
 
+
       // Helper para peticiones web robustas
       const robustGet = async (url, isJson = true) => {
-        const headers = {
-          'User-Agent': 'Mozilla/5.0'
-        };
+        const headers = {};
         if (Platform.OS !== 'web') {
+          headers['User-Agent'] = 'Mozilla/5.0';
           const res = await axios.get(url, { headers, timeout: 5000 });
           return res.data;
         }
         try {
+          // Do not set User-Agent header in browser
           const res = await axios.get(`https://corsproxy.io/?${encodeURIComponent(url)}`, { timeout: 3500 });
           return res.data;
         } catch (e) {
@@ -286,40 +398,250 @@ export default function MatchDetailScreen({ route, navigation }) {
       };
 
       // ─── PASO 1 y 2: Búsqueda en canales oficiales de los equipos ───────────────
-      const matchLabel = matchDay.toLocaleDateString('es-ES');
+      // Mejorado: también hacer match usando nombres base (sin patrocinador)
       const relevantChannels = OFFICIAL_CHANNELS.filter(c =>
-        c.patterns.some(p => p.test(summary.homeTeam) || p.test(summary.awayTeam))
+        c.patterns.some(p =>
+          p.test(summary.homeTeam) || p.test(summary.awayTeam) ||
+          p.test(homeBase) || p.test(awayBase)
+        )
       );
+
+      console.log(`[YouTube] Equipos: "${summary.homeTeam}" (base: "${homeBase}") vs "${summary.awayTeam}" (base: "${awayBase}")`);
+      console.log(`[YouTube] Canales relevantes: ${relevantChannels.map(c => c.name).join(', ') || 'ninguno'}`);
 
       let officialResult = null;
       if (relevantChannels.length > 0) {
-        const channelSearches = relevantChannels.map(async (channel) => {
-          let channelBest = null;
-          try {
-            const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
-            const rssBaseUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`;
-            const rssRes = await robustGet(rssBaseUrl, false); 
-            const data = parser.parse(rssRes);
-            const entries = data?.feed?.entry ? (Array.isArray(data.feed.entry) ? data.feed.entry : [data.feed.entry]) : [];
+        console.log(`[YouTube] PASO 1: Buscando en RSS de ${relevantChannels.length} canal(es)...`);
 
-            for (const entry of entries) {
-              const pubDate = new Date(entry.published);
-              if (isCloseDate(pubDate, matchDay)) {
-                const score = calcularScore(entry.title, summary.homeTeam, summary.awayTeam);
-                if (score > (channelBest?.score || 0)) {
-                  channelBest = { id: entry['yt:videoId'], score, source: 'RSS', canal: channel.name };
+        // Timeout por canal: máximo 4s, así un ID malo no bloquea todo
+        const withTimeout = (promise, ms, label) =>
+          Promise.race([
+            promise,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`Timeout ${label}`)), ms))
+          ]);
+
+        const channelSearches = relevantChannels.map((channel) =>
+          withTimeout(
+            (async () => {
+              let channelBest = null;
+              try {
+                const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_" });
+                const rssBaseUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${channel.id}`;
+                const rssRes = await robustGet(rssBaseUrl, false);
+                const data = parser.parse(rssRes);
+                const entries = data?.feed?.entry ? (Array.isArray(data.feed.entry) ? data.feed.entry : [data.feed.entry]) : [];
+                console.log(`[YouTube] RSS ${channel.name}: ${entries.length} entradas`);
+
+                for (const entry of entries) {
+                  const pubDate = new Date(entry.published);
+                  // Ventana asimétrica: hasta 14 días ANTES del partido (streams programados)
+                  // y máximo 2 días DESPUÉS (subidas tardías).
+                  // Vídeos del 22 mar para partido del 16 → +6 días → RECHAZADO → va a PASO 1.5
+                  if (!isInMatchWindow(pubDate, matchDay)) {
+                    // Solo logear si el título contiene algún equipo (para no llenar de ruido)
+                    const tNorm = (entry.title || '').toLowerCase();
+                    if (tNorm.includes(normalizar(homeBase)) || tNorm.includes(normalizar(awayBase))) {
+                      console.log(`[YouTube] RSS ${channel.name}: RECHAZADO por fecha "${entry.title}" (pub: ${pubDate?.toLocaleDateString?.() || '?'})`);
+                    }
+                    continue;
+                  }
+                  const score = calcularScore(entry.title, summary.homeTeam, summary.awayTeam, pubDate, false);
+                  if (score > (channelBest?.score || 0)) {
+                    channelBest = { id: entry['yt:videoId'], score, source: 'RSS', canal: channel.name };
+                  }
+                  if (score > 0) {
+                    console.log(`[YouTube] RSS ${channel.name}: "${entry.title}" → score=${score} (pub: ${pubDate?.toLocaleDateString?.() || '?'})`);
+                  }
                 }
-              }
-            }
-          } catch (e) { /* skip rss */ }
-          return channelBest;
-        });
 
+                if (channelBest) {
+                  console.log(`[YouTube] RSS ${channel.name}: mejor score=${channelBest.score}`);
+                } else {
+                  console.log(`[YouTube] RSS ${channel.name}: sin resultados en rango de fecha`);
+                }
+              } catch (e) {
+                console.log(`[YouTube] RSS ${channel.name}: ERROR - ${e?.message || e}`);
+              }
+              return channelBest;
+            })(),
+            4000,
+            channel.name
+          ).catch((e) => {
+            console.log(`[YouTube] Timeout/error canal ${channel.name}:`, e?.message);
+            return null;
+          })
+        );
+
+        // PARALELO: todos los canales RSS a la vez
         const results = (await Promise.all(channelSearches)).filter(Boolean);
         if (results.length > 0) {
-          officialResult = results.sort((a,b) => b.score - a.score)[0];
-          if (!isLiveMatch && officialResult.score >= 15) {
+          officialResult = results.sort((a, b) => b.score - a.score)[0];
+          console.log(`[YouTube] Mejor resultado oficial RSS: "${officialResult.canal}" score=${officialResult.score}`);
+          // Umbral = 6: equivale a que al menos 1 nombre de equipo aparezca en el título.
+          // Ya estamos en el canal oficial del equipo → cualquier coincidencia es válida.
+          if (!isLiveMatch && officialResult.score >= 6) {
             foundId = officialResult.id;
+            console.log(`[YouTube] ✅ Aceptado canal oficial (RSS): ${officialResult.canal} (score=${officialResult.score})`);
+          }
+        } else {
+          console.log('[YouTube] PASO 1: Sin resultados en RSS');
+        }
+
+        // ─── PASO 1.5: Si el RSS no tiene el vídeo, buscar con YouTube API en el canal ──
+        // Ya no usamos Invidious ni Piped porque suelen ser bloqueados en redes móviles.
+        // Al tener caché de AsyncStorage, el uso de cuota API es mínimo (1 vez por partido).
+        if (!foundId && apiKey) {
+          console.log('[YouTube] PASO 1.5: RSS limitado → buscando en canal oficial con API...');
+          // Buscar ±2 días del partido (para directos es suficiente, o fecha pasada si fue subido tarde)
+          const apiWindowStart = new Date(matchDay);
+          apiWindowStart.setDate(apiWindowStart.getDate() - 2); 
+          const apiWindowEnd = new Date(matchDay);
+          apiWindowEnd.setDate(apiWindowEnd.getDate() + 2);     
+
+          const channelApiSearches = relevantChannels.map(async (channel) => {
+            try {
+              const res = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+                params: {
+                  part: 'snippet',
+                  channelId: channel.id,
+                  type: 'video',
+                  publishedAfter: apiWindowStart.toISOString(),
+                  publishedBefore: apiWindowEnd.toISOString(),
+                  maxResults: 25,
+                  key: apiKey
+                },
+                timeout: 5000
+              });
+              const items = res.data?.items || [];
+              console.log(`[YouTube] API canal ${channel.name}: ${items.length} vídeos recientes`);
+              let best = null;
+              for (const item of items) {
+                const pubDate = item.snippet?.publishedAt ? new Date(item.snippet.publishedAt) : null;
+                const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam, pubDate, false);
+                if (score > (best?.score || 0)) best = { id: item.id.videoId, score, canal: channel.name };
+              }
+              return best;
+            } catch (e) {
+              console.log(`[YouTube] PASO 1.5 error API para ${channel.name}:`, e?.message);
+              return null;
+            }
+          });
+
+          const apiResults = (await Promise.all(channelApiSearches)).filter(Boolean);
+          if (apiResults.length > 0) {
+            const bestApi = apiResults.sort((a, b) => b.score - a.score)[0];
+            if (bestApi.score >= 6) {
+              foundId = bestApi.id;
+              officialResult = bestApi;
+              console.log(`[YouTube] ✅ Aceptado canal oficial (API): ${bestApi.canal} (score=${bestApi.score})`);
+            } else {
+              console.log(`[YouTube] PASO 1.5: Mejor score API = ${bestApi.score} (rechazado)`);
+            }
+          } else {
+            console.log('[YouTube] PASO 1.5: Sin resultados en canal via API');
+          }
+        }
+
+        // ─── PASO 1.5b: Si no hay API KEY, intentar Invidious (gratis, paralelo) ───
+        if (!foundId && !apiKey) {
+          console.log('[YouTube] PASO 1.5b: Sin API Key → buscando via Invidious en canal oficial...');
+
+          const INV_HOSTS = [
+            'https://invidious.jing.rocks',
+            'https://iv.ggtyler.dev',
+            'https://invidious.private.coffee',
+            'https://yewtu.be',
+            'https://invidious.fdn.fr',
+          ];
+
+          const extractVideos = (data) => {
+            if (!data) return [];
+            if (Array.isArray(data)) return data;
+            return data.videos || data.items || data.latestVideos || data.streams || [];
+          };
+
+          const scoreInvItem = (v) => {
+            const videoId = v.videoId || v.id;
+            if (!videoId || !v.title) return null;
+            const pubDate = v.published
+              ? new Date(typeof v.published === 'number'
+                  ? (v.published > 1e12 ? v.published : v.published * 1000)
+                  : v.published)
+              : null;
+            if (!isInMatchWindow(pubDate, matchDay)) return null;
+            const score = calcularScore(v.title, summary.homeTeam, summary.awayTeam, pubDate, false);
+            return score >= 6 ? { id: videoId, score, title: v.title } : null;
+          };
+
+          const fetchFromHost = async (host, channelId) => {
+            const endpoints = [
+              `${host}/api/v1/channels/${channelId}/videos`,
+              `${host}/api/v1/channels/${channelId}/streams`,
+            ];
+            for (const base of endpoints) {
+              for (let page = 1; page <= 3; page++) {
+                const url = `${base}?page=${page}`;
+                const data = await (async () => {
+                  if (Platform.OS !== 'web') {
+                    const r = await axios.get(url, { timeout: 6000 });
+                    return r.data;
+                  }
+                  const r = await axios.get(`https://corsproxy.io/?${encodeURIComponent(url)}`, { timeout: 6000 });
+                  return r.data;
+                })();
+
+                const videos = extractVideos(data);
+                if (!videos.length) break;
+
+                let best = null;
+                let tooOld = false;
+                for (const v of videos) {
+                  const pubTs = typeof v.published === 'number'
+                    ? (v.published > 1e12 ? v.published : v.published * 1000)
+                    : null;
+                  if (pubTs) {
+                    const diffDays = (pubTs - matchDay.getTime()) / 86400000;
+                    if (diffDays < -20) { tooOld = true; break; } 
+                    if (diffDays > 2) continue; 
+                  }
+                  const hit = scoreInvItem(v);
+                  if (hit && hit.score > (best?.score || 0)) {
+                    best = hit;
+                    console.log(`[YouTube] Invidious ${host.split('/')[2]} p${page}: "${v.title}" → score=${hit.score}`);
+                  }
+                }
+                if (best) return best;
+                if (tooOld) break; 
+              }
+            }
+            return null;
+          };
+
+          const searchInChannelParallel = async (channel) => {
+            try {
+              const result = await Promise.any(
+                INV_HOSTS.map(host =>
+                  fetchFromHost(host, channel.id).then(r => {
+                    if (!r) throw new Error('no match');
+                    return { ...r, canal: channel.name };
+                  })
+                )
+              );
+              return result;
+            } catch {
+              console.log(`[YouTube] PASO 1.5b: Todos los hosts Invidious fallaron para ${channel.name}`);
+              return null;
+            }
+          };
+
+          const invResults = await Promise.all(relevantChannels.map(searchInChannelParallel));
+          const bestInv = invResults.filter(Boolean).sort((a, b) => b.score - a.score)[0];
+          if (bestInv) {
+            foundId = bestInv.id;
+            officialResult = bestInv;
+            console.log(`[YouTube] ✅ Aceptado (Invidious canal): ${bestInv.canal} (score=${bestInv.score})`);
+          } else {
+            console.log('[YouTube] PASO 1.5b: Sin resultados en Invidious');
           }
         }
       }
@@ -353,17 +675,37 @@ export default function MatchDetailScreen({ route, navigation }) {
           if (res.data?.items?.length > 0) {
             let bestMatch = null;
             for (const item of res.data.items) {
-              const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam);
+              const pubDate = new Date(item.snippet.publishedAt);
+              const score = calcularScore(item.snippet.title, summary.homeTeam, summary.awayTeam, pubDate);
               if (score > (bestMatch?.score || 0)) bestMatch = { id: item.id.videoId, score };
             }
-            if (bestMatch && bestMatch.score > (officialResult?.score || 0)) foundId = bestMatch.id;
+            if (bestMatch && bestMatch.score > (officialResult?.score || 0)) {
+              foundId = bestMatch.id;
+              console.log(`[YouTube] ✅ Encontrado via API (score=${bestMatch.score})`);
+            }
           }
-        } catch (error) { /* skip general api */ }
+        } catch (error) {
+          console.log('[YouTube] Error API general:', error?.message);
+        }
       }
 
-      if (!foundId && officialResult) foundId = officialResult.id;
+      // ─── PASO 5: Último recurso — usar officialResult aunque score bajo ─────────
+      // Si hay un resultado de canal oficial que coincide en fecha, usarlo aunque no
+      // haya coincidencia de nombre (puede ser que el título sea muy corto/diferente)
+      if (!foundId && officialResult && officialResult.score >= 5) {
+        foundId = officialResult.id;
+        console.log(`[YouTube] ⚠️ Fallback a canal oficial con score bajo: ${officialResult.canal} (score=${officialResult.score})`);
+      }
 
-      if (foundId) setYoutubeVideoId(foundId);
+      if (foundId) {
+        setYoutubeVideoId(foundId);
+        try {
+          // Guardar en caché Local y Global
+          await AsyncStorage.setItem(cacheKey, foundId);
+          await supabase.from('youtube_cache').upsert({ match_key: cacheKey, video_id: foundId }, { onConflict: 'match_key' });
+          console.log(`[YouTube] ✅ Vídeo guardado en caché Local y Global: ${foundId}`);
+        } catch { /* Error al guardar en caché, silencioso */ }
+      }
     } catch (error) {
       console.warn('[YouTube] Error Fatal:', error.message);
     } finally {
@@ -505,7 +847,7 @@ export default function MatchDetailScreen({ route, navigation }) {
 
   const updateMatchFromBlocks = useCallback(async (blocks) => {
     if (!blocks || !Array.isArray(blocks)) return;
-    
+
     const hT = (hTargetRef.current || '').trim().toLowerCase();
     const aT = (aTargetRef.current || '').trim().toLowerCase();
     const hRf = hrefRef.current;
@@ -515,7 +857,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       try {
         const directBlocks = await fetchAndParse(hRf);
         setMatchBlocks(directBlocks || []);
-        
+
         const bMatches = (directBlocks || [])
           .filter((b) => b.type === 'table')
           .flatMap((b) => b.matches || []);
@@ -547,7 +889,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       });
       if (found) break;
     }
-    
+
     // Si no, buscar el primero con sets válidos
     if (!found) {
       for (const block of blocks) {
@@ -585,8 +927,8 @@ export default function MatchDetailScreen({ route, navigation }) {
 
     if (!blockMatches.length) return false;
 
-    const hTarget = (homeTargetRef.current || '').trim().toLowerCase();
-    const aTarget = (awayTargetRef.current || '').trim().toLowerCase();
+    const hTarget = (hTargetRef.current || '').trim().toLowerCase();
+    const aTarget = (aTargetRef.current || '').trim().toLowerCase();
 
     const found = blockMatches.find((m) => {
       const s = getMatchSummary(m);
@@ -625,7 +967,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       } catch (e) {
         console.warn('[MatchDetail] Error en auto-refresh:', e.message);
       }
-    }, 30000); // 30 segundos
+    }, 15000); // 15 segundos
     return () => clearInterval(intervalId);
   }, [calendarUrl, currentMatch?.href, updateMatchFromBlocks, updateMatchFromDirectMatchBlocks]);
 
@@ -654,7 +996,7 @@ export default function MatchDetailScreen({ route, navigation }) {
     async function loadDirectMatchData() {
       const matchHref = currentMatch?.href;
       if (!matchHref) return;
-      
+
       setMatchBlocksLoading(true);
       try {
         const directBlocks = await fetchAndParse(matchHref);
@@ -744,7 +1086,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         case 'mapa':
           const venue = summary.venue || '';
           const hasCoords = !!(matchCoords?.latitude && matchCoords?.longitude);
-  
+
           return (
             <View style={{ gap: Spacing.lg }}>
               <View style={[styles.mapPlaceholder, { borderColor: Colors.border, backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
@@ -780,9 +1122,7 @@ export default function MatchDetailScreen({ route, navigation }) {
                       {matchCoords
                         ? (matchBlocks.some(b => b.type === 'map_coordinates')
                           ? "✓ Coordenadas obtenidas directamente del acta oficial de la federación."
-                          : (currentMatch?.coordinates
-                            ? "✓ Ubicación obtenida del resumen del calendario."
-                            : `✓ Ubicación habitual de ${summary.homeTeam} (Manual).`))
+                          : "✓ Ubicación obtenida del resumen del calendario.")
                         : "La federación no ha publicado el enlace con coordenadas (Google Maps) para este encuentro."}
                     </Text>
                   </View>
@@ -800,7 +1140,7 @@ export default function MatchDetailScreen({ route, navigation }) {
                         <Text style={styles.actionBtnText}>Cómo llegar (Google Maps)</Text>
                       </TouchableOpacity>
                     )}
-  
+
                     <TouchableOpacity
                       style={[styles.actionBtnOutline, { borderColor: isReminderActive ? Colors.success : Colors.primary, opacity: reminderLoading ? 0.6 : 1 }]}
                       onPress={toggleReminder}
@@ -839,7 +1179,8 @@ export default function MatchDetailScreen({ route, navigation }) {
                   >
                     <Image
                       source={{ uri: `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg` }}
-                      style={{ width: '100%', height: '100%', resizeMode: 'cover' }}
+                      style={{ width: '100%', height: '100%' }}
+                      resizeMode="cover"
                     />
                     <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
                       <MaterialIcons name="play-circle" size={72} color="rgba(255,255,255,0.7)" />
@@ -878,6 +1219,39 @@ export default function MatchDetailScreen({ route, navigation }) {
   };
 
   const badgeText = summary.state === 'live' ? 'EN CURSO' : (summary.state === 'finished' ? 'FINALIZADO' : 'PRÓXIMO');
+
+  // Navegación a TeamDetailScreen usando SOLO la info cacheada del ranking
+  const handlePressTeamDetail = useCallback((teamName, teamUrl, teamLogo) => {
+    const cached = getTeamFromCache(calendarUrl, teamName);
+    // Intenta obtener los bloques de ranking y calendario desde route.params si existen
+    const rankingBlocks = route.params?.rankingBlocks;
+    const calendarBlocks = route.params?.calendarBlocks;
+    if (cached && cached.url) {
+      navigation.push('TeamDetail', {
+        teamName: cached.name || teamName,
+        teamUrl: cached.url,
+        teamLogo: cached.logo || teamLogo,
+        tournamentTitle: route.params?.match?.tournamentName || route.params?.tournamentTitle,
+        calendarUrl,
+        points: cached.points,
+        divisionName: cached.divisionName,
+        position: cached.position,
+        leagueStats: cached.leagueStats,
+        rankingBlocks,
+        calendarBlocks,
+      });
+    } else {
+      navigation.push('TeamDetail', {
+        teamName,
+        teamUrl,
+        teamLogo,
+        tournamentTitle: route.params?.match?.tournamentName || route.params?.tournamentTitle,
+        calendarUrl,
+        rankingBlocks,
+        calendarBlocks,
+      });
+    }
+  }, [calendarUrl, navigation, route.params]);
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: Colors.background }]} edges={['top']}>
@@ -920,17 +1294,7 @@ export default function MatchDetailScreen({ route, navigation }) {
             <TouchableOpacity
               style={styles.teamSide}
               activeOpacity={0.7}
-              onPress={() => {
-                const cached = getTeamFromCache(calendarUrl, summary.homeTeam);
-                navigation.push('TeamDetail', {
-                  teamName: summary.homeTeam,
-                  teamUrl: cached?.url || summary.homeUrl,
-                  calendarUrl,
-                  points: cached?.points,
-                  divisionName: cached?.divisionName,
-                  position: cached?.position
-                });
-              }}
+              onPress={() => handlePressTeamDetail(summary.homeTeam, summary.homeUrl, summary.homeLogo)}
             >
               <TeamLogo uri={summary.homeLogo} name={summary.homeTeam} isDark={isDark} size={64} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.homeTeam}</Text>
@@ -945,26 +1309,17 @@ export default function MatchDetailScreen({ route, navigation }) {
             <TouchableOpacity
               style={styles.teamSide}
               activeOpacity={0.7}
-              onPress={() => {
-                const cached = getTeamFromCache(calendarUrl, summary.awayTeam);
-                navigation.push('TeamDetail', {
-                  teamName: summary.awayTeam,
-                  teamUrl: cached?.url || summary.awayUrl,
-                  calendarUrl,
-                  points: cached?.points,
-                  divisionName: cached?.divisionName,
-                  position: cached?.position
-                });
-              }}
+              onPress={() => handlePressTeamDetail(summary.awayTeam, summary.awayUrl, summary.awayLogo)}
             >
               <TeamLogo uri={summary.awayLogo} name={summary.awayTeam} isDark={isDark} size={64} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.awayTeam}</Text>
             </TouchableOpacity>
           </View>
-          <View style={styles.venueRow}>
-            <MaterialIcons name="location-pin" size={14} color="rgba(255,255,255,0.7)" />
-            <Text style={styles.venueText} numberOfLines={1}>{summary.venue || 'Sede por definir'}</Text>
-          </View>
+          {(summary.venue && summary.venue !== 'Sede por definir') && (
+            <View style={styles.venueRow}>
+              <Text style={styles.venueText} numberOfLines={1}>{summary.venue}</Text>
+            </View>
+          )}
         </View>
         <View style={{ height: Spacing.lg, backgroundColor: 'transparent' }} />
         <View>

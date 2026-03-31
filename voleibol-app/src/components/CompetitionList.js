@@ -170,7 +170,7 @@ function CompetitionCard({ item, blocks, onPress }) {
       }}
       activeOpacity={0.8}
       onPress={() => {
-        if (/(txapelketa|topaketa)/i.test(name || '')) {
+        if (/(txapelketa|topaketa|copa|kopa|cup|fase|eliminatoria|final|kanporaketa)/i.test(name || '')) {
           onPress && onPress('torneo');
         } else {
           onPress && onPress('liga');
@@ -249,7 +249,7 @@ function CompetitionCard({ item, blocks, onPress }) {
           <LeagueShields blocks={blocks} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
           <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>
-              {/txapelketa|topaketa/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
+              {/(txapelketa|topaketa|copa|kopa|cup|fase|eliminatoria|final|kanporaketa)/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
             </Text>
             <MaterialIcons name="chevron-right" size={18} color="#ffffff" />
           </View>
@@ -263,27 +263,27 @@ function SkeletonCompetitionCard() {
   const { colors: Colors, isDark } = useTheme();
   return (
     <View style={{
-        backgroundColor: isDark ? '#1e293b' : '#ffffff',
-        borderRadius: Radius.xl,
-        borderWidth: 1,
-        borderColor: 'rgba(13,143,242,0.05)',
-        height: 165,
-        marginBottom: Spacing.md,
-        padding: Spacing.xl,
-        justifyContent: 'space-between'
-      }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-           <View style={{ width: 80, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-           <View style={{ width: 60, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-        </View>
-        <View style={{ gap: 8 }}>
-           <View style={{ width: '70%', height: 24, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-           <View style={{ width: '40%', height: 16, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-        </View>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', paddingTop: Spacing.md }}>
-           <View style={{ width: 60, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: 16 }} />
-           <View style={{ width: 100, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.md }} />
-        </View>
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderRadius: Radius.xl,
+      borderWidth: 1,
+      borderColor: 'rgba(13,143,242,0.05)',
+      height: 165,
+      marginBottom: Spacing.md,
+      padding: Spacing.xl,
+      justifyContent: 'space-between'
+    }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <View style={{ width: 80, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+        <View style={{ width: 60, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+      </View>
+      <View style={{ gap: 8 }}>
+        <View style={{ width: '70%', height: 24, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+        <View style={{ width: '40%', height: 16, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+      </View>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', paddingTop: Spacing.md }}>
+        <View style={{ width: 60, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: 16 }} />
+        <View style={{ width: 100, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.md }} />
+      </View>
     </View>
   );
 }

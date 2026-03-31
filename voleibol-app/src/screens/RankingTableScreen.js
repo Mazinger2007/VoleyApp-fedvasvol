@@ -14,6 +14,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Radius, Shadow, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { cacheTeamsFromRanking, getTeamFromCache } from '../utils/teamCache';
 
 function findColIndex(headers, ...keywords) {
   for (const kw of keywords) {
@@ -128,6 +129,12 @@ export default function RankingTableScreen({ route, navigation }) {
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    
+    // Al entrar, si tenemos la URL del ranking, forzamos el cacheo de estos datos
+    if (route.params?.rankingUrl && tableBlock) {
+      cacheTeamsFromRanking(route.params.rankingUrl, [tableBlock]);
+    }
+
     return () => {
       ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
     };
@@ -208,6 +215,21 @@ export default function RankingTableScreen({ route, navigation }) {
     })),
     [posCol, rowLogos, rows, statColumns, teamCol]
   );
+
+  const handlePressTeam = (row) => {
+    // Intentar sacar del caché para tener la URL exacta de navegación
+    const cached = getTeamFromCache(route.params?.rankingUrl || route.params?.calendarUrl, row.teamName);
+    
+    navigation.navigate('TeamDetail', {
+      teamName: cached?.name || row.teamName,
+      teamUrl: cached?.url || tableBlock?.rowLinks?.[row.index],
+      teamLogo: cached?.logo || row.logo,
+      tournamentTitle: title,
+      leagueStats: cached?.leagueStats || row.values,
+      calendarUrl: route.params?.calendarUrl,
+      rankingBlocks: [tableBlock],
+    });
+  };
 
   const styles = useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
@@ -410,7 +432,11 @@ export default function RankingTableScreen({ route, navigation }) {
                       )}
                     </View>
 
-                    <View style={styles.cellTeam}>
+                    <TouchableOpacity 
+                      style={styles.cellTeam}
+                      activeOpacity={0.7}
+                      onPress={() => handlePressTeam(row)}
+                    >
                       <View style={styles.teamRow}>
                         <View style={styles.logoWrap}>
                           {row.logo ? (
@@ -421,7 +447,7 @@ export default function RankingTableScreen({ route, navigation }) {
                         </View>
                         <Text style={styles.teamName} numberOfLines={1}>{row.teamName}</Text>
                       </View>
-                    </View>
+                    </TouchableOpacity>
 
                     {statColumns.map((column) => {
                       const value = row.values[column.key] ?? '-';

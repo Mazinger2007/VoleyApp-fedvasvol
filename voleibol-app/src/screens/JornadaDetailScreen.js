@@ -10,6 +10,7 @@ import {
   Platform,
   RefreshControl,
   ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,10 +20,10 @@ import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { getMatchSummary, formatMatchDisplayDate, rowToMatch } from '../components/MatchList';
 import { fetchAndParse } from '../utils/htmlParser';
-import { 
-  getCachedLogoColorSync, 
-  requestLogoColorExtraction, 
-  subscribeToLogoColor 
+import {
+  getCachedLogoColorSync,
+  requestLogoColorExtraction,
+  subscribeToLogoColor
 } from '../utils/logoColorCache';
 import { getDominantBorderColor } from '../utils/imageColor';
 
@@ -31,7 +32,7 @@ function TeamLogo({ uri, name, isDark, colors }) {
 
   useEffect(() => {
     if (!uri) return;
-    
+
     // Check cache again in case it hydrated since component mount
     const cached = getCachedLogoColorSync(uri);
     if (cached) setBgColor(cached);
@@ -50,9 +51,9 @@ function TeamLogo({ uri, name, isDark, colors }) {
   return (
     <View style={[styles.logoWrap, { backgroundColor: bgColor }]}>
       {uri ? (
-        <Image 
-          source={uri} 
-          style={{ width: '95%', height: '95%' }} 
+        <Image
+          source={uri}
+          style={{ width: '95%', height: '95%' }}
           contentFit="contain"
           transition={300}
           cachePolicy="memory-disk"
@@ -81,19 +82,23 @@ function MatchCard({ match, isDark, colors, onPress }) {
     <View style={[
       styles.card,
       { backgroundColor: isDark ? '#1e293b' : '#ffffff', borderColor: isDark ? 'rgba(71, 85, 105, 0.4)' : '#e2e8f0' },
-      isLive && { 
-        borderLeftWidth: 6, 
-        borderLeftColor: '#ef4444', 
-        backgroundColor: isDark ? 'rgba(239, 68, 68, 0.08)' : '#fff5f5' 
+      isLive && {
+        borderLeftWidth: 6,
+        borderLeftColor: '#ef4444',
+        backgroundColor: isDark ? 'rgba(239, 68, 68, 0.08)' : '#fff5f5'
       }
     ]}>
-      <TouchableOpacity 
+      <TouchableOpacity
         activeOpacity={0.7}
         onPress={() => {
           if (onPress) {
             onPress(match);
           } else {
-            navigation.navigate('MatchDetail', { match: { ...match, ...summary } });
+            navigation.navigate('MatchDetail', {
+              match: { ...match, ...summary },
+              calendarUrl: route.params?.calendarUrl,
+              rankingBlocks: route.params?.rankingBlocks
+            });
           }
         }}
         style={{ flex: 1 }}
@@ -131,7 +136,7 @@ function MatchCard({ match, isDark, colors, onPress }) {
               </View>
             )}
             {isLive && (
-               <Text style={styles.setInfo}>PARTIDO EN JUEGO</Text>
+              <Text style={styles.setInfo}>PARTIDO EN JUEGO</Text>
             )}
           </View>
 
@@ -156,19 +161,17 @@ function MatchCard({ match, isDark, colors, onPress }) {
 
 export default function JornadaDetailScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { tableBlock, title, subtitle, calendarUrl, jornadaIndex } = route.params || {};
+  const { tableBlock, title, subtitle, calendarUrl, jornadaIndex, rankingBlocks } = route.params || {};
 
   const [currentTableBlock, setCurrentTableBlock] = useState(tableBlock);
   const [refreshing, setRefreshing] = useState(false);
   const [renderReady, setRenderReady] = useState(false);
 
   useEffect(() => {
-    // Reemplazamos InteractionManager (deprecado) por un pequeño timeout
-    // para asegurar que las animaciones de transición terminen antes de renderizar la lista pesada
-    const handle = setTimeout(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
       setRenderReady(true);
-    }, 50);
-    return () => clearTimeout(handle);
+    });
+    return () => task.cancel();
   }, []);
 
   const onRefresh = useCallback(async () => {
@@ -185,7 +188,7 @@ export default function JornadaDetailScreen({ route, navigation }) {
       }
       // Fallback: buscar por título si no se encuentra por índice
       if (!newBlock) {
-        newBlock = blocks.find(b => 
+        newBlock = blocks.find(b =>
           (b.type === 'table' && (b.title === title || b.title === tableBlock?.title)) ||
           (b.type === 'table' && b.matches?.length > 0)
         );
@@ -229,16 +232,17 @@ export default function JornadaDetailScreen({ route, navigation }) {
   }, [matchList]);
 
   const handlePressMatch = (match) => {
-    navigation.navigate('MatchDetail', { 
+    navigation.navigate('MatchDetail', {
       match: { ...match, ...getMatchSummary(match) },
-      calendarUrl 
+      calendarUrl,
+      rankingBlocks: route.params?.rankingBlocks
     });
   };
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: Colors.background }]} edges={['top']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.background} />
-      
+
       {/* Header */}
       <View style={[styles.header, { borderBottomColor: Colors.divider, backgroundColor: isDark ? Colors.background : '#ffffff' }]}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
@@ -249,70 +253,68 @@ export default function JornadaDetailScreen({ route, navigation }) {
       </View>
 
 
-      <ScrollView 
-        contentContainerStyle={styles.scrollContent} 
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl 
-            refreshing={refreshing} 
-            onRefresh={onRefresh} 
-            colors={[Colors.primary]} 
-            tintColor={Colors.primary} 
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[Colors.primary]}
+            tintColor={Colors.primary}
           />
         }
       >
         {!renderReady ? (
-          <View style={{ padding: Spacing.xxl, alignItems: 'center', justifyContent: 'center' }}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-          </View>
+          <View style={{ flex: 1, minHeight: 400 }} />
         ) : (
           <>
             {/* LIVE */}
-        {sortedMatches.live.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MaterialIcons name="live-tv" size={16} color="#ef4444" />
-              <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>PARTIDOS EN DIRECTO</Text>
-            </View>
-            {sortedMatches.live.map((m, i) => (
-              <MatchCard key={`live-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
-            ))}
-          </View>
-        )}
+            {sortedMatches.live.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <MaterialIcons name="live-tv" size={16} color="#ef4444" />
+                  <Text style={[styles.sectionTitle, { color: '#ef4444' }]}>PARTIDOS EN DIRECTO</Text>
+                </View>
+                {sortedMatches.live.map((m, i) => (
+                  <MatchCard key={`live-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
+                ))}
+              </View>
+            )}
 
-        {/* UPCOMING */}
-        {sortedMatches.upcoming.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MaterialIcons name="schedule" size={16} color={isDark ? Colors.textMuted : '#64748b'} />
-              <Text style={[styles.sectionTitle, { color: isDark ? Colors.textMuted : '#64748b' }]}>PRÓXIMOS PARTIDOS</Text>
-            </View>
-            {sortedMatches.upcoming.map((m, i) => (
-              <MatchCard key={`up-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
-            ))}
-          </View>
-        )}
+            {/* UPCOMING */}
+            {sortedMatches.upcoming.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <MaterialIcons name="schedule" size={16} color={isDark ? Colors.textMuted : '#64748b'} />
+                  <Text style={[styles.sectionTitle, { color: isDark ? Colors.textMuted : '#64748b' }]}>PRÓXIMOS PARTIDOS</Text>
+                </View>
+                {sortedMatches.upcoming.map((m, i) => (
+                  <MatchCard key={`up-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
+                ))}
+              </View>
+            )}
 
-        {/* FINISHED */}
-        {sortedMatches.finished.length > 0 && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MaterialIcons name="check-circle" size={16} color={isDark ? Colors.textMuted : '#64748b'} />
-              <Text style={[styles.sectionTitle, { color: isDark ? Colors.textMuted : '#64748b' }]}>PARTIDOS FINALIZADOS</Text>
-            </View>
-            {sortedMatches.finished.map((m, i) => (
-              <MatchCard key={`fin-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
-            ))}
-          </View>
-        )}
+            {/* FINISHED */}
+            {sortedMatches.finished.length > 0 && (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <MaterialIcons name="check-circle" size={16} color={isDark ? Colors.textMuted : '#64748b'} />
+                  <Text style={[styles.sectionTitle, { color: isDark ? Colors.textMuted : '#64748b' }]}>PARTIDOS FINALIZADOS</Text>
+                </View>
+                {sortedMatches.finished.map((m, i) => (
+                  <MatchCard key={`fin-${i}`} match={m} isDark={isDark} colors={Colors} onPress={handlePressMatch} />
+                ))}
+              </View>
+            )}
 
-        {matchList.length === 0 && (
-          <View style={styles.emptyWrap}>
-             <MaterialIcons name="sports-volleyball" size={48} color={Colors.textMuted} />
-             <Text style={{ color: Colors.textMuted, marginTop: 12 }}>No hay partidos para esta jornada</Text>
-          </View>
-        )}
-        </>
+            {matchList.length === 0 && (
+              <View style={styles.emptyWrap}>
+                <MaterialIcons name="sports-volleyball" size={48} color={Colors.textMuted} />
+                <Text style={{ color: Colors.textMuted, marginTop: 12 }}>No hay partidos para esta jornada</Text>
+              </View>
+            )}
+          </>
         )}
       </ScrollView>
 

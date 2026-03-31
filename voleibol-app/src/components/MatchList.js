@@ -95,10 +95,30 @@ export function parseMatchDateTime(rawDate) {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  // Solo hora (ej: "20:00") -> hoy
-  if (timeM) {
-    const today = new Date();
-    return new Date(today.getFullYear(), today.getMonth(), today.getDate(), hours, minutes);
+  // DD [MES] (ej: 14 Mar)
+  const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const monthMatch = s.match(/(\d{1,2})\s+([a-zA-ZáéíóúÁÉÍÓÚñÑ]{3})/);
+  if (monthMatch) {
+    const day = parseInt(monthMatch[1], 10);
+    const mName = monthMatch[2].toLowerCase().slice(0, 3);
+    const monthIdx = monthNames.indexOf(mName);
+    if (monthIdx !== -1) {
+      const now = new Date();
+      const d = new Date(now.getFullYear(), monthIdx, day, hours, minutes);
+      return isNaN(d.getTime()) ? null : d;
+    }
+  }
+
+  // DD/MM HH:mm (Euskadiko Txapelketa format)
+  const bracketM = s.match(/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (bracketM) {
+    const day = parseInt(bracketM[1], 10);
+    const month = parseInt(bracketM[2], 10);
+    const h = parseInt(bracketM[3], 10);
+    const m = parseInt(bracketM[4], 10);
+    const now = new Date();
+    const d = new Date(now.getFullYear(), month - 1, day, h, m);
+    return isNaN(d.getTime()) ? null : d;
   }
 
   // Fallback a parseo nativo (ISO u otros)
@@ -237,12 +257,14 @@ export function getMatchSummary(match = {}) {
   try {
     if (!match) return { homeTeam: 'Local', awayTeam: 'Visitante', homeScore: null, awayScore: null, time: '--:--', sets: [], venue: 'Sede desconocida' };
     
-    // Si ya es un resumen (tiene dateLabel), devolverlo pero asegurar tipos
+    // Si ya es un resumen (tiene dateLabel), devolverlo pero asegurar tipos sin mutar el original
     if (match.dateLabel !== undefined && match.state !== undefined) {
-      if (typeof match.homeTeam !== 'string') match.homeTeam = String(match.homeTeam || 'Local');
-      if (typeof match.awayTeam !== 'string') match.awayTeam = String(match.awayTeam || 'Visitante');
-      if (!Array.isArray(match.sets)) match.sets = [];
-      return match;
+      return {
+        ...match,
+        homeTeam: String(match.homeTeam || 'Local'),
+        awayTeam: String(match.awayTeam || 'Visitante'),
+        sets: Array.isArray(match.sets) ? match.sets : []
+      };
     }
 
     const structured = !!(match.homeTeam && match.awayTeam);
@@ -257,13 +279,13 @@ export function getMatchSummary(match = {}) {
            : null
       : getMatchField(match, 'resultado', 'marcador', 'result', 'sets');
 
-    const score = resultRaw ? parseNumericScore(resultRaw) : { home: null, away: null };
+    const score = (resultRaw ? parseNumericScore(resultRaw) : null) || { home: null, away: null };
     
     // Intentar sacar scores directos si falló lo anterior
     if (score.home === null && typeof match.homeScore === 'number') score.home = match.homeScore;
     if (score.away === null && typeof match.awayScore === 'number') score.away = match.awayScore;
 
-    const rawDate = structured ? match.date : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
+    const rawDate = structured ? (match.date || match.dateTime) : getMatchField(match, 'fecha', 'date', 'día', 'jornada');
     const timeMatch = String(rawDate || '').match(/\b\d{1,2}:\d{2}\b/);
     const rawTime = structured ? (match.time || timeMatch?.[0] || null) : (timeMatch?.[0] || null);
 
@@ -288,6 +310,8 @@ export function getMatchSummary(match = {}) {
       venue: String(venue || 'Sede por confirmar'),
       homeLogo: match.homeLogo || match.homeImage || null,
       awayLogo: match.awayLogo || match.awayImage || null,
+      homeUrl: match.homeUrl || null,
+      awayUrl: match.awayUrl || null,
       sets: Array.isArray(match.sets) ? match.sets : [],
       coordinates: match.coordinates || null,
       href: match.href || null,
@@ -310,7 +334,7 @@ export function getMatchSummary(match = {}) {
   }
 }
 
-export function MatchCard({ match, headers, onPress, calendarUrl }) {
+export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks }) {
   const navigation = useNavigation();
   const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);
@@ -394,7 +418,11 @@ export function MatchCard({ match, headers, onPress, calendarUrl }) {
         if (onPress) {
           onPress(match);
         } else {
-          navigation.navigate('MatchDetail', { match: { ...match, ...summary }, calendarUrl });
+          navigation.navigate('MatchDetail', { 
+            match: { ...match, ...summary }, 
+            calendarUrl, 
+            rankingBlocks 
+          });
         }
       }}
     >
@@ -483,7 +511,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl }) {
  * Lista de partidos a partir de un bloque de tipo 'table'
  * @param {{ headers: string[], rows: string[][] }} tableBlock
  */
-export default function MatchList({ tableBlock, matches, onPressMatch, calendarUrl }) {
+export default function MatchList({ tableBlock, matches, onPressMatch, calendarUrl, rankingBlocks }) {
   const { colors: Colors } = useTheme();
   
   const finalMatches = useMemo(() => {
@@ -512,7 +540,13 @@ export default function MatchList({ tableBlock, matches, onPressMatch, calendarU
       data={finalMatches}
       keyExtractor={(_, i) => String(i)}
       renderItem={({ item }) => (
-        <MatchCard match={item} headers={tableBlock?.headers || []} onPress={onPressMatch} calendarUrl={calendarUrl} />
+        <MatchCard 
+          match={item} 
+          headers={tableBlock?.headers || []} 
+          onPress={onPressMatch} 
+          calendarUrl={calendarUrl} 
+          rankingBlocks={rankingBlocks}
+        />
       )}
       contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm }}
       showsVerticalScrollIndicator={false}

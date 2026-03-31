@@ -26,7 +26,7 @@ export async function proxyAjaxTableSearch(params = {}) {
       headers: {
         'Accept': 'text/html,application/json',
         'Accept-Language': 'es-ES,es;q=0.9',
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36',
+        // 'User-Agent' intentionally omitted for browser compatibility
       },
       credentials: 'include', // Include cookies if any
     });

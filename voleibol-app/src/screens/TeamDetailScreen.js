@@ -2,7 +2,7 @@
 // Pantalla de detalle de un equipo — Diseño premium v2.
 // Muestra: hero con escudo, stats, próximos y partidos jugados.
 
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { getTeamColor, getClubBaseName } from '../constants/teamColors';
 import {
   View,
@@ -269,12 +269,30 @@ export default function TeamDetailScreen({ route, navigation }) {
     tournamentTitle,
     leagueStats: leagueStatsFromRoute,
     calendarUrl,
+    rankingBlocks,
+    calendarBlocks: calendarBlocksFromRoute,
   } = route.params || {};
 
   const teamBaseName = useMemo(() => getClubBaseName(teamName) || teamName, [teamName]);
 
-  const { blocks, loading, error, refresh } = useFetch(teamUrl || null);
-  const { blocks: calendarBlocks } = useFetch(calendarUrl || null);
+  // Si ya tenemos rankingBlocks/calendarBlocks (pasados por props), evitamos mostrar el cargando
+  const skipTeamFetch = !!rankingBlocks;
+  const skipCalendarFetch = !!calendarBlocksFromRoute;
+
+  const teamFetch = useFetch(teamUrl || null, { lazy: skipTeamFetch });
+  const calendarFetch = useFetch(calendarUrl || null, { lazy: skipCalendarFetch });
+
+  // Consolidar bloques
+  const blocks = rankingBlocks || teamFetch.blocks;
+  const calendarBlocks = calendarBlocksFromRoute || calendarFetch.blocks;
+
+  const loading = (!skipTeamFetch && teamFetch.loading) || (!skipCalendarFetch && calendarFetch.loading);
+  const error = teamFetch.error || calendarFetch.error;
+  
+  const refresh = useCallback(() => {
+    if (!skipTeamFetch) teamFetch.refresh();
+    if (!skipCalendarFetch) calendarFetch.refresh();
+  }, [skipTeamFetch, teamFetch, skipCalendarFetch, calendarFetch]);
 
   const teamLogoResolved = useMemo(() => {
     if (blocks && blocks.length > 0) {
@@ -352,7 +370,11 @@ export default function TeamDetailScreen({ route, navigation }) {
   const leagueStats = useMemo(() => ({
     position: leagueStatsFromRoute?.position ?? '—',
     played: leagueStatsFromRoute?.played ?? '—',
-    pointsScored: pointsFromCalendar || '—',
+    won: leagueStatsFromRoute?.won ?? '—',
+    lost: leagueStatsFromRoute?.lost ?? '—',
+    setsFor: leagueStatsFromRoute?.setsFor ?? '—',
+    setsAgainst: leagueStatsFromRoute?.setsAgainst ?? '—',
+    points: leagueStatsFromRoute?.points ?? pointsFromCalendar ?? '—',
   }), [leagueStatsFromRoute, pointsFromCalendar]);
 
   const { statsTable, matchTables, otherTables } = useMemo(() => {
@@ -458,12 +480,13 @@ export default function TeamDetailScreen({ route, navigation }) {
   }, [statsTable]);
 
   // Prioritize official stats over computed ones
-  const finalPoints = officialStats.pts ?? leagueStats.pointsScored;
-  const finalPlayed = officialStats.played ?? leagueStats.played;
-  const finalWins = officialStats.wins ?? record.wins;
-  const finalLosses = officialStats.losses ?? record.losses;
-  const finalSetsFor = officialStats.setsFor ?? sumSetsFromMatches(playedMatches, teamName, 'for');
-  const finalSetsAgainst = officialStats.setsAgainst ?? sumSetsFromMatches(playedMatches, teamName, 'against');
+  // Prioritize official stats (AJAX) over league table stats, then computed ones
+  const finalPoints = officialStats.pts ?? (leagueStats.points !== '—' ? leagueStats.points : '—');
+  const finalPlayed = officialStats.played ?? (leagueStats.played !== '—' ? leagueStats.played : '—');
+  const finalWins = officialStats.wins ?? (leagueStats.won !== '—' ? leagueStats.won : record.wins);
+  const finalLosses = officialStats.losses ?? (leagueStats.lost !== '—' ? leagueStats.lost : record.losses);
+  const finalSetsFor = officialStats.setsFor ?? (leagueStats.setsFor !== '—' ? leagueStats.setsFor : sumSetsFromMatches(playedMatches, teamName, 'for'));
+  const finalSetsAgainst = officialStats.setsAgainst ?? (leagueStats.setsAgainst !== '—' ? leagueStats.setsAgainst : sumSetsFromMatches(playedMatches, teamName, 'against'));
 
   if (loading) return <LoadingView variant="clean" message={`Cargando ${teamName}…`} />;
 

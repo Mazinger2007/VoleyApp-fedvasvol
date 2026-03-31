@@ -41,11 +41,7 @@ export default function HomeScreen({ navigation }) {
   }, [blocks]);
 
   const handleOpenTournament = useCallback((url, name, tipo) => {
-    if (tipo === 'torneo') {
-      openTournamentDetail(navigation, { href: url, name, isTorneo: true });
-    } else {
-      openTournamentDetail(navigation, { href: url, name });
-    }
+    openTournamentDetail(navigation, { href: url, name, isTorneo: tipo === 'torneo' });
   }, [navigation]);
 
   // Si la carga terminó y no hay ligas (error o vacío), desbloquear loader
@@ -81,12 +77,17 @@ export default function HomeScreen({ navigation }) {
     return <ErrorView message={error} onRetry={refresh} />;
   }
 
-  // ── Pantalla de carga completa: antes de que todo esté listo, no mostramos NADA ──
-  if (!isAppReady) {
-    return (
-      <SafeAreaView style={[styles.safe, { justifyContent: 'center', alignItems: 'center' }]} edges={['top']}>
-        {/* Cargamos las CompetitionList en background (ocultas) para poblar el cache */}
-        <View style={{ position: 'absolute', opacity: 0, pointerEvents: 'none', height: 0, overflow: 'hidden' }}>
+  // ── App lista con estructura de renderizado estable ───────────────────────
+  return (
+    <SafeAreaView style={styles.safe} edges={['top']}>
+      <Header
+        title="Voley Pro"
+        onRefresh={refresh}
+      />
+
+      {/* Precarga invisible de CompetitionList para poblar el cache mientras carga la principal */}
+      {!isAppReady && (
+        <View style={{ position: 'absolute', opacity: 0, height: 0, overflow: 'hidden', pointerEvents: 'none' }}>
           {tournamentTable && (
             <CompetitionList
               tableBlock={tournamentTable}
@@ -95,55 +96,50 @@ export default function HomeScreen({ navigation }) {
             />
           )}
         </View>
-        <LoadingView message={loading ? "Descargando temporada..." : "Preparando ligas..."} />
-      </SafeAreaView>
-    );
-  }
+      )}
 
-  // ── App lista: renderizar TODO de golpe ──────────────────────────────────
-  return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <Header
-        title="Voley Pro"
-        onRefresh={refresh}
-      />
+      {!isAppReady ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <LoadingView message={loading ? "Descargando temporada..." : "Cargando ligas..."} />
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={loading}
+              onRefresh={refresh}
+              colors={[Colors.primary]}
+              tintColor={Colors.primary}
+            />
+          }
+        >
+          {/* Lista clicable de torneos */}
+          {tournamentTable ? (
+            <CompetitionList
+              tableBlock={tournamentTable}
+              onOpenTournament={handleOpenTournament}
+              onReady={handleReady}
+            />
+          ) : (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyIcon}>🏐</Text>
+              <Text style={styles.emptyText}>
+                No se encontró contenido en la portada.{'\n'}
+                Desliza hacia abajo para recargar.
+              </Text>
+            </View>
+          )}
 
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={loading}
-            onRefresh={refresh}
-            colors={[Colors.primary]}
-            tintColor={Colors.primary}
-          />
-        }
-      >
-        {/* Lista clicable de torneos */}
-        {tournamentTable ? (
-          <CompetitionList
-            tableBlock={tournamentTable}
-            onOpenTournament={handleOpenTournament}
-            onReady={handleReady}
-          />
-        ) : (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyIcon}>🏐</Text>
-            <Text style={styles.emptyText}>
-              No se encontró contenido en la portada.{'\n'}
-              Desliza hacia abajo para recargar.
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>
+              Datos de fedvasvol.com · Uso personal
             </Text>
           </View>
-        )}
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Datos de fedvasvol.com · Uso personal
-          </Text>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }

@@ -12,24 +12,16 @@ function parseTournamentMatchDetail(html) {
     // Extraer todos los <td>...</td> (incluyendo el primero)
     const cellMatches = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)];
     let teamName = null;
-    let teamUrl = null;
     let tdRaw = '';
     if (cellMatches.length > 0) {
       tdRaw = row[1].match(/<td[^>]*>.*?<\/td>/is)?.[0] || '';
     }
-
-    // Buscar enlace al equipo para navegación — Si es de torneo, añadimos /summary para que cargue Ranking/Estadísticas
-    const hrefMatch = row[1].match(/href=["']([^"']+\/team\/[^"']+)["']/i);
-    if (hrefMatch) {
-      let absolute = toAbsoluteUrl(hrefMatch[1]);
-      if (absolute.includes('/tournament/')) {
-        // Solo quitamos pestañas finales como /information, /video etc. pero MANTENEMOS el /team/ID
-        teamUrl = absolute.replace(/\/(summary|information|ranking|results|calendar|video|matches)(\/.*)?$/, '') + '/summary';
-      } else {
-        teamUrl = absolute;
-      }
+    // Loguear el HTML crudo del primer <td>
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
     }
-
     // Buscar el primer <td ... data-original-title="NOMBRE" ...> o title="NOMBRE"
     let tdMatch = tdRaw.match(/data-original-title=["']([^"']*)["']/i);
     if (tdMatch && tdMatch[1] && tdMatch[1].trim().length > 0) {
@@ -44,12 +36,13 @@ function parseTournamentMatchDetail(html) {
     }
     // Los sets están en las celdas a partir de la segunda
     const setValues = cellMatches.slice(1).map(m => parseInt(m[1].replace(/<[^>]+>/g, '').trim(), 10) || 0);
-    
-    return { teamName, teamUrl, setValues };
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
+    }
+    return { teamName, setValues };
   });
-
-  // 4. Buscar coordenadas (latitud/longitud) en el HTML
-  const coords = extractMapCoordinates(html);
 
   // 3. Si hay dos equipos y ambos tienen nombre y sets
   if (teamRows.length === 2 && teamRows[0].teamName && teamRows[1].teamName) {
@@ -57,79 +50,23 @@ function parseTournamentMatchDetail(html) {
     // Calcular sets ganados
     const homeScore = home.setValues.filter((h, i) => h > (away.setValues[i] || 0)).length;
     const awayScore = away.setValues.filter((a, i) => a > (home.setValues[i] || 0)).length;
-    
+    if (typeof window !== 'undefined' && window.console) {
+      window.console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
+    } else {
+      console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
+    }
     return [{
       homeTeam: home.teamName,
       awayTeam: away.teamName,
-      homeUrl: home.teamUrl,
-      awayUrl: away.teamUrl,
       sets: home.setValues.map((h, i) => ({ home: h, away: away.setValues[i] || 0 })),
       homeScore,
       awayScore,
       scoreText: `${homeScore} - ${awayScore}`,
-      coordinates: coords, // <-- Coordenadas extraídas
     }];
   }
+  console.log('[parseTournamentMatchDetail] No se pudieron extraer ambos equipos y sets correctamente:', JSON.stringify(teamRows));
   return [];
 }
-
-/**
- * Extrae coordenadas de latitud y longitud desde cualquier enlace de Google Maps
- * presente en el HTML que contenga parámetros q= o @ con coordenadas válidas.
- */
-export function extractMapCoordinates(html = '') {
-  const sHtml = String(html || '');
-  if (sHtml.length < 500) return null; // Ignorar respuestas vacías o errores
-  
-  console.log(`[extractMapCoordinates] Buscando en HTML (${sHtml.length} chars)...`);
-
-  // Helper para validar coordenadas reales
-  function parseCoords(latStr, lngStr) {
-    const lat = parseFloat(latStr || '');
-    const lng = parseFloat(lngStr || '');
-    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-      if (Math.abs(lat) > 0.0001 && Math.abs(lng) > 0.0001) {
-        return { latitude: lat, longitude: lng };
-      }
-    }
-    return null;
-  }
-
-  // 1. Buscar patrón q=lat,lng (Estándar en la federación)
-  const qMatches = [...sHtml.matchAll(/google\.[a-z.]+\/maps[^"']*?[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
-  for (const m of qMatches) {
-    const res = parseCoords(m[1], m[2]);
-    if (res) {
-      console.log(`[extractMapCoordinates] EXITO (q=): ${res.latitude},${res.longitude}`);
-      return res;
-    }
-  }
-
-  // 2. Buscar patrón moderno /@lat,lng
-  const atMatches = [...sHtml.matchAll(/google\.[a-z.]+\/maps[^"']*?\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
-  for (const m of atMatches) {
-    const res = parseCoords(m[1], m[2]);
-    if (res) {
-      console.log(`[extractMapCoordinates] EXITO (@): ${res.latitude},${res.longitude}`);
-      return res;
-    }
-  }
-
-  // 3. Buscar enlaces cortos (goo.gl/maps) - Estos no suelen traer coords en la URL directas
-  // pero a veces sí.
-  const shortMatches = [...sHtml.matchAll(/goo\.gl\/maps\/(-?\d+\.?\d*),(-?\d+\.?\d*)/gi)];
-  for (const m of shortMatches) {
-    const res = parseCoords(m[1], m[2]);
-    if (res) {
-      console.log(`[extractMapCoordinates] EXITO (short): ${res.latitude},${res.longitude}`);
-      return res;
-    }
-  }
-
-  console.log('[extractMapCoordinates] No se encontraron coordenadas válidas.');
-  return null;
-}
-
 // src/utils/htmlParser.js
 // Utilidad central para descargar y parsear el HTML de la federación.
 // Usa htmlparser2 + domutils para recorrer el DOM sin ningún CSS original.
@@ -137,6 +74,16 @@ export function extractMapCoordinates(html = '') {
 import axios from 'axios';
 import * as htmlparser2 from 'htmlparser2';
 import * as DomUtils from 'domutils';
+
+/** Helper para comprobar si un nodo es ancestro de otro en el DOM de htmlparser2 */
+const isAncestorNode = (p, n) => {
+  let curr = n.parent;
+  while (curr) {
+    if (curr === p) return true;
+    curr = curr.parent;
+  }
+  return false;
+};
 
 // ─── URLs base de la Federación Vasca de Voleibol ───────────────────────────
 export const BASE_URL = 'https://fedvasvol.com';
@@ -368,12 +315,6 @@ function parseBlocksFromHtml(html = '') {
     }
   }
 
-  // ── 4. Extraer coordenadas globales (para Mapa en Detalle de Partido) ─────
-  const coords = extractMapCoordinates(html || '');
-  if (coords) {
-    blocks.push({ type: 'map_coordinates', ...coords });
-  }
-
   return blocks;
 }
 
@@ -389,14 +330,13 @@ function parseCalendarBlocksFromAllHtml(html = '') {
   return blocks;
 }
 
-async function fetchAjaxTableHtml(params = {}, referer = '', options = {}) {
+async function fetchAjaxTableHtml(params = {}, referer = '') {
   // Petición AJAX directa a Fedvas (sin proxy, muy rápido ~400ms)
   const start = Date.now();
 
   try {
     const response = await axios.get(AJAX_URLS.tableSearch, {
       timeout: 15000,
-      signal: options.signal,
       params: {
         ...params,
         input: params.input ?? '',
@@ -420,7 +360,7 @@ async function fetchAjaxTableHtml(params = {}, referer = '', options = {}) {
   }
 }
 
-async function fetchTournamentContext(inputUrl = '', options = {}) {
+async function fetchTournamentContext(inputUrl = '') {
   const baseUrl = getTournamentBaseUrl(inputUrl);
   if (!baseUrl) {
     return {
@@ -450,7 +390,7 @@ async function fetchTournamentContext(inputUrl = '', options = {}) {
 
   const loadContextPromise = (async () => {
     const rankingBaseUrl = `${baseUrl}/ranking`;
-    const html = await fetchHTML(rankingBaseUrl, options);
+    const html = await fetchHTML(rankingBaseUrl);
     const blocks = parseBlocksFromHtml(html);
     const secondaryInputs = findSecondaryInputSets(html);
     const rankingInputs = secondaryInputs.find((fields) => fields.type === '12') || null;
@@ -567,7 +507,7 @@ async function fetchRankingBlocksViaAjax(inputUrl = '') {
   }
 }
 
-async function fetchCalendarBlocksViaAjax(inputUrl = '', options = {}) {
+async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
   const currentUrl = ensureCalendarCurrentUrl(inputUrl); // appends /all
   const cacheKey = normalizeUrlForCache(currentUrl);
@@ -580,7 +520,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '', options = {}) {
 
   // Fetch the /all page which already contains every matchday in HTML
   console.log('\n\n[DEBUG CALENDAR] 1. Requesting URL:', currentUrl);
-  const allHtml = await fetchHTML(currentUrl, options);
+  const allHtml = await fetchHTML(currentUrl);
   console.log('[DEBUG CALENDAR] 2. Received HTML length:', allHtml?.length);
   const allBlocks = parseBlocksFromHtml(allHtml);
 
@@ -619,7 +559,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '', options = {}) {
 
   try {
     console.log('[DEBUG CALENDAR] 7. Executing fetchAjaxTableHtml with global Cookie:', !!globalSessionCookie);
-    const ajaxHtml = await fetchAjaxTableHtml({ ...calendarInputs, input: '' }, currentUrl, options);
+    const ajaxHtml = await fetchAjaxTableHtml({ ...calendarInputs, input: '' }, currentUrl);
     console.log('[DEBUG CALENDAR] 8. AJAX response length:', ajaxHtml?.length);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
     const ajaxTables = ajaxBlocks.filter(b => b.type === 'table');
@@ -635,7 +575,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '', options = {}) {
   }
 }
 
-async function fetchTournamentsBlocksViaAjax(inputUrl = '', options = {}) {
+async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
   const t0 = Date.now();
   const tournamentsUrl = toAbsoluteUrl(inputUrl || URLS.home);
 
@@ -650,7 +590,6 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '', options = {}) {
     const response = await axios.get(tournamentsUrl, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
-      signal: options?.signal,
     });
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     const cookieHeader = (response.headers?.['set-cookie'] || [])
@@ -681,7 +620,6 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '', options = {}) {
   try {
     const response = await axios.post(AJAX_URLS.tournaments, payload.toString(), {
       timeout: 15000,
-      signal: options?.signal,
       headers: {
         ...defaultRequestHeaders(),
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
@@ -768,14 +706,13 @@ const INLINE_TAGS = new Set([
 ]);
 
 // ─── Descarga el HTML de una URL y lo devuelve como string ──────────────────
-export async function fetchHTML(url, options = {}) {
+export async function fetchHTML(url) {
   const start = Date.now();
 
   try {
     const response = await axios.get(url, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
-      signal: options.signal,
     });
 
     const html = typeof response.data === 'string' ? response.data : '';
@@ -967,10 +904,7 @@ function parseTable(tableNode) {
     };
 
     const match = parseMatchRow(row);
-    if (match) {
-      match.href = href; // Importante para navegación a MatchDetail con datos completos
-      rowData.match = match;
-    }
+    if (match) rowData.match = match;
 
     return rowData;
   });
@@ -1036,34 +970,14 @@ function extractRowPrimaryImage(rowNode) {
 function parseTeamCell(cellNode) {
   if (!cellNode) return null;
 
-  // 1. Intentar buscar por spans con clase ellipsis o con atributo title (común en Clupik)
   const titleSpans = DomUtils.findAll(
-    (n) => n.type === 'tag' && n.name === 'span' && (/\bellipsis\b/i.test(getNodeClass(n)) || n.attribs?.title || n.attribs?.['data-original-title']),
+    (n) => n.type === 'tag' && n.name === 'span' && /\bellipsis\b/i.test(getNodeClass(n)),
     cellNode.children || []
   );
 
-  let names = titleSpans
-    .map((n) => n.attribs?.['data-original-title']?.trim() || n.attribs?.title?.trim() || getTextContent(n).trim())
+  const names = titleSpans
+    .map((n) => n.attribs?.title?.trim() || getTextContent(n).trim())
     .filter(Boolean);
-
-  // 2. Si no hay nombres, buscar cualquier span que no sea sr-only
-  if (names.length < 2) {
-    const allSpans = DomUtils.findAll(
-      (n) => n.name === 'span' && !/\bsr-only\b/i.test(getNodeClass(n)),
-      cellNode.children || []
-    );
-    const spanNames = allSpans.map(s => getTextContent(s).trim()).filter(t => t.length > 2);
-    if (spanNames.length >= 2) names = spanNames;
-  }
-
-  // 3. Si sigue sin haber 2 nombres, intentar por nodos de texto directos
-  if (names.length < 2) {
-    const text = getTextContent(cellNode).replace(/\s+/g, ' ').trim();
-    if (text.includes(' - ')) {
-      const split = text.split(' - ').map(t => t.trim()).filter(t => t.length > 1);
-      if (split.length >= 2) names = split;
-    }
-  }
 
   const logoImgs = DomUtils.findAll(
     (n) => n.type === 'tag' && n.name === 'img',
@@ -1071,7 +985,7 @@ function parseTeamCell(cellNode) {
   );
 
   const logos = logoImgs
-    .map((img) => toAbsoluteUrl(img?.attribs?.src || img?.attribs?.['data-src'] || img?.attribs?.['data-logo'] || ''))
+    .map((img) => toAbsoluteUrl(img?.attribs?.src || img?.attribs?.['data-src'] || ''))
     .map((logoUrl) => normalizeTeamLogoUrl(logoUrl))
     .filter(Boolean);
 
@@ -1223,6 +1137,7 @@ function parseDateCell(cellNode) {
 }
 
 function parseMatchRow(rowNode) {
+  // Removed noisy log
   const cells = DomUtils.findAll(
     (n) => n.type === 'tag' && (n.name === 'th' || n.name === 'td'),
     rowNode.children || []
@@ -1230,95 +1145,28 @@ function parseMatchRow(rowNode) {
 
   if (!cells.length) return null;
 
-  // ─── Caso 1: Formato estándar (una celda de equipo con home+away) ─────────
-  let teamCell = cells.find((cell) => /colstyle-equipo(?![-_]\d)/.test(getNodeClass(cell)));
+  const teamCell = cells.find((cell) => /colstyle-equipo/.test(getNodeClass(cell)));
   let periodsCell = cells.find((cell) => /colstyle-parciales/.test(getNodeClass(cell)));
-  let dateCell = cells.find((cell) => /colstyle-fecha/.test(getNodeClass(cell)));
+  const dateCell = cells.find((cell) => /colstyle-fecha/.test(getNodeClass(cell)));
 
-  // ─── Caso 2: Formato separado (equipo-1 / resultado / equipo-2) ────────────
-  // Usado en pestañas: upcoming-matches, last-results
-  const teamCell1 = cells.find((cell) => /colstyle-equipo-1/.test(getNodeClass(cell)));
-  const teamCell2 = cells.find((cell) => /colstyle-equipo-2/.test(getNodeClass(cell)));
-  const resultCell = cells.find((cell) => /colstyle-resultado/.test(getNodeClass(cell)));
+  // Removed noisy log
 
-  if (!teamCell && teamCell1 && teamCell2) {
-    // Extraer nombre y logo de cada celda por separado
-    const getTeamData = (cell) => {
-      if (!cell) return { name: null, logo: null };
-      const span = DomUtils.findOne(
-        n => n.type === 'tag' && n.name === 'span' &&
-          (/\bellipsis\b/i.test(getNodeClass(n)) || n.attribs?.title || n.attribs?.['data-original-title']),
-        cell.children || []
-      );
-      const name = span?.attribs?.title?.trim() ||
-        span?.attribs?.['data-original-title']?.trim() ||
-        (span ? getTextContent(span).trim() : null) ||
-        getTextContent(cell).replace(/\bVer\b/gi, '').trim() ||
-        null;
-
-      const img = DomUtils.findOne(n => n.name === 'img', cell.children || []);
-      const logoRaw = img?.attribs?.src || img?.attribs?.['data-src'] || img?.attribs?.['data-logo'] || '';
-      const logo = logoRaw ? normalizeTeamLogoUrl(toAbsoluteUrl(logoRaw)) : null;
-
-      return { name, logo };
-    };
-
-    const home = getTeamData(teamCell1);
-    const away = getTeamData(teamCell2);
-
-    if (!home.name && !away.name) return null;
-
-    // El campo resultado puede ser una fecha (próximos partidos) o un marcador (últimos)
-    const resultText = resultCell ? getTextContent(resultCell).replace(/\s+/g, ' ').trim() : '';
-    const isScore = /^\d+\s*[-:]\s*\d+$/.test(resultText);
-    const scoreMatch = resultText.match(/(\d+)\s*[-:]\s*(\d+)/);
-
-    // Intentar parsear fecha dentro del resultado si NO es marcador
-    const dateFromResult = !isScore ? resultText : null;
-
-    return {
-      homeTeam: home.name || 'Local',
-      awayTeam: away.name || 'Visitante',
-      homeLogo: home.logo,
-      awayLogo: away.logo,
-      date: dateFromResult,
-      venue: null,
-      matchScore: isScore && scoreMatch
-        ? { home: scoreMatch[1], away: scoreMatch[2] }
-        : { home: null, away: null },
-      sets: [],
-    };
-  }
-
-  // ─── Heurísticas adicionales para tablas sin clases estándar ─────────────
-  if (!teamCell) {
-    teamCell = cells.find(cell => {
-      const imgs = DomUtils.findAll(n => n.name === 'img', cell.children || []);
-      const spans = DomUtils.findAll(n => n.name === 'span', cell.children || []);
-      return (imgs.length >= 2) || (spans.length >= 2 && spans.some(s => getTextContent(s).length > 2));
-    });
-  }
-
-  if (!dateCell) {
-    dateCell = cells.find(cell => {
-      const text = getTextContent(cell);
-      return /\d{1,2}[\/\-]\d{1,2}/.test(text) || /\d{1,2}:\d{2}/.test(text);
-    });
-  }
-
+  // --- ADAPTACIÓN TORNEOS: Si no hay periodsCell, buscar la celda con más números ---
   if (!periodsCell) {
     let maxNums = 0;
     let bestCell = null;
     cells.forEach(cell => {
-      if (cell === dateCell) return;
       const txt = getTextContent(cell).replace(/\s+/g, ' ').trim();
       const nums = txt.match(/\d{1,2}/g);
-      if (nums && nums.length > maxNums && nums.length >= 2) {
+      if (nums && nums.length > maxNums && nums.length >= 4) {
         maxNums = nums.length;
         bestCell = cell;
       }
     });
-    if (bestCell) periodsCell = bestCell;
+    if (bestCell) {
+      periodsCell = bestCell;
+      // Removed noisy log
+    }
   }
 
   const teams = parseTeamCell(teamCell);
@@ -1370,7 +1218,7 @@ function extractCellText(cellNode) {
 }
 
 // ─── Añadido para procesar dinámicamente las pestañas AJAX de un equipo ───
-async function fetchTeamContextViaAjax(teamUrl, options = {}) {
+async function fetchTeamContextViaAjax(teamUrl) {
   const currentUrl = toAbsoluteUrl(teamUrl);
   let html = '';
   let cookieHeader = '';
@@ -1379,7 +1227,6 @@ async function fetchTeamContextViaAjax(teamUrl, options = {}) {
     const response = await axios.get(currentUrl, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
-      signal: options?.signal,
     });
     html = typeof response.data === 'string' ? response.data : '';
     cookieHeader = (response.headers?.['set-cookie'] || [])
@@ -1404,19 +1251,14 @@ async function fetchTeamContextViaAjax(teamUrl, options = {}) {
   if (!csrf) return initialBlocks;
 
   const mId = currentUrl.match(/\/team\/(\d+)/i)?.[1];
-  const tId = currentUrl.match(/\/tournament\/(\d+)/i)?.[1];
   if (!mId) return initialBlocks;
 
-  const ajaxBase = tId 
-    ? `${siteBase}/${lang}/ajax/tournament/${tId}/team/${mId}`
-    : `${siteBase}/${lang}/ajax/team/${mId}`;
-
-  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information', 'tournaments'];
+  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information', 'competitions'];
 
   const extraHtmlPromises = tabsToFetch.map(async (tab) => {
     try {
       const resp = await axios.post(
-        `${ajaxBase}/change-tab`,
+        `${siteBase}/${lang}/ajax/team/${mId}/change-tab`,
         `csrf_token=${csrf}&tab=${tab}`,
         {
           headers: {
@@ -1426,12 +1268,11 @@ async function fetchTeamContextViaAjax(teamUrl, options = {}) {
             'Cookie': cookieHeader,
           },
           timeout: 10000,
-          signal: options?.signal,
         }
       );
       return resp.data?.content || resp.data?.html || '';
-    } catch (error) {
-      console.warn(`[WARN] No se pudo cargar pestaña de equipo AJAX ${tab} en ${ajaxBase}: ${error.message}`);
+    } catch (err) {
+      console.warn(`[WARN] No se pudo cargar pestaña de equipo AJAX ${tab}: ${err.message}`);
       return '';
     }
   });
@@ -1466,127 +1307,21 @@ async function fetchTeamContextViaAjax(teamUrl, options = {}) {
   });
 
   // -- EXTRAER COMPETICIONES --
-  let competitionsExtracted = [];
-  const seenTournamentIds = new Set();
-  const dom = parseHTML(html);
+  // Normally it is a list of links to tournaments, or text.
+  const compBlocks = parseBlocksFromHtml(compHtml);
+  let competitionsExtracted = compBlocks
+    .filter(b => b.type === 'link' && /\/tournament\//i.test(b.href))
+    .map(b => ({ title: b.content, href: b.href, season: 'Actual' }));
 
-  // 1. Prioridad: Tablas en la pestaña AJAX 'tournaments' (rawTabs[4])
-  if (compHtml && compHtml.length > 50) {
-    const compBlocks = parseBlocksFromHtml(compHtml);
-    const compTables = compBlocks.filter(b => b.type === 'table');
-
-    compTables.forEach(table => {
-      const { headers, rows, rowLinks } = table;
-      const h = (headers || []).map(s => s.toLowerCase());
-
-      const idxComp = h.findIndex(s => s.includes('competición') || s.includes('league') || s.includes('torneo'));
-      const idxSeason = h.findIndex(s => s.includes('temporada') || s.includes('año') || s.includes('season'));
-      const idxCategory = h.findIndex(s => s.includes('categoría') || s.includes('category'));
-      const idxGender = h.findIndex(s => s.includes('sexo') || s.includes('género') || s.includes('gender'));
-
-      if (rows && rows.length > 0) {
-        rows.forEach((row, i) => {
-          const compName = (idxComp !== -1 ? row[idxComp] : null) || '';
-          const cleanTitle = compName.replace(/\bVer\b/gi, '').trim();
-          
-          // Buscar el link al torneo en rowLinks o en el HTML de la propia tabla si es posible
-          let href = rowLinks?.[i] || '';
-          
-          // Si el link de la fila no es de torneo, intentarlo heurísticamente
-          if (!href.includes('/tournament/')) {
-            // Intentamos ver si hay un ID de torneo en el link de equipo (a veces se concatenan)
-            const mMatch = href.match(/\/team\/\d+(\d{7})/);
-            if (mMatch) href = `${siteBase}/${lang}/tournament/${mMatch[1]}/ranking`;
-          }
-
-          if (cleanTitle.length > 2 && (href.includes('/tournament/') || href.includes('/team/'))) {
-            const m = href.match(/\/(tournament|team)\/(\d+)/);
-            const targetType = m?.[1];
-            const targetId = m?.[2];
-            
-            if (targetId && !seenTournamentIds.has(targetId)) {
-              seenTournamentIds.add(targetId);
-
-              // Si es un link de equipo, el destino es la página del equipo en esa liga (Resumen)
-              // Si es de torneo, es el ranking.
-              const finalHref = targetType === 'team' 
-                ? toAbsoluteUrl(href)
-                : href.replace(/\/(summary|information|team\/\d+)(\/.*)?$/, '/ranking');
-
-              competitionsExtracted.push({
-                title: cleanTitle,
-                href: finalHref,
-                season: idxSeason !== -1 ? row[idxSeason] : 'Actual',
-                category: idxCategory !== -1 ? row[idxCategory] : null,
-                gender: idxGender !== -1 ? row[idxGender] : null,
-                tournamentId: targetId
-              });
-            }
-          }
-        });
-      }
-    });
-  }
-
-  // 2. Fallback: Buscar en el HTML inicial links a torneos en el menú
+  // Fallback si no hay links, buscamos encabezados o links puros en el html
   if (competitionsExtracted.length === 0) {
-    const tournamentLinkPattern = /\/(?:es|en)\/tournament\/(\d+)\/(summary|ranking|information)/i;
-    const tournamentLinks = DomUtils.findAll(
-      n => n.type === 'tag' && n.name === 'a' && tournamentLinkPattern.test(n.attribs?.href || ''),
-      dom.children || [],
-      true
-    );
-
-    tournamentLinks.forEach(link => {
-      const href = toAbsoluteUrl(link.attribs?.href || '');
-      const m = href.match(/\/tournament\/(\d+)/);
-      if (!m) return;
-      const tournamentId = m[1];
-      if (seenTournamentIds.has(tournamentId)) return;
-      seenTournamentIds.add(tournamentId);
-
-      let title = '';
-      let cursor = link.parent;
-      let depth = 0;
-      while (cursor && depth < 8 && !title) {
-        const siblings = cursor.parent?.children || [];
-        for (const sib of siblings) {
-          if (sib === cursor) break;
-          if (sib.type === 'tag' && /^h[1-3]$/.test(sib.name)) {
-            const txt = getTextContent(sib).replace(/\s+/g, ' ').trim();
-            if (txt.length > 3 && !/clasificaci|inicio|men\u00fa/i.test(txt)) {
-              title = txt;
-              break;
-            }
-          }
-        }
-        cursor = cursor.parent;
-        depth++;
-      }
-
-      if (!title) {
-        const h1 = DomUtils.findOne(n => n.type === 'tag' && n.name === 'h1', dom.children || [], true);
-        if (h1) {
-          const h1Text = getTextContent(h1).replace(/\s+/g, ' ').trim();
-          if (h1Text.length > 3 && h1Text !== 'Ficha de equipo') title = h1Text;
-        }
-      }
-
-      if (!title) {
-        const linkText = getTextContent(link).replace(/\s+/g, ' ').trim();
-        title = /resumen|clasificaci|calendario|informaci|m\u00e1s|men\u00fa/i.test(linkText)
-          ? `Liga (${tournamentId})`
-          : (linkText || `Torneo ${tournamentId}`);
-      }
-
-      const rankingHref = href.replace(/\/(summary|information)(\/.*)?$/, '/ranking');
-      competitionsExtracted.push({
-        title,
-        href: rankingHref,
-        season: 'Actual',
-        tournamentId,
-      });
-    });
+    const dom = parseHTML(compHtml);
+    const links = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
+    competitionsExtracted = links.map(l => ({
+      title: getTextContent(l).replace(/\s+/g, ' ').trim(),
+      href: toAbsoluteUrl(l.attribs?.href || ''),
+      season: 'Actual',
+    })).filter(c => c.title.length > 1 && /\/tournament\//i.test(c.href));
   }
 
   // Custom blocks that will be retrieved by useMemo in TeamDetailScreen
@@ -1602,43 +1337,25 @@ async function fetchTeamContextViaAjax(teamUrl, options = {}) {
 }
 
 // ─── Función principal: URL → array de bloques listos para renderizar ─────────
-export async function fetchAndParse(url, options = {}) {
+export async function fetchAndParse(url) {
   const t0 = Date.now();
   const absoluteUrl = toAbsoluteUrl(url);
   let blocks;
 
   if (/\/tournaments/i.test(absoluteUrl)) {
-    blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl, options);
+    blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl);
   } else if (/\/tournament\/\d+\/ranking/i.test(absoluteUrl)) {
     // SOLO HTML: NO AJAX PARA TORNEOS
-    const html = await fetchHTML(absoluteUrl, options);
+    const html = await fetchHTML(absoluteUrl);
     blocks = parseBlocksFromHtml(html);
   } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
-    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl, options);
+    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl);
   } else if (/\/team\/\d+/i.test(absoluteUrl)) {
     // Carga de equipo mediante peticiones AJAX combinadas simulando Vue
-    blocks = await fetchTeamContextViaAjax(absoluteUrl, options);
+    blocks = await fetchTeamContextViaAjax(absoluteUrl);
   } else {
-    console.log(`[fetchAndParse] Cargando URL: ${absoluteUrl}`);
-    const html = await fetchHTML(absoluteUrl, options);
+    const html = await fetchHTML(absoluteUrl);
     blocks = parseBlocksFromHtml(html);
-    console.log(`[fetchAndParse] Bloques después de parseBlocksFromHtml: ${blocks.length}`);
-    
-    // Si es una página de partido, asegurar que tenemos las coordenadas (aunque ya debería haberlas extraído parseBlocksFromHtml)
-    if (/\/match\/\d+/i.test(absoluteUrl)) {
-      const alreadyHasMap = blocks.some(b => b.type === 'map_coordinates');
-      if (!alreadyHasMap) {
-        const coords = extractMapCoordinates(html);
-        if (coords) {
-          console.log(`[fetchAndParse] Coordenadas extraídas (fallback): ${coords.latitude}, ${coords.longitude}`);
-          blocks.push({ type: 'map_coordinates', ...coords });
-        }
-      } else {
-        const m = blocks.find(b => b.type === 'map_coordinates');
-        console.log(`[fetchAndParse] Coordenadas ya presentes: ${m.latitude}, ${m.longitude}`);
-      }
-    }
-
     // Si no se extrajo ningún partido válido, intenta el parser específico
     const hasValidMatch = blocks.some(b => b.type === 'table' && Array.isArray(b.matches) && b.matches.length > 0);
     if (!hasValidMatch) {
@@ -1799,8 +1516,8 @@ export async function fetchChampionshipData(rankingUrl) {
         const html = await fetchHTML(p.href);
         const blocks = parseBlocksFromHtml(html);
         return { title: p.title, href: p.href, blocks };
-      } catch (error) {
-        console.warn(`[CHAMPIONSHIP] Error fetching phase ${p.title}:`, error.message);
+      } catch (err) {
+        console.warn(`[CHAMPIONSHIP] Error fetching phase ${p.title}:`, err.message);
         return null;
       }
     })
@@ -2118,14 +1835,14 @@ function findMatchBoxes(rootOrArray) {
 
     // Equipos: links con clase 'team/equipo', data-team, o ruta /team/
     const teamNodes = DomUtils.findAll(
-      n => n.type === 'tag' && n.name === 'a' && (
+      n => n.type === 'tag' && (n.name === 'a' || n.name === 'div' || n.name === 'span') && (
         /\b(team|equipo|club)\b/i.test(n.attribs?.class || '') ||
         /\/team\//i.test(n.attribs?.href || '') ||
         'data-team' in (n.attribs || {})
       ),
       [mNode],
       true
-    );
+    ).filter((n, i, list) => !list.some(p => p !== n && isAncestorNode(p, n)));
 
     // Marcador: links con clase 'match', data-match, o ruta /match/
     const matchLinkNode = DomUtils.findOne(
@@ -2155,7 +1872,8 @@ function findMatchBoxes(rootOrArray) {
       // Prioridad 1: el span nombre o clase name/nombre
       const span = DomUtils.findOne(n => n.name === 'span' || /\b(name|nombre)\b/i.test(n.attribs?.class || ''), [node], true);
       const text = (span ? getTextContent(span) : getTextContent(node)).trim();
-      if (text && text.length > 1) return text;
+      const cleanText = text.replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+      if (cleanText && cleanText.length > 1 && !/^ver$/i.test(cleanText)) return cleanText;
       // Prioridad 2: data-team
       if (node.attribs?.['data-team']) return node.attribs['data-team'];
       return 'TBD';
@@ -2210,7 +1928,7 @@ function findMatchBoxes(rootOrArray) {
         );
         if (nextMatch) {
           const txt = getTextContent(nextMatch).replace(/\s+/g, ' ').trim();
-          const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+          const m = txt.match(/(\d{1,2}(?:[\s\/][a-zA-ZáéíóúÁÉÍÓÚñÑ]{2,}|[\/-]\d{1,2})(?:[\/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?)\s*[·•]?\s*(.*)/);
           if (m) {
             if (m[1]) dateTime = m[1].trim();
             if (m[2]) venue = m[2].trim();
@@ -2220,7 +1938,7 @@ function findMatchBoxes(rootOrArray) {
         }
         if (!venue && parent.attribs && /bracket-data/.test(parent.attribs.class || '')) {
           const txt = getTextContent(parent).replace(/\s+/g, ' ').trim();
-          const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+          const m = txt.match(/(\d{1,2}(?:[\s\/][a-zA-ZáéíóúÁÉÍÓÚñÑ]{2,}|[\/-]\d{1,2})(?:[\/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?)\s*[·•]?\s*(.*)/);
           if (m) {
             if (!dateTime && m[1]) dateTime = m[1].trim();
             if (m[2]) venue = m[2].trim();
@@ -2237,7 +1955,7 @@ function findMatchBoxes(rootOrArray) {
       }
       if ((!dateTime || !venue) && sibling.attribs && /next-match/.test(sibling.attribs.class || '')) {
         const txt = getTextContent(sibling).replace(/\s+/g, ' ').trim();
-        const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+        const m = txt.match(/(\d{1,2}(?:[\s\/][a-zA-ZáéíóúÁÉÍÓÚñÑ]{2,}|[\/-]\d{1,2})(?:[\/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?)\s*[·•]?\s*(.*)/);
         if (m) {
           if (m[1]) dateTime = m[1].trim();
           if (m[2]) venue = m[2].trim();
@@ -2260,7 +1978,7 @@ function findMatchBoxes(rootOrArray) {
     }
     if ((!dateTime || !venue) && scheduleNode) {
       const txt = getTextContent(scheduleNode).replace(/\s+/g, ' ').trim();
-      const m = txt.match(/(\d{1,2}\/\d{1,2}(?:\/\d{2,4})? ?\d{0,2}:?\d{0,2})?\s*[·•]?\s*(.*)/);
+      const m = txt.match(/(\d{1,2}(?:[\s\/][a-zA-ZáéíóúÁÉÍÓÚñÑ]{2,}|[\/-]\d{1,2})(?:[\/-]\d{2,4})?(?:\s+\d{1,2}:\d{2})?)\s*[·•]?\s*(.*)/);
       if (m) {
         if (m[1]) dateTime = m[1].trim();
         if (m[2]) venue = m[2].trim();
@@ -2326,8 +2044,6 @@ function findMatchBoxes(rootOrArray) {
       awayTeam,
       homeLogo: fixLogo(toAbsoluteUrl(homeLogo)),
       awayLogo: fixLogo(toAbsoluteUrl(awayLogo)),
-      homeUrl: toAbsoluteUrl(homeTeamNode?.attribs?.href || ''),
-      awayUrl: toAbsoluteUrl(awayTeamNode?.attribs?.href || ''),
       scoreText,
       href: toAbsoluteUrl(matchLinkNode?.attribs?.href || scheduleNode?.attribs?.href || ''),
       dateTime,

@@ -4,6 +4,7 @@ import PagerView from './PagerViewWrapper';
 import { Spacing, Radius, Typography, Shadow, Colors } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
+import { formatMatchDisplayDate, formatMatchTime } from './MatchList';
 
 const Bracket = ({ championshipData, onMatchPress }) => {
   const { colors: ThemeColors, isDark } = useTheme();
@@ -33,7 +34,14 @@ const Bracket = ({ championshipData, onMatchPress }) => {
       >
         <View style={styles.matchHeader}>
           <Text style={[styles.matchTitle, { color: ThemeColors.textMuted }]}>{match.title || 'Partido'}</Text>
-          <Text style={[styles.matchDate, { color: ThemeColors.textMuted }]}>{match.dateTime}</Text>
+          <Text style={[styles.matchDate, { color: ThemeColors.textMuted }]}>
+            {(
+              formatMatchDisplayDate(match.dateTime || match.date || '') + 
+              (formatMatchTime(match.dateTime || match.date || '') !== '--:--' 
+                ? ' · ' + formatMatchTime(match.dateTime || match.date || '') 
+                : '')
+            ).toUpperCase()}
+          </Text>
         </View>
 
         <View style={styles.teamRow}>

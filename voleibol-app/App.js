@@ -261,7 +261,7 @@ function AppContent() {
         {/* Global Full-Screen Loader */}
         {!isAppReady && (
           <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
-            <LoadingView message="Preparando ligas y torneos..." />
+            <LoadingView message="Cargando ligas y torneos..." />
           </View>
         )}
       </View>
@@ -281,7 +281,9 @@ const styles = StyleSheet.create({
   tabItem: {
     flex: 1,
     paddingTop: 8,
+    padding: 0,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: '-22%',
   },
 });

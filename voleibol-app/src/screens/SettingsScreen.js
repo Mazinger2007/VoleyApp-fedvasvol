@@ -7,20 +7,23 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme, ACCENT_COLORS } from '../contexts/ThemeContext';
 import ConfirmationModal from '../components/ConfirmationModal';
 import StatusModal from '../components/StatusModal';
+import ContactModal from '../components/ContactModal';
 import { DarkTheme } from '@react-navigation/native';
 
 export default function SettingsScreen() {
+  const insets = useSafeAreaInsets();
   const { colors: Colors, isDark, toggleTheme, accentKey, changeAccent, animColors } = useTheme();
-  
+
   const [isChecking, setIsChecking] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showClearCacheModal, setShowClearCacheModal] = useState(false);
+  const [showContactModal, setShowContactModal] = useState(false);
   const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
   const currentVersion = Constants.expoConfig?.version || '1.0.0';
 
@@ -29,16 +32,16 @@ export default function SettingsScreen() {
     try {
       const REPO_APP_JSON_URL = 'https://gitea.dtbx.duckdns.org/Mazinger2007/Voleibol/raw/branch/main/voleibol-app/app.json';
       const REPO_RELEASES_URL = 'https://gitea.dtbx.duckdns.org/Mazinger2007/Voleibol/releases/latest';
-      
+
       const response = await fetch(REPO_APP_JSON_URL, { cache: 'no-cache' });
       if (!response.ok) throw new Error('Network response was not ok');
       const data = await response.json();
-      
+
       const latestVersion = data?.expo?.version;
       if (!latestVersion) throw new Error('Invalid app.json payload');
-      
+
       const isNewer = compareVersions(latestVersion, currentVersion) > 0;
-      
+
       if (isNewer) {
         setUpdateInfo({ version: latestVersion, isNewer: true, url: REPO_RELEASES_URL });
       } else {
@@ -61,10 +64,10 @@ export default function SettingsScreen() {
     const parts1 = String(v1).split('.').map(Number);
     const parts2 = String(v2).split('.').map(Number);
     for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-        const p1 = parts1[i] || 0;
-        const p2 = parts2[i] || 0;
-        if (p1 > p2) return 1;
-        if (p1 < p2) return -1;
+      const p1 = parts1[i] || 0;
+      const p2 = parts2[i] || 0;
+      if (p1 > p2) return 1;
+      if (p1 < p2) return -1;
     }
     return 0;
   }
@@ -96,7 +99,6 @@ export default function SettingsScreen() {
   const styles = useMemo(() => StyleSheet.create({
     safe: {
       flex: 1,
-      paddingTop: 0,
     },
     headerBar: {
       paddingHorizontal: Spacing.lg,
@@ -220,7 +222,7 @@ export default function SettingsScreen() {
   const COLOR_OPTIONS = ['navy', 'blue', 'red', 'emerald', 'amber', 'purple'];
 
   return (
-    <Animated.View style={[styles.safe, { backgroundColor: animColors.background }]}>
+    <Animated.View style={[styles.safe, { backgroundColor: animColors.background, paddingTop: insets.top }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.surface} />
 
       <Animated.View style={[styles.headerBar, { backgroundColor: animColors.surface }]}>
@@ -228,7 +230,7 @@ export default function SettingsScreen() {
       </Animated.View>
 
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
+
         {/* Personalización */}
         <View style={styles.section}>
           <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Personalización</Animated.Text>
@@ -248,12 +250,12 @@ export default function SettingsScreen() {
                         styles.colorBtn,
                         { backgroundColor: hex },
                         isActive && styles.colorBtnActive,
-                        isActive && { 
-                          borderColor: Colors.surface, 
+                        isActive && {
+                          borderColor: Colors.surface,
                           elevation: 4,
                           ...(Platform.OS !== 'web' ? {
-                            shadowColor: hex, 
-                            shadowOpacity: 0.5, 
+                            shadowColor: hex,
+                            shadowOpacity: 0.5,
                             shadowRadius: 4,
                           } : {
                             boxShadow: `0 0 8px ${hex}80`
@@ -268,7 +270,7 @@ export default function SettingsScreen() {
               </View>
             </View>
             <View style={styles.divider} />
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.cardPadding, styles.settingRow]}
               onPress={toggleTheme}
               activeOpacity={0.7}
@@ -303,7 +305,7 @@ export default function SettingsScreen() {
               </View>
             </View>
             <View style={styles.divider} />
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.cardPadding, styles.settingRow]}
               onPress={checkForUpdates}
               disabled={isChecking}
@@ -319,6 +321,18 @@ export default function SettingsScreen() {
                 <MaterialIcons name="chevron-right" size={24} color={Colors.textMuted} />
               )}
             </TouchableOpacity>
+            <View style={styles.divider} />
+            <TouchableOpacity
+              style={[styles.cardPadding, styles.settingRow]}
+              onPress={() => setShowContactModal(true)}
+              activeOpacity={0.7}
+            >
+              <View style={styles.settingLabelRow}>
+                <MaterialIcons name="mail-outline" size={20} color={Colors.primary} />
+                <Text style={styles.settingLabel}>Sugerencias y Soporte</Text>
+              </View>
+              <MaterialIcons name="chevron-right" size={24} color={Colors.textMuted} />
+            </TouchableOpacity>
           </Animated.View>
         </View>
 
@@ -326,7 +340,7 @@ export default function SettingsScreen() {
         <View style={styles.section}>
           <Animated.Text style={[styles.sectionTitle, { color: animColors.textMuted }]}>Sistema y Datos</Animated.Text>
           <Animated.View style={[styles.card, { backgroundColor: animColors.surface, borderColor: animColors.border }]}>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.cardPadding, styles.settingRow]}
               onPress={handleClearCache}
               activeOpacity={0.7}
@@ -352,7 +366,7 @@ export default function SettingsScreen() {
             <View style={styles.legalBlock}>
               <Text style={styles.legalTitle}>Propiedad</Text>
               <Text style={styles.textBody}>
-                Todos los datos, logotipos, nombres de equipos y clasificaciones son propiedad intelectual exclusiva de la <Text style={{fontWeight: 'bold'}}>Federación Vasca de Voleibol (fedvasvol.com)</Text> y sus respectivos propietarios.
+                Todos los datos, logotipos, nombres de equipos y clasificaciones son propiedad intelectual exclusiva de la <Text style={{ fontWeight: 'bold' }}>Federación Vasca de Voleibol (fedvasvol.com)</Text> y sus respectivos propietarios.
               </Text>
             </View>
             <View style={[styles.divider, { marginVertical: Spacing.md }]} />
@@ -393,62 +407,62 @@ export default function SettingsScreen() {
           {Platform.OS !== 'web' && (
             <BlurView intensity={30} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
           )}
-          <TouchableOpacity 
-            style={StyleSheet.absoluteFill} 
-            activeOpacity={1} 
-            onPress={() => setUpdateInfo(null)} 
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setUpdateInfo(null)}
           />
-          
-          <View style={{ 
-            width: '100%', 
+
+          <View style={{
+            width: '100%',
             maxWidth: 320,
-            backgroundColor: isDark ? '#1e293b' : '#ffffff', 
-            borderRadius: Radius.xxl, 
+            backgroundColor: isDark ? '#1e293b' : '#ffffff',
+            borderRadius: Radius.xxl,
             padding: Spacing.lg,
-            paddingTop: Spacing.xl, 
-            alignItems: 'center', 
+            paddingTop: Spacing.xl,
+            alignItems: 'center',
             borderWidth: 1,
             borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
             elevation: 10,
             ...(Platform.OS !== 'web' ? {
-              shadowColor: '#000', 
-              shadowOpacity: 0.25, 
+              shadowColor: '#000',
+              shadowOpacity: 0.25,
               shadowRadius: 20,
               shadowOffset: { width: 0, height: 10 },
             } : {
               boxShadow: '0 10px 20px rgba(0,0,0,0.25)'
             })
           }}>
-            
+
             <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: updateInfo?.isNewer ? (isDark ? 'rgba(59, 130, 246, 0.15)' : '#eff6ff') : (isDark ? 'rgba(16, 185, 129, 0.15)' : '#ecfdf5'), justifyContent: 'center', alignItems: 'center', marginBottom: Spacing.md }}>
-              <MaterialIcons 
-                name={updateInfo?.isNewer ? "system-update" : "check-circle"} 
-                size={34} 
-                color={updateInfo?.isNewer ? Colors.primary : '#10b981'} 
+              <MaterialIcons
+                name={updateInfo?.isNewer ? "system-update" : "check-circle"}
+                size={34}
+                color={updateInfo?.isNewer ? Colors.primary : '#10b981'}
               />
             </View>
-            
+
             <Text style={{ fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, color: Colors.textPrimary, marginBottom: Spacing.xs, textAlign: 'center' }}>
               {updateInfo?.isNewer ? '¡Actualización Disponible!' : 'Todo al día'}
             </Text>
-            
+
             <Text style={{ fontSize: Typography.size.sm, color: Colors.textSecondary, textAlign: 'center', marginBottom: Spacing.lg, lineHeight: 20, opacity: 0.8 }}>
-              {updateInfo?.isNewer 
-                ? `Hay una nueva versión de la app (v${updateInfo.version}). ¿Deseas descargar e instalar la actualización ahora?` 
+              {updateInfo?.isNewer
+                ? `Hay una nueva versión de la app (v${updateInfo.version}). ¿Deseas descargar e instalar la actualización ahora?`
                 : `Tienes la versión más reciente instalada (v${updateInfo?.version}).`}
             </Text>
-            
+
             {updateInfo?.isNewer ? (
               <View style={{ flexDirection: 'row', gap: Spacing.md, width: '100%' }}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={{ flex: 1, height: 48, borderRadius: Radius.lg, backgroundColor: isDark ? 'rgba(71, 85, 105, 0.2)' : '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}
                   activeOpacity={0.9}
                   onPress={() => setUpdateInfo(null)}
                 >
                   <Text style={{ color: Colors.textPrimary, fontWeight: Typography.weight.semiBold }}>Más tarde</Text>
                 </TouchableOpacity>
-                <TouchableOpacity 
-                  style={{ flex: 1, height: 48 }} 
+                <TouchableOpacity
+                  style={{ flex: 1, height: 48 }}
                   activeOpacity={0.9}
                   onPress={() => {
                     Linking.openURL(updateInfo.url);
@@ -466,8 +480,8 @@ export default function SettingsScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <TouchableOpacity 
-                style={{ width: '100%', height: 48 }} 
+              <TouchableOpacity
+                style={{ width: '100%', height: 48 }}
                 activeOpacity={0.9}
                 onPress={() => setUpdateInfo(null)}
               >
@@ -485,6 +499,12 @@ export default function SettingsScreen() {
           </View>
         </View>
       </Modal>
+  
+      <ContactModal
+        visible={showContactModal}
+        onClose={() => setShowContactModal(false)}
+        onComplete={(status) => setStatusModal(status)}
+      />
 
       <StatusModal
         visible={statusModal.visible}

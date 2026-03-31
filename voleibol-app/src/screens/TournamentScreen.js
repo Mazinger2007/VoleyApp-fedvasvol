@@ -19,6 +19,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { fetchChampionshipData, discoverSeasonLabel } from '../utils/htmlParser';
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useMemo } from 'react';
+import { formatMatchDisplayDate, formatMatchTime } from '../components/MatchList';
 
 
 // ─── Gap between cards in the same column ───────────────────────────────────
@@ -48,14 +49,14 @@ function ZoomableView({ children, backgroundColor = '#000' }) {
 
       // 2. EL FIX: Centrar los ejes. 
       // No multipliques por fitScale aquí. Solo busca que los centros coincidan.
-        const offsetX = (containerSize.w - contentSize.w) / 2 -160; // Mueve 60px a la izquierda
+      const offsetX = (containerSize.w - contentSize.w) / 2 - 160; // Mueve 60px a la izquierda
       const offsetY = (containerSize.h - contentSize.h) / 2;
       pan.setValue({ x: offsetX, y: offsetY });
     }
   }, [contentSize, containerSize]);
 
   return (
-    <View 
+    <View
       style={{ flex: 1, backgroundColor: backgroundColor, overflow: 'hidden' }}
       onLayout={(e) => setContainerSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
     >
@@ -78,7 +79,7 @@ const PHASE_SCROLL_TUNING = {
   SEMIFINAL: -100,
   FINAL_1: -5,
   FINAL: -10,
-  CLASIFICACION_FINAL: 100,
+  CLASIFICACION_FINAL: 51,
 };
 
 function parseNumericScore(value) {
@@ -143,10 +144,7 @@ function buildRoundMatchesFromTeams(teams = [], fallbackDateTime = 'Por determin
   return result;
 }
 
-function reorderOneThreeTwoFour(items = []) {
-  if (!Array.isArray(items) || items.length < 4) return items;
-  return [items[0], items[2], items[1], items[3], ...items.slice(4)];
-}
+// Reemplazado por lógica sin reordenamiento para evitar mezclar parejas de semifinales
 
 function buildMatchStableKey(match = {}, fallback = '') {
   const home = String(match?.homeTeam || '').toLowerCase().trim();
@@ -336,7 +334,7 @@ export default function TournamentScreen({ route, navigation }) {
       try {
         const s = await discoverSeasonLabel(url);
         if (mounted && s) setResolvedSeason(s);
-      } catch {}
+      } catch { }
     }
     getSeason();
     return () => { mounted = false; };
@@ -464,6 +462,19 @@ export default function TournamentScreen({ route, navigation }) {
           !isPlacement && styles.matchCardShadow,
         ]}
       >
+        {/* Header: Date/Time */}
+        {(match.dateTime || match.date) ? (
+          <View style={styles.matchCardHeader}>
+            <Text style={[styles.matchDateText, { color: Colors.textMuted }]}>
+              {(
+                formatMatchDisplayDate(match.dateTime || match.date || '') +
+                (formatMatchTime(match.dateTime || match.date || '') !== '--:--'
+                  ? ' · ' + formatMatchTime(match.dateTime || match.date || '')
+                  : '')
+              ).toUpperCase()}
+            </Text>
+          </View>
+        ) : null}
         {/* Top */}
         <View style={[styles.matchTeamRow, !topIsWinner && hasBothScores && styles.loserRow]}>
           <View style={styles.teamInfo}>
@@ -606,9 +617,7 @@ export default function TournamentScreen({ route, navigation }) {
       semifinalRegex.test(String(col?.title || '').trim())
     );
     if (semifinalColumns.length >= 2) {
-      const mergedSemifinalMatches = reorderOneThreeTwoFour(
-        semifinalColumns.flatMap(col => col.matches || [])
-      );
+      const mergedSemifinalMatches = semifinalColumns.flatMap(col => col.matches || []);
       const nonSemifinalColumns = workingColumns.filter(
         col => !semifinalRegex.test(String(col?.title || '').trim())
       );
@@ -618,7 +627,7 @@ export default function TournamentScreen({ route, navigation }) {
 
       const mergedColumns = [...nonSemifinalColumns];
       mergedColumns.splice(insertionIndex, 0, {
-        title: 'CUARTOS DE FINAL',
+        title: 'SEMIFINALES',
         matches: mergedSemifinalMatches,
       });
       workingColumns = mergedColumns;
@@ -634,89 +643,7 @@ export default function TournamentScreen({ route, navigation }) {
       return [{ title: workingColumns[0]?.title || 'CLASIFICACIÓN', matches: mergedMatches }];
     }
 
-    // Force quarterfinal bracket shape:
-    // - QF column: exactly first 4 cards max
-    // - Next column: winners of those QFs (2 matches)
-    const quarterIdx = workingColumns.findIndex(col => /cuartos|quarter/i.test(String(col?.title || '')));
-    if (quarterIdx >= 0) {
-      const quarterCol = workingColumns[quarterIdx];
-      const trimmedQuarterMatches = (quarterCol?.matches || []).slice(0, 4);
-      const quarterWinners = trimmedQuarterMatches.map(getMatchWinner).filter(Boolean);
-
-      workingColumns[quarterIdx] = {
-        ...quarterCol,
-        title: quarterCol?.title || 'CUARTOS DE FINAL',
-        matches: trimmedQuarterMatches,
-      };
-
-      if (quarterWinners.length >= 4) {
-        const interleavedWinners = [
-          quarterWinners[0],
-          quarterWinners[2],
-          quarterWinners[1],
-          quarterWinners[3],
-        ].filter(Boolean);
-        const semifinalMatches = buildRoundMatchesFromTeams(interleavedWinners, 'Por determinar');
-        const nextCol = workingColumns[quarterIdx + 1];
-        if (!nextCol) {
-          workingColumns.splice(quarterIdx + 1, 0, {
-            title: 'SEMIFINAL',
-            matches: semifinalMatches,
-          });
-        } else {
-          workingColumns[quarterIdx + 1] = {
-            ...nextCol,
-            title: /semi/i.test(String(nextCol?.title || '')) ? nextCol.title : 'SEMIFINAL',
-            matches: semifinalMatches,
-          };
-        }
-      }
-    }
-
-    // Build/fill next column from semifinal winners when the source site
-    // has finished semis but no populated final column yet.
-    const semIdx = workingColumns.findIndex(col => /semi/i.test(String(col?.title || '')));
-    if (semIdx >= 0) {
-      const semMatches = workingColumns[semIdx]?.matches || [];
-      const winners = semMatches.map(getMatchWinner).filter(Boolean);
-      const nextCol = workingColumns[semIdx + 1];
-      const nextMatches = nextCol?.matches || [];
-      const nextLooksFinal = nextCol
-        && /final/i.test(String(nextCol?.title || ''))
-        && !/semi/i.test(String(nextCol?.title || ''));
-
-      if (winners.length >= 2 && (!nextCol || nextMatches.length === 0)) {
-        const [homeWinner, awayWinner] = winners;
-        workingColumns.splice(semIdx + 1, 0, {
-          title: 'FINAL',
-          matches: [{
-            homeTeam: homeWinner.name || 'Por determinar',
-            awayTeam: awayWinner.name || 'Por determinar',
-            homeLogo: homeWinner.logo || null,
-            awayLogo: awayWinner.logo || null,
-            homeScore: null,
-            awayScore: null,
-            scoreText: '- -',
-            dateTime: 'Por determinar',
-            state: 'scheduled',
-          }],
-        });
-      } else if (winners.length >= 2 && nextLooksFinal && nextMatches.length > 0) {
-        const baseFinal = nextMatches[0] || {};
-        const homeMissing = !baseFinal.homeTeam || /tbd|por determinar/i.test(String(baseFinal.homeTeam || ''));
-        const awayMissing = !baseFinal.awayTeam || /tbd|por determinar/i.test(String(baseFinal.awayTeam || ''));
-        if (homeMissing || awayMissing) {
-          const [homeWinner, awayWinner] = winners;
-          nextMatches[0] = {
-            ...baseFinal,
-            homeTeam: homeMissing ? (homeWinner.name || baseFinal.homeTeam || 'Por determinar') : baseFinal.homeTeam,
-            awayTeam: awayMissing ? (awayWinner.name || baseFinal.awayTeam || 'Por determinar') : baseFinal.awayTeam,
-            homeLogo: homeMissing ? (homeWinner.logo || baseFinal.homeLogo || null) : baseFinal.homeLogo,
-            awayLogo: awayMissing ? (awayWinner.logo || baseFinal.awayLogo || null) : baseFinal.awayLogo,
-          };
-        }
-      }
-    }
+    // Eliminada lógica predictiva que sobreescribía datos reales de la federación
 
     return workingColumns;
   }, [flattenedColumns, title]);
@@ -918,7 +845,7 @@ export default function TournamentScreen({ route, navigation }) {
             { borderLeftColor: Colors.border, marginRight: 10 }
           ]}>
             <Text style={styles.phaseTitleText}>CLASIFICACIÓN FINAL</Text>
-            <View style={[styles.matchesGroup, { width: PHASE_CARD_WIDTH }]}> 
+            <View style={[styles.matchesGroup, { width: PHASE_CARD_WIDTH }]}>
               {placementMatchesOrdered.map((m, idx) => {
                 if (!m) return null;
                 return (
@@ -952,7 +879,7 @@ export default function TournamentScreen({ route, navigation }) {
               <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
                 <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
               </View>
-              <TouchableOpacity 
+              <TouchableOpacity
                 onPress={toggleFullscreen}
                 style={{ padding: 4, marginTop: -9 }}
               >
@@ -990,11 +917,19 @@ export default function TournamentScreen({ route, navigation }) {
           <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
             <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
           </TouchableOpacity>
-          <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 10 }}>
-            <Text style={[styles.headerTitleText, { color: isDark ? Colors.textPrimary : Colors.primary, flexShrink: 1 }]} numberOfLines={1} ellipsizeMode="tail">
+          <TouchableOpacity
+            style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, alignSelf: 'stretch', paddingHorizontal: 10 }}
+            disabled={true}
+            activeOpacity={0.7}
+          >
+            <Text
+              style={[styles.headerTitleText, { flexShrink: 1, color: isDark ? Colors.textPrimary : Colors.primary }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+            >
               {title ? title.toUpperCase() : 'TORNEO'}
             </Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.backBtn}
             onPress={() => navigation.navigate('Info', { tournamentUrl: url, title: title || 'Información' })}
@@ -1035,8 +970,7 @@ const styles = StyleSheet.create({
   },
   headerTitleText: {
     flex: 1,
-    fontSize: 16,
-    lineHeight: 18,
+    fontSize: 15,
     fontWeight: '900',
     textAlign: 'center',
     paddingHorizontal: Spacing.sm,
@@ -1079,7 +1013,7 @@ const styles = StyleSheet.create({
   placementsColumn: {
     borderLeftWidth: 1,
     paddingLeft: 86, // Espacio entre el borde y la tarjeta
-    marginLeft: 32, // Más separación desde la columna anterior
+    marginLeft: 80, // Más separación desde la columna anterior
     // marginRight eliminado para evitar mini-scroll, se pone solo en el render
     overflow: 'hidden',
   },

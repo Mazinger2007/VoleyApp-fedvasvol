@@ -118,8 +118,8 @@ export default function MatchesScreen({ navigation }) {
     };
   }, [tournamentTable, search, activeFilter]);
 
-  const handleOpenLeague = (url, leagueName) => {
-    openTournamentDetail(navigation, { href: url, name: leagueName }, {
+  const handleOpenLeague = (url, leagueName, tipo) => {
+    openTournamentDetail(navigation, { href: url, name: leagueName, isTorneo: tipo === 'torneo' }, {
       season: selectedSeason,
     });
   };
@@ -141,6 +141,7 @@ export default function MatchesScreen({ navigation }) {
       fontSize: 20,
       fontWeight: 'bold',
       letterSpacing: -0.5,
+      marginLeft: 10,
     },
     calendarBtn: {
       width: 40, height: 40, borderRadius: Radius.md,
