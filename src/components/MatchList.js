@@ -217,9 +217,9 @@ export function computeMatchState(rawDate, explicitState, homeScore, awayScore) 
 
     // If it's today, it's live until 3 sets are reached
     const sameDay = matchStart.getFullYear() === now.getFullYear() &&
-                    matchStart.getMonth() === now.getMonth() &&
-                    matchStart.getDate() === now.getDate();
-    
+      matchStart.getMonth() === now.getMonth() &&
+      matchStart.getDate() === now.getDate();
+
     if (sameDay) return 'live';
 
     // For past days, we assume it's finished even if sets aren't 3 (to avoid stale 'live')
@@ -243,20 +243,34 @@ export function formatMatchDisplayDate(rawDate, isLive = false) {
 
 export function formatMatchTime(rawDate, timeStr) {
   const d = parseMatchDateTime(rawDate);
-  if (!d) return timeStr || '--:--';
+  const strDates = String(rawDate || '') + ' ' + String(timeStr || '');
+  const hasExplictTime = /\d{1,2}:\d{2}/.test(strDates);
+
+  if (!d || !hasExplictTime) {
+    return timeStr || '--:--';
+  }
+
   if (timeStr) {
     const parts = String(timeStr).split(':').map(Number);
     if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
       d.setHours(parts[0], parts[1], 0);
     }
   }
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  // Custom formatter para asegurar 24h y resolver problemas de 12:00 AM erróneos en móviles
+  const hh = d.getHours().toString().padStart(2, '0');
+  const mm = d.getMinutes().toString().padStart(2, '0');
+  // 🔍 DEBUG TEMPORAL
+  if (rawDate && /\d{1,2}:\d{2}/.test(rawDate)) {
+    console.log('[TIME_DBG] rawDate:', rawDate, '| timeStr:', timeStr, '| d:', d?.toISOString?.(), '| result:', `${hh}:${mm}`);
+  }
+  return `${hh}:${mm}`;
 }
 
 export function getMatchSummary(match = {}) {
   try {
     if (!match) return { homeTeam: 'Local', awayTeam: 'Visitante', homeScore: null, awayScore: null, time: '--:--', sets: [], venue: 'Sede desconocida' };
-    
+
     // Si ya es un resumen (tiene dateLabel), devolverlo pero asegurar tipos sin mutar el original
     if (match.dateLabel !== undefined && match.state !== undefined) {
       return {
@@ -275,12 +289,12 @@ export function getMatchSummary(match = {}) {
       ? (match.matchScore?.home !== undefined && match.matchScore?.away !== undefined)
         ? `${match.matchScore.home}-${match.matchScore.away}`
         : (match.homeScore !== undefined && match.awayScore !== undefined)
-           ? `${match.homeScore}-${match.awayScore}`
-           : null
+          ? `${match.homeScore}-${match.awayScore}`
+          : null
       : getMatchField(match, 'resultado', 'marcador', 'result', 'sets');
 
     const score = (resultRaw ? parseNumericScore(resultRaw) : null) || { home: null, away: null };
-    
+
     // Intentar sacar scores directos si falló lo anterior
     if (score.home === null && typeof match.homeScore === 'number') score.home = match.homeScore;
     if (score.away === null && typeof match.awayScore === 'number') score.away = match.awayScore;
@@ -305,7 +319,7 @@ export function getMatchSummary(match = {}) {
       awayScore: score.away,
       time: time || '--:--',
       rawDate: (typeof rawDate === 'string' ? rawDate : null),
-      dateLabel: String(dateLabel || 'Fecha desconocida'),
+      dateLabel: String(dateLabel || ' '),
       weekdayLabel: String(weekdayLabel || ''),
       venue: String(venue || 'Sede por confirmar'),
       homeLogo: match.homeLogo || match.homeImage || null,
@@ -325,7 +339,7 @@ export function getMatchSummary(match = {}) {
       awayScore: typeof match?.awayScore === 'number' ? match.awayScore : null,
       time: '--:--',
       rawDate: null,
-      dateLabel: 'Fecha desconocida',
+      dateLabel: ' ',
       weekdayLabel: '',
       venue: 'Sede por confirmar',
       sets: [],
@@ -403,25 +417,25 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
 
   return (
     <TouchableOpacity
-      style={{ 
-        backgroundColor: state === 'live' ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : Colors.surface, 
-        borderRadius: Radius.lg, 
-        borderWidth: 1, 
+      style={{
+        backgroundColor: state === 'live' ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : Colors.surface,
+        borderRadius: Radius.lg,
+        borderWidth: 1,
         borderColor: state === 'live' ? 'rgba(239, 68, 68, 0.3)' : Colors.border,
         borderLeftWidth: state === 'live' ? 6 : 0,
         borderLeftColor: '#ef4444',
-        overflow: 'hidden', 
-        ...Shadow.sm 
+        overflow: 'hidden',
+        ...Shadow.sm
       }}
       activeOpacity={0.88}
       onPress={() => {
         if (onPress) {
           onPress(match);
         } else {
-          navigation.navigate('MatchDetail', { 
-            match: { ...match, ...summary }, 
-            calendarUrl, 
-            rankingBlocks 
+          navigation.navigate('MatchDetail', {
+            match: { ...match, ...summary },
+            calendarUrl,
+            rankingBlocks
           });
         }
       }}
@@ -435,7 +449,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
             </Text>
           </View>
           <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.medium }} numberOfLines={1}>
-            {summary.time}{summary.time && summary.dateLabel ? ' · ' : ''}{summary.dateLabel || 'Fecha pendiente'}
+            {summary.dateLabel || 'Fecha pendiente'}{(summary.time && summary.time !== '--:--') ? ` · ${summary.time}` : ''}
           </Text>
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, maxWidth: '42%' }}>
@@ -513,7 +527,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
  */
 export default function MatchList({ tableBlock, matches, onPressMatch, calendarUrl, rankingBlocks }) {
   const { colors: Colors } = useTheme();
-  
+
   const finalMatches = useMemo(() => {
     if (matches && matches.length > 0) return matches;
     if (tableBlock && tableBlock.matches?.length) return tableBlock.matches;
@@ -540,11 +554,11 @@ export default function MatchList({ tableBlock, matches, onPressMatch, calendarU
       data={finalMatches}
       keyExtractor={(_, i) => String(i)}
       renderItem={({ item }) => (
-        <MatchCard 
-          match={item} 
-          headers={tableBlock?.headers || []} 
-          onPress={onPressMatch} 
-          calendarUrl={calendarUrl} 
+        <MatchCard
+          match={item}
+          headers={tableBlock?.headers || []}
+          onPress={onPressMatch}
+          calendarUrl={calendarUrl}
           rankingBlocks={rankingBlocks}
         />
       )}

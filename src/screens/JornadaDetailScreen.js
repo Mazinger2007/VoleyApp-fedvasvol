@@ -148,7 +148,7 @@ function MatchCard({ match, isDark, colors, onPress }) {
 
         <View style={[styles.cardFooter, { borderTopColor: isDark ? 'rgba(71, 85, 105, 0.2)' : '#f1f5f9' }]}>
           <Text style={styles.timeInfo}>
-            {time}{time && dateLabel ? ' · ' : ''}{dateLabel}
+            {dateLabel || 'Fecha pendiente'}{(time && time !== '--:--') ? ` · ${time}` : ''}
           </Text>
           <View style={[styles.detailsBtn, { backgroundColor: isDark ? colors.surfaceAlt : colors.primary }]}>
             <Text style={styles.detailsBtnText}>Ver Detalles</Text>

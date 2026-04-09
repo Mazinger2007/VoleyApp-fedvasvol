@@ -246,7 +246,7 @@ export default function LeagueScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const { url, title, defaultTab, season } = route.params || {};
+  const { url, title, defaultTab, season, openSubgroupModalOnMount } = route.params || {};
 
   // Construct URLs with season if present
   const getUrlWithSeason = (baseUrl) => {
@@ -347,6 +347,12 @@ export default function LeagueScreen({ route, navigation }) {
   const [isFetchingSubgroups, setIsFetchingSubgroups] = useState(true);
 
   useEffect(() => {
+    if (openSubgroupModalOnMount && !isFetchingSubgroups && availableSubgroups.length > 1) {
+      setIsSubgroupModalVisible(true);
+    }
+  }, [openSubgroupModalOnMount, isFetchingSubgroups, availableSubgroups.length]);
+
+  useEffect(() => {
     setCurrentRankingUrl(initialRankingUrl);
   }, [initialRankingUrl]);
 
@@ -388,9 +394,32 @@ export default function LeagueScreen({ route, navigation }) {
     refresh: refreshRanking,
   } = useFetch(fetchRankingUrl);
 
+  const phaseLinks = useMemo(() => {
+    if (!rawRankingBlocks) return [];
+    return extractPhaseLinks(rawRankingBlocks, rankingUrl);
+  }, [rawRankingBlocks, rankingUrl]);
+
+  const subgroupEntities = useMemo(() => {
+    return (rawRankingBlocks || []).filter(
+      (b) => (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket'
+    );
+  }, [rawRankingBlocks]);
+
+  const isFlatLeague = useMemo(() => {
+    const rankingTablesCount = subgroupEntities.filter((b) => b.type === 'table').length;
+    const hasRealPhaseTabs = phaseLinks.length > 0;
+    return rankingTablesCount > 1 && !hasRealPhaseTabs;
+  }, [subgroupEntities, phaseLinks]);
+
+  const selectedGroupIndex = useMemo(() => {
+    if (phaseIndex >= 0) return phaseIndex;
+    if (isFlatLeague) return 0;
+    return -1;
+  }, [phaseIndex, isFlatLeague]);
+
   const rankingBlocks = useMemo(() => {
     if (!rawRankingBlocks) return rawRankingBlocks;
-    const subgroupEntities = rawRankingBlocks.filter(b => (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket');
+
     // If a specific virtual phase is selected, filter to that one
     if (phaseIndex >= 0) {
       if (phaseIndex >= subgroupEntities.length) return rawRankingBlocks;
@@ -402,35 +431,22 @@ export default function LeagueScreen({ route, navigation }) {
         return true;
       });
     }
-    // No phase selected yet: if multiple independent sub-competitions exist, only show the first phase
-    // including its preceding headers, but excluding any content after it.
-    if (subgroupEntities.length > 1) {
-      const firstEntity = subgroupEntities[0];
-      const result = [];
-      let foundFirstEntity = false;
 
-      for (const b of rawRankingBlocks) {
-        const isEntity = (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket';
-
-        if (isEntity) {
-          if (b === firstEntity) {
-            result.push(b);
-            foundFirstEntity = true;
-          } else {
-            // Found a second entity, stop here to avoid showing headers/nav of other groups
-            break;
-          }
-        } else {
-          // It's a header, link, etc. Keep it if we haven't finished the first entity yet.
-          if (!foundFirstEntity) {
-            result.push(b);
-          }
+    // Excepción para ligas "planas": por defecto mostramos solo la primera clasificación
+    // para emular comportamiento de pestañas sin tocar la lógica global existente.
+    if (isFlatLeague && subgroupEntities.length > 1) {
+      const firstTableEntity = subgroupEntities.find((b) => b.type === 'table');
+      if (!firstTableEntity) return rawRankingBlocks;
+      return rawRankingBlocks.filter(b => {
+        if ((b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket') {
+          return b === firstTableEntity;
         }
-      }
-      return result;
+        return true;
+      });
     }
+
     return rawRankingBlocks;
-  }, [rawRankingBlocks, phaseIndex]);
+  }, [rawRankingBlocks, phaseIndex, subgroupEntities, isFlatLeague]);
 
   const rankingLoading = _rankingLoading || isSwitchingSubgroup;
 
@@ -467,7 +483,7 @@ export default function LeagueScreen({ route, navigation }) {
     const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i) ||
       rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
     return match ? `${match[1]}/calendar` : null;
-  }, [rankingBlocks, rankingUrl]);
+  }, [rawRankingBlocks, rankingUrl]);
 
   useEffect(() => {
     let mounted = true;
@@ -501,19 +517,37 @@ export default function LeagueScreen({ route, navigation }) {
   const [championshipData, setChampionshipData] = useState(null);
   const [championshipLoading, setChampionshipLoading] = useState(false);
 
-  const phaseLinks = useMemo(() => {
-    if (!rawRankingBlocks) return [];
-    return extractPhaseLinks(rawRankingBlocks, rankingUrl);
-  }, [rawRankingBlocks, rankingUrl]);
+  const tournamentBaseUrl = useMemo(() => {
+    const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i)
+      || rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
+    return match?.[1] || '';
+  }, [rankingUrl]);
+
+  const selectedRankingTableGroupId = useMemo(() => {
+    const selectedTable = (rankingBlocks || []).find((b) => b.type === 'table' && b.rows?.length > 0);
+    return selectedTable?.tableGroupId || null;
+  }, [rankingBlocks]);
+
+  const flatLeagueCalendarUrl = useMemo(() => {
+    if (!isFlatLeague || !tournamentBaseUrl || !selectedRankingTableGroupId) return null;
+    return getUrlWithSeason(`${tournamentBaseUrl}/calendar/${selectedRankingTableGroupId}`);
+  }, [isFlatLeague, tournamentBaseUrl, selectedRankingTableGroupId, season]);
 
   const isChampionship = useMemo(() => {
     // A phase is treated as a championship if CURRENT active blocks contain a bracket,
     // OR when we have a virtual phase with isBracket=true selected.
+    const activeBlocks = rankingBlocks || [];
+    if (activeBlocks.length === 0) return false;
+
+    // Solo habilitar el modo "campeonato" de pantalla completa si estamos en una fase 
+    // específica marcada como bracket, o si tras un filtrado razonable es dominante.
+    if (phaseIndex === -1) return false; // Por defecto mostrar todo en cascada
+
     const blocksHaveBracket = (rankingBlocks || []).some(b => b.type === 'bracket');
     if (blocksHaveBracket) return true;
     const hasPlayoffTables = (rankingBlocks || []).some(b =>
       b.type === 'table' &&
-      /cuartos|semi|final|tercer/i.test(b.title || '')
+      /cuartos|semi|final|tercer|play\s*off?|torneo|eliminatoria/i.test(b.title || '')
     );
     if (hasPlayoffTables) return true;
     // Check the selected virtual subgroup metadata
@@ -531,9 +565,11 @@ export default function LeagueScreen({ route, navigation }) {
     return s?.isBracket || false;
   }, [phaseIndex, availableSubgroups]);
 
-  const fetchCalendarUrl = (selectedSubgroupIsBracket || isChampionship)
-    ? null
-    : (phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl);
+  const fetchCalendarUrl = useMemo(() => {
+    if (selectedSubgroupIsBracket && phaseIndex >= 0) return null;
+    if (isFlatLeague && flatLeagueCalendarUrl) return flatLeagueCalendarUrl;
+    return phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl;
+  }, [selectedSubgroupIsBracket, phaseIndex, isFlatLeague, flatLeagueCalendarUrl, resolvedCalendarUrl]);
 
   const {
     blocks: calendarBlocksRaw,
@@ -549,6 +585,7 @@ export default function LeagueScreen({ route, navigation }) {
 
   // Use live-updated blocks if available, else use fetched blocks
   const calendarBlocks = liveCalendarBlocks || calendarBlocksRaw;
+  const activeCalendarUrl = fetchCalendarUrl || resolvedCalendarUrl;
 
   useEffect(() => {
     let mounted = true;
@@ -585,20 +622,108 @@ export default function LeagueScreen({ route, navigation }) {
 
   // rankingBlocks is already filtered to the active phase entity by the useMemo above.
   // No additional phaseIndex slicing needed here — it would double-filter.
-  const rankingTables = useMemo(() =>
-    (rankingBlocks || []).filter((b) => b.type === 'table' && b.rows?.length > 0),
-    [rankingBlocks]
-  );
+  const { rankingTables, rankingBrackets } = useMemo(() => {
+    const rawTables = (rankingBlocks || []).filter((b) => b.type === 'table' && b.rows?.length > 0);
+    const rawBrackets = (rankingBlocks || []).filter((b) => b.type === 'bracket');
+    
+    const tList = [];
+    let mergedColumns = [];
 
-  const rankingBrackets = useMemo(() =>
-    (rankingBlocks || []).filter((b) => b.type === 'bracket'),
-    [rankingBlocks]
-  );
+    // Collect columns from native brackets
+    rawBrackets.forEach(b => {
+      if (Array.isArray(b.columns)) {
+        mergedColumns.push(...b.columns);
+      }
+    });
+
+    // Detect if any "table" is actually an eliminatory round of a playoff
+    // so we can render it as a clean bracket instead of an ugly table.
+    rawTables.forEach(b => {
+      const hStr = (b.headers || []).join(' ').toLowerCase();
+      const hasPointsOrPos = /puntos|pts|pos|puesto|#/i.test(hStr);
+      // It's a playoff/eliminatory if it doesn't have ranking columns but has matches
+      const isEliminatory = !hasPointsOrPos && (b.matches || []).length > 0;
+
+      if (isEliminatory) {
+        // Splitting eliminatory tables into multiple columns if they have different internal rounds (semis, final, etc)
+        const matchesByPhase = {};
+        (b.matches || []).forEach((m) => {
+          const ph = m.phase || m.title || b.title || 'Eliminatoria';
+          if (!matchesByPhase[ph]) matchesByPhase[ph] = [];
+          matchesByPhase[ph].push(m);
+        });
+
+        Object.entries(matchesByPhase).forEach(([ph, ms]) => {
+          mergedColumns.push({
+            header: ph,
+            matches: ms,
+          });
+        });
+      } else {
+        tList.push(b);
+      }
+    });
+
+    let bList = [];
+    if (mergedColumns.length > 0) {
+      // Sort columns chronologically 
+      const getWeight = (t) => {
+        const lower = (t || '').toLowerCase();
+        if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+        if (/3\s*[ºo°]|tercer|consolaci/i.test(lower)) return 90;
+        if (/semi/.test(lower)) return 80;
+        if (/cuarto/.test(lower)) return 60;
+        if (/octavo/.test(lower)) return 40;
+        return 10;
+      };
+      
+      mergedColumns.sort((a, b) => getWeight(a.header) - getWeight(b.header));
+      // Put them all into a single bracket so they render side-by-side
+      bList = [{ type: 'bracket', columns: mergedColumns }];
+    }
+
+    return { rankingTables: tList, rankingBrackets: bList };
+  }, [rankingBlocks]);
 
   const calendarTables = useMemo(() => {
-    const allTables = (calendarBlocks || []).filter((b) => b.type === 'table');
+    let allTables = (calendarBlocks || []).filter((b) => b.type === 'table');
+
+    // Filtrado inteligente: si hay un subgroup seleccionado, filtramos el calendario
+    // para mostrar solo los partidos de los equipos que aparecen en ese subgroup.
+    if (!isFlatLeague && phaseIndex >= 0 && rankingBlocks && rankingBlocks.length > 0) {
+      const activeTeamsInPhase = new Set();
+      rankingBlocks.forEach(b => {
+        if (b.type === 'table' && b.rows) {
+          const teamIdx = findColIndex(b.headers, 'equipo', 'nombre', 'team', 'club');
+          b.rows.forEach(row => {
+            const teamName = row[teamIdx];
+            if (teamName) activeTeamsInPhase.add(normalizeTeamName(teamName));
+          });
+        }
+        if (b.type === 'bracket' && b.columns) {
+          b.columns.forEach(col => {
+            (col.matches || []).forEach(m => {
+              if (m.homeTeam) activeTeamsInPhase.add(normalizeTeamName(m.homeTeam));
+              if (m.awayTeam) activeTeamsInPhase.add(normalizeTeamName(m.awayTeam));
+            });
+          });
+        }
+      });
+
+      if (activeTeamsInPhase.size > 0) {
+        allTables = allTables.map(table => {
+          const filteredMatches = (table.matches || []).filter(m =>
+            activeTeamsInPhase.has(normalizeTeamName(m.homeTeam)) ||
+            activeTeamsInPhase.has(normalizeTeamName(m.awayTeam))
+          );
+          if (filteredMatches.length === 0) return null;
+          return { ...table, matches: filteredMatches };
+        }).filter(Boolean);
+      }
+    }
+
     return allTables.slice().reverse();
-  }, [calendarBlocks]);
+  }, [calendarBlocks, phaseIndex, rankingBlocks, isFlatLeague]);
 
 
   const flattenedMatches = useMemo(() => {
@@ -715,12 +840,12 @@ export default function LeagueScreen({ route, navigation }) {
           tableBlock: table,
           title: displayTitle,
           subtitle: seasonLabel,
-          calendarUrl: resolvedCalendarUrl,
+          calendarUrl: activeCalendarUrl,
           jornadaIndex: selectedJornadaIndex
         });
       }
     }
-  }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, resolvedCalendarUrl]);
+  }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, activeCalendarUrl]);
 
   const toggleCalendarSection = useCallback((index) => {
     const key = `jornada-${index}`;
@@ -733,9 +858,9 @@ export default function LeagueScreen({ route, navigation }) {
     if (!match) return;
     navigation.navigate('MatchDetail', {
       match: { ...match, ...getMatchSummary(match) },
-      calendarUrl: resolvedCalendarUrl,
+      calendarUrl: activeCalendarUrl,
     });
-  }, [navigation, resolvedCalendarUrl]);
+  }, [navigation, activeCalendarUrl]);
 
   // OPTIMIZACIÓN: Callbacks estables para evitar re-render de tablas
   const handlePressTeam = useCallback((teamName, teamUrl, teamLogo, leagueStats) => {
@@ -746,10 +871,10 @@ export default function LeagueScreen({ route, navigation }) {
       tournamentTitle: title,
       leagueStats,
       pointsScoredTotal: sumTeamPointsScored(calendarTables, teamName),
-      calendarUrl: resolvedCalendarUrl,
+      calendarUrl: activeCalendarUrl,
       rankingBlocks: rankingBlocks,
     });
-  }, [navigation, title, calendarTables, resolvedCalendarUrl, rankingBlocks]);
+  }, [navigation, title, calendarTables, activeCalendarUrl, rankingBlocks]);
 
   const handlePressExpand = useCallback((tableBlock, tableTitle) => {
     navigation.navigate('RankingTable', {
@@ -757,9 +882,9 @@ export default function LeagueScreen({ route, navigation }) {
       title: tableTitle || title || 'Clasificación',
       subtitle: seasonLabel || 'Datos oficiales de la federación',
       rankingUrl: rankingUrl,
-      calendarUrl: resolvedCalendarUrl,
+      calendarUrl: activeCalendarUrl,
     });
-  }, [navigation, title, seasonLabel, rankingUrl, resolvedCalendarUrl]);
+  }, [navigation, title, seasonLabel, rankingUrl, activeCalendarUrl]);
 
   const handleOpenInfo = () => {
     navigation.navigate('Info', {
@@ -778,6 +903,14 @@ export default function LeagueScreen({ route, navigation }) {
     { key: 'ranking', label: 'Clasificación' },
     { key: 'calendar', label: 'Calendario' },
   ];
+
+  const getSubgroupLabel = useCallback((value = '') => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Competición';
+    if (/^clasificaci[oó]n\s+de\s+/i.test(raw)) return raw.replace(/^clasificaci[oó]n\s+de\s+/i, '').trim() || 'Clasificación';
+    if (/^calendario\s+de\s+/i.test(raw)) return raw.replace(/^calendario\s+de\s+/i, '').trim() || 'Calendario';
+    return raw;
+  }, []);
 
 
   const styles = StyleSheet.create({
@@ -1087,13 +1220,24 @@ export default function LeagueScreen({ route, navigation }) {
               onPressExpand={handlePressExpand}
             />
           ))}
-          {rankingBrackets.map((bracket, i) => (
-            <Bracket
-              key={`bracket-${i}`}
-              championshipData={{ mainFlow: [{ title: '', blocks: [bracket] }] }}
-              onMatchPress={openMatchModal}
-            />
-          ))}
+          {rankingBrackets.map((bracket, i) => {
+            const isComplexBracket = (bracket.columns || []).length > 1;
+            const totalMatches = (bracket.columns || []).reduce((acc, col) => acc + (col.matches?.length || 0), 0);
+            
+            // Si hay tablas de clasificación y el bracket es muy simple (ej: una sola tarjeta redundant)
+            // lo ocultamos a menos que sea explícitamente un torneo por nombre.
+            if (rankingTables.length > 0 && !isComplexBracket && totalMatches < 2 && !isTournament) {
+              return null;
+            }
+
+            return (
+              <Bracket
+                key={`bracket-${i}`}
+                championshipData={{ mainFlow: [{ title: '', blocks: [bracket] }] }}
+                onMatchPress={openMatchModal}
+              />
+            );
+          })}
         </View>
       );
     }
@@ -1207,7 +1351,7 @@ export default function LeagueScreen({ route, navigation }) {
                         tableBlock: table,
                         title: displayTitle,
                         subtitle: seasonLabel,
-                        calendarUrl: resolvedCalendarUrl,
+                        calendarUrl: activeCalendarUrl,
                         jornadaIndex: i,
                         rankingBlocks: rankingBlocks
                       });
@@ -1302,6 +1446,9 @@ export default function LeagueScreen({ route, navigation }) {
   if (rankingError && !isConfiguring) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
 
   const isGlobalLoading = (rankingLoading || (fetchCalendarUrl && calendarLoading)) && !isConfiguring;
+  const loadingHeaderTopFix = Platform.OS === 'android' && isGlobalLoading && (insets.top || 0) === 0
+    ? (StatusBar.currentHeight || 0)
+    : 0;
   const hasNoData = !rankingLoading && (isChampionship || !calendarLoading) && !isConfiguring &&
     rankingTables.length === 0 && rankingBrackets.length === 0 && (isChampionship || calendarTables.length === 0);
 
@@ -1348,7 +1495,7 @@ export default function LeagueScreen({ route, navigation }) {
       </Modal>
 
       {/* Header with back + title */}
-      <View style={styles.header}>
+      <View style={[styles.header, loadingHeaderTopFix ? { paddingTop: Spacing.sm + loadingHeaderTopFix } : null]}>
         <TouchableOpacity
           style={[styles.backBtn, { padding: 10 }]}
           onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}
@@ -1642,8 +1789,10 @@ export default function LeagueScreen({ route, navigation }) {
                     contentContainerStyle={{ paddingBottom: 8 }}
                   >
                     {availableSubgroups.map((sub, idx) => {
-                      const isActive = rankingUrl === sub.href;
+                      const isFlatDefaultActive = isFlatLeague && selectedGroupIndex === 0 && idx === 0 && !sub.isTorneo;
+                      const isActive = rankingUrl === sub.href || isFlatDefaultActive;
                       const isBracketType = sub.isBracket || /playoff|ascenso|final|copa|txapelketa|topaketa/i.test(sub.title || '');
+                      const displaySubgroupTitle = getSubgroupLabel(sub.title);
                       return (
                         <TouchableOpacity
                           key={`phase-${idx}`}
@@ -1658,9 +1807,18 @@ export default function LeagueScreen({ route, navigation }) {
                           }]}
                           onPress={() => {
                             if (!isActive && !isSwitchingSubgroup) {
-                              if (isTournament(sub.title) && !sub.href.includes('#phase-')) {
+                              if ((sub.isTorneo || isTournament(sub.title)) && !sub.href.includes('#phase-')) {
+                                const leagueModalSubgroups = (availableSubgroups || []).filter(
+                                  (sg) => String(sg?.href || '').trim().length > 0
+                                );
                                 setIsSubgroupModalVisible(false);
-                                navigation.replace('Tournament', { url: sub.href, title: sub.title });
+                                navigation.replace('Tournament', {
+                                  url: sub.href,
+                                  title: sub.title,
+                                  season,
+                                  leagueSubgroups: leagueModalSubgroups,
+                                  autoOpenGroupModal: true,
+                                });
                               } else {
                                 setIsSwitchingSubgroup(true);
                                 setCurrentRankingUrl(sub.href);
@@ -1687,7 +1845,7 @@ export default function LeagueScreen({ route, navigation }) {
                           {/* Title + type label */}
                           <View style={{ flex: 1 }}>
                             <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '600', color: Colors.textPrimary }} numberOfLines={2}>
-                              {sub.title}
+                              {displaySubgroupTitle}
                             </Text>
                             <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
                               {isBracketType ? 'Eliminatoria / Bracket' : 'Clasificación + Calendario'}

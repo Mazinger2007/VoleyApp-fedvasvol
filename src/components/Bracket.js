@@ -4,7 +4,7 @@ import PagerView from './PagerViewWrapper';
 import { Spacing, Radius, Typography, Shadow, Colors } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
-import { formatMatchDisplayDate, formatMatchTime } from './MatchList';
+import { formatMatchDisplayDate, formatMatchTime, getMatchSummary } from './MatchList';
 
 const Bracket = ({ championshipData, onMatchPress }) => {
   const { colors: ThemeColors, isDark } = useTheme();
@@ -21,6 +21,12 @@ const Bracket = ({ championshipData, onMatchPress }) => {
   const renderMatchCard = (match, pIdx, cIdx, mIdx) => {
     const isFinished = match.scoreText && match.scoreText !== '- -' && !match.scoreText.includes('-');
     
+    const summary = getMatchSummary(match);
+
+    const displayTimeString = summary.dateLabel 
+      ? `${summary.dateLabel}${summary.time && summary.time !== '--:--' ? ` · ${summary.time}` : ''}`
+      : 'Pendiente';
+
     return (
       <TouchableOpacity
         key={`match-${pIdx}-${cIdx}-${mIdx}`}
@@ -35,12 +41,7 @@ const Bracket = ({ championshipData, onMatchPress }) => {
         <View style={styles.matchHeader}>
           <Text style={[styles.matchTitle, { color: ThemeColors.textMuted }]}>{match.title || 'Partido'}</Text>
           <Text style={[styles.matchDate, { color: ThemeColors.textMuted }]}>
-            {(
-              formatMatchDisplayDate(match.dateTime || match.date || '') + 
-              (formatMatchTime(match.dateTime || match.date || '') !== '--:--' 
-                ? ' · ' + formatMatchTime(match.dateTime || match.date || '') 
-                : '')
-            ).toUpperCase()}
+            {displayTimeString.toUpperCase()}
           </Text>
         </View>
 
@@ -321,8 +322,9 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   matchDate: {
-    fontSize: 10,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   teamRow: {
     flexDirection: 'row',

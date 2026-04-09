@@ -10,16 +10,18 @@ import {
   Animated,
   PanResponder,
   Dimensions,
+  Modal,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../contexts/ThemeContext';
-import { fetchChampionshipData, discoverSeasonLabel } from '../utils/htmlParser';
+import { fetchChampionshipData, discoverSeasonLabel, fetchInfoData, toInfoUrl } from '../utils/htmlParser';
+import { isTournament } from '../utils/navigationHelper';
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useMemo } from 'react';
-import { formatMatchDisplayDate, formatMatchTime } from '../components/MatchList';
+import { formatMatchDisplayDate, formatMatchTime, getMatchSummary } from '../components/MatchList';
 
 
 // ─── Gap between cards in the same column ───────────────────────────────────
@@ -319,13 +321,71 @@ function BracketColumn({ col, cIdx, totalColumns, Colors, renderMatchCard }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function TournamentScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { title, url, season } = route.params || {};
+  const { title, url, season, leagueSubgroups = [], autoOpenGroupModal = false } = route.params || {};
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [resolvedSeason, setResolvedSeason] = useState(null);
+  const [infoData, setInfoData] = useState(null);
+  const [isSubgroupModalVisible, setIsSubgroupModalVisible] = useState(false);
+  const [isAutoOpenBlocked, setIsAutoOpenBlocked] = useState(false);
+  const autoOpenTimerRef = useRef(null);
+
+  const canOpenLeagueTournamentModal = Array.isArray(leagueSubgroups) && leagueSubgroups.length > 0;
+
+  const normalizedCurrentTournamentUrl = useMemo(() => String(url || '').replace(/\/+$/, '').toLowerCase(), [url]);
+
+  const getModalGroupLabel = useCallback((value = '') => {
+    const raw = String(value || '').trim();
+    if (!raw) return 'Competición';
+    if (/^clasificaci[oó]n\s+de\s+/i.test(raw)) return raw.replace(/^clasificaci[oó]n\s+de\s+/i, '').trim() || 'Clasificación';
+    if (/^calendario\s+de\s+/i.test(raw)) return raw.replace(/^calendario\s+de\s+/i, '').trim() || 'Calendario';
+    return raw;
+  }, []);
+
+  useEffect(() => {
+    if (isAutoOpenBlocked || !canOpenLeagueTournamentModal || !autoOpenGroupModal) return;
+    if (autoOpenTimerRef.current) {
+      clearTimeout(autoOpenTimerRef.current);
+      autoOpenTimerRef.current = null;
+    }
+    autoOpenTimerRef.current = setTimeout(() => {
+      if (leagueSubgroups?.length > 1) {
+        setIsSubgroupModalVisible(true);
+      }
+      autoOpenTimerRef.current = null;
+    }, 120);
+
+    return () => {
+      if (autoOpenTimerRef.current) {
+        clearTimeout(autoOpenTimerRef.current);
+        autoOpenTimerRef.current = null;
+      }
+    };
+  }, [canOpenLeagueTournamentModal, autoOpenGroupModal, isAutoOpenBlocked]);
+
+  useEffect(() => {
+    // Al cambiar de torneo, cerrar cualquier modal previo para evitar que quede abierto.
+    setIsSubgroupModalVisible(false);
+    if (autoOpenTimerRef.current) {
+      clearTimeout(autoOpenTimerRef.current);
+      autoOpenTimerRef.current = null;
+    }
+  }, [url]);
+
+  useEffect(() => {
+    async function loadInfo() {
+      if (!url) return;
+      try {
+        const iUrl = toInfoUrl(url);
+        const data = await fetchInfoData(iUrl);
+        if (data) setInfoData(data);
+      } catch (err) { }
+    }
+    loadInfo();
+  }, [url]);
 
   useEffect(() => {
     let mounted = true;
@@ -452,6 +512,12 @@ export default function TournamentScreen({ route, navigation }) {
       navigation.navigate('MatchDetail', payload);
     };
 
+    // Header: Date/Time
+    const summary = getMatchSummary(match);
+    const displayTimeString = summary.dateLabel 
+      ? `${summary.dateLabel}${summary.time && summary.time !== '--:--' ? ` · ${summary.time}` : ''}`
+      : 'Pendiente';
+
     return (
       <TouchableOpacity
         activeOpacity={0.9}
@@ -463,15 +529,10 @@ export default function TournamentScreen({ route, navigation }) {
         ]}
       >
         {/* Header: Date/Time */}
-        {(match.dateTime || match.date) ? (
+        {(match.dateTime || match.date || displayTimeString !== 'Pendiente') ? (
           <View style={styles.matchCardHeader}>
             <Text style={[styles.matchDateText, { color: Colors.textMuted }]}>
-              {(
-                formatMatchDisplayDate(match.dateTime || match.date || '') +
-                (formatMatchTime(match.dateTime || match.date || '') !== '--:--'
-                  ? ' · ' + formatMatchTime(match.dateTime || match.date || '')
-                  : '')
-              ).toUpperCase()}
+              {displayTimeString.toUpperCase()}
             </Text>
           </View>
         ) : null}
@@ -562,14 +623,30 @@ export default function TournamentScreen({ route, navigation }) {
             });
           });
         } else if (block.type === 'table' && Array.isArray(block.matches) && block.matches.length > 0) {
-          const targetColTitle = block.title || phase.title || 'ELIMINATORIA';
-          const targetCol = upsertColumn(targetColTitle, columns.length);
+          // Splitting eliminatory tables into multiple columns if they have different internal rounds (semis, final, etc)
+          const matchesByPhase = {};
           block.matches.forEach((m) => {
-            if (!m) return;
-            const key = buildMatchKey(m);
-            if (!key || seenMatchKeys.has(key)) return;
-            seenMatchKeys.add(key);
-            targetCol.matches.push(m);
+            const ph = m.phase || m.title || block.title || phase.title || 'ELIMINATORIA';
+            if (!matchesByPhase[ph]) matchesByPhase[ph] = [];
+            matchesByPhase[ph].push(m);
+          });
+
+          Object.entries(matchesByPhase).forEach(([ph, ms]) => {
+            const normalizedPh = ph.toUpperCase();
+            // Buscar si ya existe una columna con este nombre
+            let targetCol = columns.find(c => c.title.toUpperCase() === normalizedPh);
+            if (!targetCol) {
+              targetCol = { title: ph, matches: [] };
+              columns.push(targetCol);
+            }
+            
+            ms.forEach((m) => {
+              if (!m) return;
+              const key = buildMatchKey(m);
+              if (!key || seenMatchKeys.has(key)) return;
+              seenMatchKeys.add(key);
+              targetCol.matches.push(m);
+            });
           });
         }
       });
@@ -581,21 +658,30 @@ export default function TournamentScreen({ route, navigation }) {
   const seasonBadgeLabel = useMemo(() => {
     const yearPattern = /\b(20\d{2})\s*[\/\-]\s*(\d{2,4})\b/;
 
-    // Intentar encontrar patrón de año en resolvedSeason, title o season (en ese orden)
-    for (const src of [resolvedSeason, title, season]) {
+    const infoSeason = infoData?.find(i => /temporada|año/i.test(i.label || ''))?.value;
+
+    // Intentar encontrar patrón de año en infoSeason, resolvedSeason, title o season (en ese orden)
+    for (const src of [infoSeason, resolvedSeason, title, season]) {
       const m = String(src || '').match(yearPattern);
       if (m) {
         return `TEMPORADA ${m[1]}/${m[2].length === 2 ? m[2] : m[2].slice(-2)}`;
       }
     }
 
-    // Si no hay match de año, y resolvedSeason tiene texto válido (y no es solo un ID), usarlo
-    if (resolvedSeason && !/^\d+$/.test(resolvedSeason)) {
-      return `TEMPORADA ${resolvedSeason.replace(/\s/g, '')}`;
+    // Si no hay match de año, y infoSeason/resolvedSeason tiene texto válido (y no es solo un ID), usarlo
+    for (const res of [infoSeason, resolvedSeason]) {
+      if (res && !/^\d+$/.test(res)) {
+        return `TEMPORADA ${res.replace(/\s/g, '')}`.toUpperCase();
+      }
     }
 
     return '';
-  }, [season, resolvedSeason, title]);
+  }, [season, resolvedSeason, title, infoData]);
+
+  const competitionTitle = useMemo(() => {
+    const found = infoData?.find(i => /nombre|competición/i.test(i.label || ''))?.value;
+    return found || title || 'CUADRO DE FINALES';
+  }, [infoData, title]);
 
   const displayColumns = React.useMemo(() => {
     if (flattenedColumns.length <= 1) return flattenedColumns;
@@ -603,7 +689,7 @@ export default function TournamentScreen({ route, navigation }) {
     let workingColumns = [...flattenedColumns];
     const isThirdFourthColumn = (col) => {
       const title = String(col?.title || '').toLowerCase();
-      return /3\s*[ºo°]\s*y\s*4|tercer|tercero|cuarto|fourth|third/.test(title);
+      return /3\s*[ºo°]\s*y\s*4|tercer(?:o)?\s*y\s*cuarto|3er\s*y\s*4to|third\s*(?:and\s*)?fourth|consolaci/.test(title);
     };
 
     // Remove 3rd/4th place from the main bracket area entirely.
@@ -643,7 +729,77 @@ export default function TournamentScreen({ route, navigation }) {
       return [{ title: workingColumns[0]?.title || 'CLASIFICACIÓN', matches: mergedMatches }];
     }
 
-    // Eliminada lógica predictiva que sobreescribía datos reales de la federación
+    // Sort workingColumns chronologically so that Semifinals are rendered before Finals
+    const getWeight = (t) => {
+      const lower = (t || '').toLowerCase();
+      if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+      if (/3\s*[ºo°]|tercer|consolaci/i.test(lower)) return 90;
+      if (/semi/.test(lower)) return 80;
+      if (/cuarto/.test(lower)) return 60;
+      if (/octavo/.test(lower)) return 40;
+      return 10;
+    };
+
+    workingColumns.sort((a, b) => getWeight(a.title) - getWeight(b.title));
+
+    // Normalización específica de playoff clásico: 4 (cuartos), 2 (semis), 1 (final)
+    // Si llegan varias columnas/partidos de "final" (ej: FINAL 1, FINAL ABSOLUTA),
+    // en el bracket principal se fuerza siempre la forma 4-2-1.
+    const quarterRegex = /cuartos?|quarter|\b1\s*\/\s*4\b/i;
+    const semiRegex = /semi/i;
+    const finalRegex = /final/i;
+
+    const quarterCols = workingColumns.filter((col) => quarterRegex.test(String(col?.title || '')));
+    const semiCols = workingColumns.filter((col) => semiRegex.test(String(col?.title || '')));
+    const finalCols = workingColumns.filter((col) => {
+      const colTitle = String(col?.title || '');
+      return finalRegex.test(colTitle) && !semiRegex.test(colTitle);
+    });
+
+    const quarterMatches = quarterCols.flatMap((col) => col.matches || []);
+    const semifinalMatches = semiCols.flatMap((col) => col.matches || []);
+
+    // Elegir la mejor final candidata priorizando título exacto "FINAL"
+    const finalColsSorted = [...finalCols].sort((a, b) => {
+      const ta = String(a?.title || '').trim().toLowerCase();
+      const tb = String(b?.title || '').trim().toLowerCase();
+      const wa = ta === 'final' ? 0 : (/final\s+absoluta/.test(ta) ? 1 : 2);
+      const wb = tb === 'final' ? 0 : (/final\s+absoluta/.test(tb) ? 1 : 2);
+      return wa - wb;
+    });
+    const finalMatches = finalColsSorted.flatMap((col) => col.matches || []);
+
+    const dedupeMatches = (arr = []) => {
+      const seen = new Set();
+      return arr.filter((m) => {
+        const key = [
+          String(m?.homeTeam || '').toLowerCase().trim(),
+          String(m?.awayTeam || '').toLowerCase().trim(),
+          String(m?.dateTime || m?.date || '').toLowerCase().trim(),
+          String(m?.scoreText || '').toLowerCase().trim(),
+        ].join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const uniqueQuarterMatches = dedupeMatches(quarterMatches);
+    const uniqueSemifinalMatches = dedupeMatches(semifinalMatches);
+    const uniqueFinalMatches = dedupeMatches(finalMatches);
+
+    const looksLikeClassicPlayoff =
+      uniqueQuarterMatches.length >= 4 &&
+      uniqueSemifinalMatches.length >= 2 &&
+      uniqueFinalMatches.length >= 1;
+
+    if (looksLikeClassicPlayoff) {
+      return [
+        { title: 'CUARTOS DE FINAL', matches: uniqueQuarterMatches.slice(0, 4) },
+        { title: 'SEMIFINALES', matches: uniqueSemifinalMatches.slice(0, 2) },
+        { title: 'FINAL', matches: uniqueFinalMatches.slice(0, 1) },
+      ];
+    }
 
     return workingColumns;
   }, [flattenedColumns, title]);
@@ -713,6 +869,21 @@ export default function TournamentScreen({ route, navigation }) {
           })
         )
       );
+    }
+
+    // Fallback: si 3º/4º está en el bracket principal (round separado) y no en placements,
+    // añadirlo a clasificación final para que siempre se muestre.
+    const thirdFourthFromMain = (flattenedColumns || [])
+      .filter((col) => /3\s*[ºo°]\s*y\s*4|tercer(?:o)?\s*y\s*cuarto|3er\s*y\s*4to|third\s*(?:and\s*)?fourth|consolaci/i.test(String(col?.title || '')))
+      .flatMap((col) => (col.matches || []).map((m) => ({
+        ...m,
+        _placementTitle: String(col?.title || '').toLowerCase(),
+        _placementPhase: '',
+        _placementHeader: String(col?.title || ''),
+      })));
+
+    if (thirdFourthFromMain.length > 0) {
+      placementMatchesRaw = [...placementMatchesRaw, ...thirdFourthFromMain];
     }
 
     // Orden exacto deseado para la columna de clasificación final
@@ -876,9 +1047,11 @@ export default function TournamentScreen({ route, navigation }) {
         {!isFullscreen && (
           <View style={styles.editorialHeader}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
-                <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
-              </View>
+              {seasonBadgeLabel ? (
+                <View style={[styles.seasonBadge, { backgroundColor: Colors.primary }]}>
+                  <Text style={styles.seasonBadgeText}>{seasonBadgeLabel}</Text>
+                </View>
+              ) : null}
               <TouchableOpacity
                 onPress={toggleFullscreen}
                 style={{ padding: 4, marginTop: -9 }}
@@ -886,7 +1059,9 @@ export default function TournamentScreen({ route, navigation }) {
                 <MaterialIcons name="fullscreen" size={28} color={Colors.primary} />
               </TouchableOpacity>
             </View>
-            <Text style={[styles.editorialTitle, { color: Colors.primary }]}>CUADRO DE FINALES</Text>
+            <Text style={[styles.editorialTitle, { color: Colors.primary }]} numberOfLines={2}>
+              {competitionTitle.toUpperCase()}
+            </Text>
             <View style={[styles.editorialUnderline, { backgroundColor: Colors.primary }]} />
           </View>
         )}
@@ -919,7 +1094,10 @@ export default function TournamentScreen({ route, navigation }) {
           </TouchableOpacity>
           <TouchableOpacity
             style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, alignSelf: 'stretch', paddingHorizontal: 10 }}
-            disabled={true}
+            disabled={!canOpenLeagueTournamentModal}
+            onPress={() => {
+              if (canOpenLeagueTournamentModal) setIsSubgroupModalVisible(true);
+            }}
             activeOpacity={0.7}
           >
             <Text
@@ -927,8 +1105,11 @@ export default function TournamentScreen({ route, navigation }) {
               numberOfLines={1}
               ellipsizeMode="tail"
             >
-              {title ? title.toUpperCase() : 'TORNEO'}
+              {competitionTitle.toUpperCase()}
             </Text>
+            {canOpenLeagueTournamentModal ? (
+              <MaterialIcons name="keyboard-arrow-down" size={22} color={isDark ? Colors.textPrimary : Colors.primary} />
+            ) : null}
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.backBtn}
@@ -941,6 +1122,161 @@ export default function TournamentScreen({ route, navigation }) {
       )}
 
       {renderContent(isFullscreen)}
+
+      <Modal visible={isSubgroupModalVisible} transparent animationType="fade">
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }]}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => {
+            setIsAutoOpenBlocked(true);
+            setIsSubgroupModalVisible(false);
+          }} activeOpacity={1} />
+        </View>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={{ width: '90%', maxWidth: 400 }} pointerEvents="box-none">
+            <View style={{
+              backgroundColor: isDark ? '#0f172a' : '#ffffff',
+              borderRadius: 20,
+              overflow: 'hidden',
+              maxHeight: 560,
+              ...(Platform.OS !== 'web'
+                ? {
+                  shadowColor: '#000',
+                  shadowOffset: { width: 0, height: 8 },
+                  shadowOpacity: 0.3,
+                  shadowRadius: 24,
+                  elevation: 16,
+                }
+                : { boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }),
+            }}>
+              <View style={{
+                paddingHorizontal: 20,
+                paddingTop: 20,
+                paddingBottom: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: Colors.border,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{
+                    fontSize: 11,
+                    fontWeight: '700',
+                    color: Colors.primary,
+                    textTransform: 'uppercase',
+                    letterSpacing: 1.2,
+                    marginBottom: 4,
+                  }}>
+                    Competición
+                  </Text>
+                  <Text style={{
+                    fontSize: 18,
+                    fontWeight: '800',
+                    color: Colors.textPrimary,
+                    letterSpacing: -0.3,
+                  }}>
+                    Seleccionar Grupo
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setIsAutoOpenBlocked(true);
+                    setIsSubgroupModalVisible(false);
+                  }}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    backgroundColor: Colors.surfaceAlt,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <MaterialIcons name="close" size={18} color={Colors.textMuted} />
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ padding: 12 }} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 8 }}>
+              {leagueSubgroups.map((sub, idx) => {
+                const normalizedHref = String(sub?.href || '').replace(/\/+$/, '').toLowerCase();
+                const isActive = normalizedHref === normalizedCurrentTournamentUrl;
+                const isBracketType = sub?.isBracket || sub?.isTorneo || isTournament(String(sub?.title || ''));
+                const displayLabel = getModalGroupLabel(sub?.title);
+                return (
+                  <TouchableOpacity
+                    key={`league-tournament-${idx}`}
+                    style={[
+                      {
+                        flexDirection: 'row', alignItems: 'center',
+                        paddingHorizontal: 14, paddingVertical: 13,
+                        borderRadius: Radius.lg,
+                        marginVertical: 3,
+                        borderWidth: 1,
+                        borderColor: isActive ? Colors.primary : Colors.border,
+                        backgroundColor: isActive ? Colors.primaryAlpha10 : Colors.surfaceAlt,
+                      }
+                    ]}
+                    onPress={() => {
+                      setIsAutoOpenBlocked(true);
+                      setIsSubgroupModalVisible(false);
+                      if (autoOpenTimerRef.current) {
+                        clearTimeout(autoOpenTimerRef.current);
+                        autoOpenTimerRef.current = null;
+                      }
+                      if (!isActive && sub?.href) {
+                        setTimeout(() => {
+                          if (sub?.isTorneo || isTournament(String(sub?.title || ''))) {
+                            navigation.replace('Tournament', {
+                              url: sub.href,
+                              title: sub.title,
+                              season,
+                              leagueSubgroups,
+                              autoOpenGroupModal: false,
+                            });
+                          } else {
+                            navigation.replace('League', {
+                              url: sub.href,
+                              title: sub.title,
+                              defaultTab: 'ranking',
+                              season,
+                            });
+                          }
+                        }, 0);
+                      }
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <View style={{
+                      width: 34, height: 34, borderRadius: Radius.md,
+                      backgroundColor: isActive ? Colors.primary : (isBracketType ? (Colors.warningSoft || Colors.primaryAlpha10) : Colors.primaryAlpha10),
+                      alignItems: 'center', justifyContent: 'center', marginRight: 12,
+                    }}>
+                      <MaterialIcons
+                        name={isBracketType ? 'emoji-events' : 'table-chart'}
+                        size={18}
+                        color={isActive ? Colors.textOnPrimary : (isBracketType ? (Colors.warning || Colors.primary) : Colors.primary)}
+                      />
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '600', color: Colors.textPrimary }} numberOfLines={2}>
+                        {displayLabel}
+                      </Text>
+                      <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
+                        {isBracketType ? 'Eliminatoria / Bracket' : 'Clasificación + Calendario'}
+                      </Text>
+                    </View>
+
+                    {isActive && (
+                      <MaterialIcons name="check-circle" size={22} color={Colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+              </ScrollView>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {isFullscreen && (
         <TouchableOpacity
@@ -978,6 +1314,12 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   backBtn: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
+
+  centeredModalWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
+  selectionModal: { borderRadius: Radius.xl, padding: Spacing.lg },
+  selectionModalTitle: { fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, marginBottom: Spacing.md, textAlign: 'center' },
+  selectionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1 },
+  selectionItemText: { flex: 1, fontSize: Typography.size.md },
 
   // ── Editorial header ─────────────────────────────────────────────────────
   editorialHeader: {
@@ -1049,12 +1391,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'flex-end',
     marginBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(128,128,128,0.08)',
+    paddingBottom: 8,
+    marginHorizontal: -16,
+    paddingHorizontal: 16,
   },
   matchDateText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: '#94a3b8',
-    textTransform: 'uppercase',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   matchTeamRow: {
     flexDirection: 'row',

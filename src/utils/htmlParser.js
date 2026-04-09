@@ -306,12 +306,32 @@ function parseBlocksFromHtml(html = '') {
   }
 
   // ── 3. Parseo de bracket/eliminatoria (si existe en el DOM) ──────────────
-  const bracketData = parseBracketFromDom(root);
-  if (bracketData && bracketData.columns && bracketData.columns.length > 0) {
+  const originalBracketData = parseBracketFromDom(root);
+  let finalBracketData = originalBracketData;
+
+  // -- MEJORA: Detectar si el bracket original es "deficiente" (pocos equipos o partidos) --
+  const isDeficient = (b) => {
+    if (!b || !b.columns || b.columns.length === 0) return true;
+    const allMatches = b.columns.flatMap(c => c.matches || []);
+    if (allMatches.length === 0) return true;
+    
+    const isGeneric = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor)/i.test(t);
+    // Si algún partido tiene equipos genéricos o nulos, intentamos el parser mejorado
+    return allMatches.some(m => isGeneric(m.homeTeam) || isGeneric(m.awayTeam));
+  };
+
+  if (isDeficient(originalBracketData)) {
+    const enhancedBracketData = parseBracketFromDomEnhanced(root);
+    if (enhancedBracketData) {
+      finalBracketData = mergeBracketData(originalBracketData, enhancedBracketData);
+    }
+  }
+
+  if (finalBracketData && finalBracketData.columns && finalBracketData.columns.length > 0) {
     // Avoid duplicate if already parsed via domToBlocks
     const alreadyHasBracket = blocks.some(b => b.type === 'bracket');
     if (!alreadyHasBracket) {
-      blocks.push({ type: 'bracket', ...bracketData });
+      blocks.push({ type: 'bracket', ...finalBracketData });
     }
   }
 
@@ -2050,6 +2070,262 @@ function findMatchBoxes(rootOrArray) {
       venue,
       sets: sets.length ? sets : undefined,
       ...(state ? { state } : {}),
+    });
+  });
+
+  return matches;
+}
+
+/**
+ * Merge inteligente de datos de bracket.
+ * Prioriza datos del original si están completos, de lo contrario usa los del mejorado.
+ */
+function mergeBracketData(original, enhanced) {
+  if (!enhanced || !enhanced.columns) return original;
+  if (!original || !original.columns) return enhanced;
+
+  const resultColumns = [];
+  const origCols = original.columns;
+  const enhCols = enhanced.columns;
+
+  const maxCols = Math.max(origCols.length, enhCols.length);
+
+  for (let i = 0; i < maxCols; i++) {
+    const oCol = origCols[i];
+    const eCol = enhCols[i];
+
+    if (!oCol) {
+      resultColumns.push(eCol);
+      continue;
+    }
+    if (!eCol) {
+      resultColumns.push(oCol);
+      continue;
+    }
+
+    const mergedMatches = [];
+    const oMatches = oCol.matches || [];
+    const eMatches = eCol.matches || [];
+
+    const maxMatches = Math.max(oMatches.length, eMatches.length);
+    for (let j = 0; j < maxMatches; j++) {
+      const oM = oMatches[j];
+      const eM = eMatches[j];
+
+      if (!oM) {
+        mergedMatches.push(eM);
+      } else if (!eM) {
+        mergedMatches.push(oM);
+      } else {
+        // Combinar: preferir nombres reales sobre TBD
+        const useEnhancedHome = (!oM.homeTeam || oM.homeTeam === 'TBD') && eM.homeTeam && eM.homeTeam !== 'TBD';
+        const useEnhancedAway = (!oM.awayTeam || oM.awayTeam === 'TBD') && eM.awayTeam && eM.awayTeam !== 'TBD';
+
+        mergedMatches.push({
+          ...oM,
+          homeTeam: useEnhancedHome ? eM.homeTeam : oM.homeTeam,
+          awayTeam: useEnhancedAway ? eM.awayTeam : oM.awayTeam,
+          homeLogo: (useEnhancedHome || !oM.homeLogo) ? eM.homeLogo : oM.homeLogo,
+          awayLogo: (useEnhancedAway || !oM.awayLogo) ? eM.awayLogo : oM.awayLogo,
+          scoreText: (oM.scoreText === '- -' && eM.scoreText !== '- -') ? eM.scoreText : oM.scoreText,
+          // Mantener metadatos del original si existen
+          dateTime: oM.dateTime || eM.dateTime,
+          venue: oM.venue || eM.venue,
+          href: oM.href || eM.href,
+        });
+      }
+    }
+
+    resultColumns.push({
+      header: oCol.header || eCol.header,
+      matches: mergedMatches
+    });
+  }
+
+  return { columns: resultColumns };
+}
+
+/**
+ * Versión mejorada de parseBracketFromDom para soportar nuevos formatos de la federación.
+ */
+function parseBracketFromDomEnhanced(dom) {
+  const searchRoot = dom.children || [];
+  const columns = [];
+
+  const normalizePhase = (ph) => {
+    const p = (ph || '').toLowerCase().trim();
+    if (/tercer|3er|4to|perdedor|consolación/i.test(p)) return 'CLASIFICACIÓN FINAL';
+    if (/cuarto/i.test(p) || /(1\/4|quarter|qf)/i.test(p)) return 'CUARTOS DE FINAL';
+    if (/semi/i.test(p)) return 'SEMIFINALES';
+    if (/final/i.test(p) && !/octavo|cuarto|semi/i.test(p)) return 'FINAL';
+    return (ph || 'ELIMINATORIA').toUpperCase();
+  };
+
+  const getWeight = (t) => {
+    const lower = (t || '').toLowerCase();
+    if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+    if (/3\s*[ºo°]|tercer|consolaci/i.test(lower)) return 90;
+    if (/semi/.test(lower)) return 80;
+    if (/cuarto/.test(lower)) return 60;
+    if (/octavo/.test(lower)) return 40;
+    return 10;
+  };
+
+  // 1. Buscar columnas usando clases más amplias (round, bracket-column, etc.)
+  let colNodes = DomUtils.findAll(
+    (n) => n.type === 'tag' && /\b(bracket-column|round|column)\b/i.test(n.attribs?.class || ''),
+    searchRoot,
+    true
+  );
+
+  // 2. Si no hay columnas explícitas, buscar match boxes directamente y agruparlas
+  if (colNodes.length === 0) {
+    const allMatches = findMatchBoxesEnhanced(searchRoot);
+    if (allMatches.length > 0) {
+      const phaseMap = new Map();
+      allMatches.forEach(m => {
+        const ph = normalizePhase(m.phase);
+        if (!phaseMap.has(ph)) phaseMap.set(ph, []);
+        phaseMap.get(ph).push(m);
+      });
+
+      const cols = Array.from(phaseMap.entries())
+        .map(([ph, arr]) => ({
+          header: ph,
+          matches: arr
+        }))
+        .sort((a, b) => getWeight(a.header) - getWeight(b.header));
+
+      return { columns: cols };
+    }
+    return null;
+  }
+
+  // 3. Si hay columnas, intentar agruparlas por su header normalizado para evitar duplicidades (Ej: Semifinal 1 y 2)
+  const groupedCols = new Map();
+  colNodes.forEach(colNode => {
+    const matches = findMatchBoxesEnhanced([colNode]);
+    if (matches.length > 0) {
+      const headerNode = DomUtils.findOne(n => /\b(bracket-header|round-header|header|title)\b/i.test(n.attribs?.class || ''), [colNode], true);
+      const rawHeader = headerNode ? getTextContent(headerNode) : '';
+      const header = normalizePhase(rawHeader || matches[0].phase);
+      
+      if (!groupedCols.has(header)) groupedCols.set(header, []);
+      // Filtrar partidos duplicados que ya estén en esta columna
+      matches.forEach(m => {
+        const key = `${m.homeTeam}|${m.awayTeam}|${m.dateTime}`;
+        const alreadyExists = groupedCols.get(header).some(ext => `${ext.homeTeam}|${ext.awayTeam}|${ext.dateTime}` === key);
+        if (!alreadyExists) groupedCols.get(header).push(m);
+      });
+    }
+  });
+
+  const finalCols = Array.from(groupedCols.entries())
+    .map(([header, matches]) => ({
+      header,
+      matches
+    }))
+    .sort((a, b) => getWeight(a.header) - getWeight(b.header));
+
+  return finalCols.length > 0 ? { columns: finalCols } : null;
+}
+
+/**
+ * Buscador de cajas de partidos optimizado para detectar equipos sin clases explícitas.
+ */
+function findMatchBoxesEnhanced(rootOrArray) {
+  const matches = [];
+  const searchIn = Array.isArray(rootOrArray) ? rootOrArray : (rootOrArray.children || [rootOrArray]);
+
+  const matchNodes = DomUtils.findAll(
+    (n) => n.type === 'tag' && (
+      (n.attribs?.class && /\b(match-box|box|match-data|inside)\b/i.test(n.attribs.class)) ||
+      (n.attribs?.style && /border/i.test(n.attribs.style))
+    ),
+    searchIn,
+    true
+  );
+
+  matchNodes.forEach(mNode => {
+    // Evitar anidamiento excesivo si ya procesamos el padre
+    const hasNestedMatch = DomUtils.findOne(n => n !== mNode && matchNodes.includes(n), [mNode], true);
+    if (hasNestedMatch) return;
+
+    // --- DETECCIÓN DE EQUIPOS AGRESIVA ---
+    // Buscar todos los posibles contenedores de nombre de equipo
+    const potentialTeams = DomUtils.findAll(
+      (n) => n.type === 'tag' && (
+        /\b(team|equipo|participant|name|nombre)\b/i.test(n.attribs?.class || '') ||
+        /\/team\//i.test(n.attribs?.href || '') ||
+        'data-team' in (n.attribs || {}) ||
+        (n.name === 'span' && n.parent && /\b(teams|participants)\b/i.test(n.parent.attribs?.class || ''))
+      ),
+      [mNode],
+      true
+    ).filter((n, i, list) => !list.some(p => p !== n && isAncestorNode(p, n)));
+
+    // Si encontramos exactamente 2, asumimos que son local y visitante
+    let homeTeamNode = potentialTeams[0];
+    let awayTeamNode = potentialTeams[1];
+
+    // --- DETECCIÓN DE MARCADOR ---
+    const matchLinkNode = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'a' && /\/match\//i.test(n.attribs?.href || ''),
+      [mNode],
+      true
+    );
+
+    const getTeamName = (node) => {
+      if (!node) return 'TBD';
+      const text = getTextContent(node).replace(/[\n\r]+/g, ' ').replace(/\s+/g, ' ').trim();
+      // Limpiar texto de hijos ruidosos (ej: el score si está dentro)
+      const cleanText = text.replace(/^\d+\s*-\s*\d+$/, '').trim();
+      return cleanText || 'TBD';
+    };
+
+    const getLogo = (node) => {
+      if (!node) return '';
+      const img = DomUtils.findOne(n => n.name === 'img', [node], true);
+      return img?.attribs?.src || img?.attribs?.['data-src'] || img?.attribs?.['data-logo'] || '';
+    };
+
+    const homeTeam = getTeamName(homeTeamNode);
+    const awayTeam = getTeamName(awayTeamNode);
+
+    if (homeTeam === 'TBD' && awayTeam === 'TBD') return;
+
+    // --- DATOS ADICIONALES ---
+    let scoreText = '- -';
+    if (matchLinkNode) {
+      const matchSpans = DomUtils.findAll(s => s.name === 'span', matchLinkNode.children || [], false);
+      if (matchSpans.length >= 2) {
+        const s1 = getTextContent(matchSpans[0]).trim() || '-';
+        const s2 = getTextContent(matchSpans[1]).trim() || '-';
+        scoreText = `${s1} - ${s2}`;
+      } else {
+        const txt = getTextContent(matchLinkNode).trim();
+        if (/\d+\s*-\s*\d+/.test(txt)) scoreText = txt.match(/\d+\s*-\s*\d+/)[0];
+        else if (txt.length > 1 && txt.length < 10) scoreText = txt;
+      }
+    }
+
+    const bracketDataNode = DomUtils.findOne(n => /\b(bracket-data|round-data|phase|info)\b/i.test(n.attribs?.class || ''), [mNode], true);
+    const nextMatchNode = DomUtils.findOne(n => /\b(next-match|match-schedule|date)\b/i.test(n.attribs?.class || ''), [mNode], true);
+
+    const phase = bracketDataNode ? getTextContent(bracketDataNode).trim() : '';
+    const dateTime = nextMatchNode ? getTextContent(nextMatchNode).trim().replace(/\s+/g, ' ') : '';
+
+    matches.push({
+      title: phase,
+      phase,
+      homeTeam,
+      awayTeam,
+      homeLogo: toAbsoluteUrl(getLogo(homeTeamNode)),
+      awayLogo: toAbsoluteUrl(getLogo(awayTeamNode)),
+      scoreText,
+      href: toAbsoluteUrl(matchLinkNode?.attribs?.href || ''),
+      dateTime,
+      venue: '',
     });
   });
 
