@@ -7,12 +7,21 @@ import { toRankingUrl } from './htmlParser';
  */
 export function isTournament(title = '') {
   const tournamentKeywords = [
-    'torneo', 'copa', 'kopa', 'txapelketa', 'topaketa', 'sector', 'campeonato', 
-    'final', 'fase', 'eliminatoria', 'ranking', 'playoff', 'play off', 'pla off',
-    'ascenso', 'descenso', 'kanporaketak', 'cup'
+    'torneo', 'copa', 'kopa', 'txapelketa', 'topaketa', 'sector', 'campeonato',
+    'final', 'eliminatoria', 'ranking', 'playoff', 'play off', 'pla off',
+    'ascenso', 'descenso', 'kanporaketak', 'cup', 'clasificaci'
   ];
+  // Remove spaces, dashes, underscores for robust matching (e.g. "Play-off" -> "playoff")
+  const normalizedTitle = title.toLowerCase().replace(/[-_\s]/g, '');
+
+  // We check against normalizedTitle and original lowerTitle just in case
   const lowerTitle = title.toLowerCase();
-  return tournamentKeywords.some(kw => lowerTitle.includes(kw));
+
+  // Also check if any keyword string with spaces stripped matches the normalized title
+  return tournamentKeywords.some(kw => {
+    const kwNormalized = kw.replace(/[-_\s]/g, '');
+    return normalizedTitle.includes(kwNormalized) || lowerTitle.includes(kw);
+  });
 }
 
 /**
@@ -20,10 +29,10 @@ export function isTournament(title = '') {
  */
 export function openTournamentDetail(navigation, tournament, extraParams = {}) {
   if (!tournament?.href) return;
-  
+
   const title = tournament.name || tournament.title || 'Competición';
   const rankingUrl = toRankingUrl(tournament.href);
-  
+
   if (tournament.isTorneo || isTournament(title)) {
     navigation.navigate('Tournament', {
       url: rankingUrl,

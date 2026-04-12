@@ -1,64 +1,74 @@
-/**
- * Diccionario de colores corporativos por CLUB (Base).
- * Se usa búsqueda por subcadena: si el nombre del equipo contiene la clave,
- * se aplica el color. Esto soluciona el problema de los patrocinadores.
- */
-export const CLUB_BASE_COLORS = {
-  // --- CLUBES BASE (Editar códigos HEX aquí) ---
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '../utils/supabase';
 
-  "OCISA": "#36906D",
-  "AIDEAN": "#E65900",
-  "AIXERROTA": "#8B0135",
-  "ARMENTIA": "#F46B27",
-  "ARIZMENDI": "#8C2377",
-  "BERA BERA": "#3173C7",
-  "CARMELITAS": "#0B87DD",
-  "DIOS": "#55B9E1",
-  "EGIBIDE": "#80005D",
-  "EKIALDE": "#5081D0",
-  "FORTUNA": "#FA6D28",
-  "GALDAKAO": "#0277B7",
-  "GALLARTA": "#008300",
-  "GETXO": "#8B0135",
-  "HERNANI": "#2F2F2F",
-  "JATORKIDE": "#592e77",
-  "KOLDO": "#EEE300",
-  "LEKEITIO": "#EC990D",
-  "LOGROÑO": "#941109",
-  "HRV": "#003261",
-  "MARIANISTAS": "#E02512",
-  "MENDEBALDEA": "#743409",
-  "MERCEDARIAS": "#253769",
-  "NAVARVOLEY": "#DF2F2F",
-  "OSTADAR": "#7A5F38",
-  "OTSOKUMEAK": "#515151",
-  "REKALDE": "#032A75",
-  "SANTANDER": "#C20E1A",
-  "SESTAO": "#0D5427",
-  "UNAMUNO": "",
-  "ZABALGANA": "#743409",
-
-  // Añade más clubes base aquí en MAYÚSCULAS
-};
+// --- INITIAL FALLBACK DATA ---
+export let CLUB_BASE_COLORS = {};
+export let CLUB_VENUE_COORDS = {};
+export let OFFICIAL_CHANNELS = [];
+export let CLUB_BASES = [];
+// ------------------------------
 
 /**
- * Diccionario de coordenadas manuales por CLUB.
- * Se usa como fallback si la web oficial no tiene el enlace.
+ * Inicializa y carga los datos de equipos desde Supabase,
+ * con caché en AsyncStorage para un inicio rápido.
  */
-export const CLUB_VENUE_COORDS = {
-  "AIXERROTA": { latitude: 43.3705, longitude: -3.0039 }, // Fadura
-  "GETXO": { latitude: 43.3705, longitude: -3.0039 },
-  "SESTAO": { latitude: 43.3086, longitude: -3.0061 }, // La Benedicta
-  "GALDAKAO": { latitude: 43.2346, longitude: -2.8455 }, // Urreta
-  "JATORKIDE": { latitude: 42.8534, longitude: -2.6712 }, // Judimendi
-};
+export async function initTeamsData() {
+  try {
+    const cachedData = await AsyncStorage.getItem('teams_data_cache');
+    if (cachedData) {
+      applyTeamsData(JSON.parse(cachedData));
+    }
 
-/**
- * Obtiene las coordenadas manuales de un equipo basándose en su nombre.
- */
-export function getTeamManualCoords(teamName) {
-  const baseName = getClubBaseName(teamName);
-  return baseName ? CLUB_VENUE_COORDS[baseName] : null;
+    const { data: teamsData, error } = await supabase
+      .from('teams_data')
+      .select('*');
+
+    if (!error && teamsData) {
+      applyTeamsData(teamsData);
+      await AsyncStorage.setItem('teams_data_cache', JSON.stringify(teamsData));
+      console.log('[TeamsData] ✅ Datos de equipos actualizados desde Supabase');
+    } else if (error) {
+      console.log('[TeamsData] ⚠️ Error al obtener teams_data:', error);
+    }
+  } catch (error) {
+    console.warn('[TeamsData] Error en initTeamsData:', error);
+  }
+}
+
+function applyTeamsData(teamsData) {
+  const newColors = {};
+  const newCoords = {};
+  const newChannels = [];
+  const newBases = [];
+
+  teamsData.forEach(row => {
+    if (row.base_name) {
+      newBases.push(row.base_name);
+    }
+    if (row.color) {
+      newColors[row.base_name] = row.color;
+    }
+    if (row.venue_lat && row.venue_lon) {
+      newCoords[row.base_name] = {
+        latitude: parseFloat(row.venue_lat),
+        longitude: parseFloat(row.venue_lon)
+      };
+    }
+    if (row.youtube_id && row.youtube_patterns && row.youtube_patterns.length > 0) {
+      newChannels.push({
+        baseName: row.base_name,
+        name: row.youtube_name || row.base_name,
+        id: row.youtube_id,
+        patterns: row.youtube_patterns.map(p => new RegExp(p, 'i')),
+        priority: row.youtube_priority || false
+      });
+    }
+  });
+
+  CLUB_BASE_COLORS = newColors;
+  CLUB_VENUE_COORDS = newCoords;
+  OFFICIAL_CHANNELS = newChannels;
+  CLUB_BASES = newBases;
 }
 
 /**
@@ -67,10 +77,16 @@ export function getTeamManualCoords(teamName) {
 export function getClubBaseName(teamName) {
   if (!teamName) return null;
   const upperName = teamName.toUpperCase();
-  const entry = Object.entries(CLUB_BASE_COLORS).find(([baseName]) =>
-    upperName.includes(baseName.toUpperCase())
-  );
-  return entry ? entry[0] : null;
+  const baseName = CLUB_BASES.find(base => upperName.includes(base.toUpperCase()));
+  return baseName || null;
+}
+
+/**
+ * Obtiene las coordenadas manuales de un equipo basándose en su nombre.
+ */
+export function getTeamManualCoords(teamName) {
+  const baseName = getClubBaseName(teamName);
+  return baseName ? CLUB_VENUE_COORDS[baseName] : null;
 }
 
 /**

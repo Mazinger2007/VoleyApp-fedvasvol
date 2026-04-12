@@ -260,10 +260,7 @@ export function formatMatchTime(rawDate, timeStr) {
   // Custom formatter para asegurar 24h y resolver problemas de 12:00 AM erróneos en móviles
   const hh = d.getHours().toString().padStart(2, '0');
   const mm = d.getMinutes().toString().padStart(2, '0');
-  // 🔍 DEBUG TEMPORAL
-  if (rawDate && /\d{1,2}:\d{2}/.test(rawDate)) {
-    console.log('[TIME_DBG] rawDate:', rawDate, '| timeStr:', timeStr, '| d:', d?.toISOString?.(), '| result:', `${hh}:${mm}`);
-  }
+  
   return `${hh}:${mm}`;
 }
 

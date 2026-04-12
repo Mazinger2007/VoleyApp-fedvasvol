@@ -97,6 +97,12 @@ function TeamLogo({ teamLogo, initials, Colors }) {
   const [bgColor, setBgColor] = useState(() => getCachedLogoColorSync(candidates[0]) || '#ffffff');
   const uri = candidates[index] || null;
 
+  const isGeneric = useMemo(() => {
+    if (!initials) return true;
+    const lower = initials.toLowerCase();
+    return lower === 'se' || lower === 'sq' || lower === '??';
+  }, [initials]);
+
   useEffect(() => {
     if (!uri) { setBgColor(Colors.surfaceAlt); return; }
     const cached = getCachedLogoColorSync(uri);
@@ -120,6 +126,8 @@ function TeamLogo({ teamLogo, initials, Colors }) {
           cachePolicy="memory-disk"
           onError={() => setIndex((current) => (current + 1 < candidates.length ? current + 1 : candidates.length))}
         />
+      ) : isGeneric ? (
+        <MaterialIcons name="security" size={16} color={Colors.textMuted} />
       ) : (
         <Text style={{ color: Colors.textMuted, fontSize: 11, fontWeight: Typography.weight.bold }}>{initials || '?'}</Text>
       )}

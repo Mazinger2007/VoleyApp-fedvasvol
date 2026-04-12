@@ -8,6 +8,7 @@ import { toRankingUrl } from '../utils/htmlParser';
 
 const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfiguring }) {
   const [imageErrs, setImageErrs] = useState({});
+  const isMobile = Platform.OS !== 'web';
 
   const logosData = useMemo(() => {
     if (!blocks || blocks.length === 0) return [];
@@ -22,8 +23,15 @@ const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfigurin
       return tableTable.rows.slice(0, 3).map((row, i) => {
         const logoUrl = tableTable.rowLogos?.[i];
         const teamName = row[colIdx] || row[0] || 'EQ';
-        const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(teamName)}&background=random&color=fff&rounded=true&bold=true`;
-        return { url: logoUrl || fallbackUrl, fallbackUrl, isPlaceholder: false };
+        const fallbackUrl = logoUrl
+          ? null
+          : `https://ui-avatars.com/api/?name=${encodeURIComponent(teamName)}&background=random&color=fff&rounded=true&bold=true`;
+        return {
+          url: logoUrl || fallbackUrl,
+          fallbackUrl,
+          isPlaceholder: !logoUrl,
+          label: teamName,
+        };
       });
     }
 
@@ -42,15 +50,29 @@ const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfigurin
 
             if (match.homeTeam && match.homeTeam.trim() !== '' && match.homeTeam.trim() !== 'TBD' && !seenTeams.has(match.homeTeam)) {
               seenTeams.add(match.homeTeam);
-              const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(match.homeTeam)}&background=random&color=fff&rounded=true&bold=true`;
-              extractedTeams.push({ url: match.homeLogo || fallbackUrl, fallbackUrl, isPlaceholder: false });
+              const fallbackUrl = match.homeLogo
+                ? null
+                : `https://ui-avatars.com/api/?name=${encodeURIComponent(match.homeTeam)}&background=random&color=fff&rounded=true&bold=true`;
+              extractedTeams.push({
+                url: match.homeLogo || fallbackUrl,
+                fallbackUrl,
+                isPlaceholder: !match.homeLogo,
+                label: match.homeTeam,
+              });
             }
             if (extractedTeams.length >= 3) break;
 
             if (match.awayTeam && match.awayTeam.trim() !== '' && match.awayTeam.trim() !== 'TBD' && !seenTeams.has(match.awayTeam)) {
               seenTeams.add(match.awayTeam);
-              const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(match.awayTeam)}&background=random&color=fff&rounded=true&bold=true`;
-              extractedTeams.push({ url: match.awayLogo || fallbackUrl, fallbackUrl, isPlaceholder: false });
+              const fallbackUrl = match.awayLogo
+                ? null
+                : `https://ui-avatars.com/api/?name=${encodeURIComponent(match.awayTeam)}&background=random&color=fff&rounded=true&bold=true`;
+              extractedTeams.push({
+                url: match.awayLogo || fallbackUrl,
+                fallbackUrl,
+                isPlaceholder: !match.awayLogo,
+                label: match.awayTeam,
+              });
             }
           }
           if (extractedTeams.length >= 3) break;
@@ -70,23 +92,39 @@ const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfigurin
   if (logosData.length > 0) {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
-        {logosData.map((logo, idx) => (
-          <View key={idx} style={{
-            width: 32, height: 32, borderRadius: 16,
-            borderWidth: 2, borderColor: isDark ? '#1e293b' : '#ffffff',
-            backgroundColor: isDark ? '#334155' : '#f1f5f9',
-            alignItems: 'center', justifyContent: 'center',
-            marginLeft: idx === 0 ? 0 : -12, elevation: 1, overflow: 'hidden',
-            zIndex: 10 - idx
-          }}>
-            <Image
-              source={{ uri: imageErrs[idx] ? logo.fallbackUrl : logo.url }}
-              onError={() => setImageErrs(p => ({ ...p, [idx]: true }))}
-              style={{ width: '95%', height: '95%' }}
-              resizeMode="contain"
-            />
-          </View>
-        ))}
+        {logosData.map((logo, idx) => {
+          const initials = logo.fallbackUrl?.match(/name=([^&]+)/)?.[1] || logo.label || '';
+          const isGeneric = initials.toLowerCase() === 'se' || initials.toLowerCase() === 'sq' || initials.toLowerCase() === 'eq';
+          const shouldUseAvatar = !isMobile && !!logo.fallbackUrl;
+          
+          return (
+            <View key={idx} style={{
+              width: 32, height: 32, borderRadius: 16,
+              borderWidth: 2, borderColor: isDark ? '#1e293b' : '#ffffff',
+              backgroundColor: isDark ? '#334155' : '#f1f5f9',
+              alignItems: 'center', justifyContent: 'center',
+              marginLeft: idx === 0 ? 0 : -12, elevation: 1, overflow: 'hidden',
+              zIndex: 10 - idx
+            }}>
+              {(!logo.isPlaceholder && !imageErrs[idx] && logo.url) ? (
+                <Image
+                  source={{ uri: logo.url }}
+                  onError={() => setImageErrs(p => ({ ...p, [idx]: true }))}
+                  style={{ width: '95%', height: '95%' }}
+                  resizeMode="contain"
+                />
+              ) : shouldUseAvatar && !isGeneric ? (
+                <Image
+                  source={{ uri: logo.fallbackUrl }}
+                  style={{ width: '100%', height: '100%' }}
+                  resizeMode="cover"
+                />
+              ) : (
+                <MaterialIcons name="security" size={12} color={isDark ? '#cbd5e1' : '#94a3b8'} />
+              )}
+            </View>
+          );
+        })}
       </View>
     );
   }

@@ -101,28 +101,36 @@ patchFile(
 
 const tabViewKeySpreadPatch = [
   [
-    '    const props = {\n      key: route.key,',
+    '    const props = {\n      key: route.key,\n      position: position,',
     '    const props = {\n      position: position,',
-  ],
-  [
-    '      position: position,\n      route: route,',
-    '      route: route,',
-  ],
-  [
-    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, props));',
-    '    }) : null, renderTabBarItem ? renderTabBarItem({\n      key: route.key,\n      ...props\n    }) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
-  ],
-  [
-    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(TabBarItem, props));',
-    '    }) : null, renderTabBarItem ? renderTabBarItem({\n      key: route.key,\n      ...props\n    }) : /*#__PURE__*/React.createElement(TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
   ],
   [
     '      const props: TabBarItemProps<T> & { key: string } = {\n        key: route.key,\n        position: position,',
     '      const props: TabBarItemProps<T> = {\n        position: position,',
   ],
   [
-    '            renderTabBarItem(props)\n          ) : (\n            <TabBarItem {...props} />',
+    '    }) : null, renderTabBarItem ? renderTabBarItem({\n      key: route.key,\n      ...props\n    }) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+  ],
+  [
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, props));',
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(_TabBarItem.TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+  ],
+  [
+    '    }) : null, renderTabBarItem ? renderTabBarItem({\n      key: route.key,\n      ...props\n    }) : /*#__PURE__*/React.createElement(TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+  ],
+  [
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(TabBarItem, props));',
+    '    }) : null, renderTabBarItem ? renderTabBarItem(props) : /*#__PURE__*/React.createElement(TabBarItem, {\n      key: route.key,\n      ...props\n    }));',
+  ],
+  [
     '            renderTabBarItem({ key: route.key, ...props })\n          ) : (\n            <TabBarItem key={route.key} {...props} />',
+    '            renderTabBarItem(props)\n          ) : (\n            <TabBarItem key={route.key} {...props} />',
+  ],
+  [
+    '            renderTabBarItem(props)\n          ) : (\n            <TabBarItem {...props} />',
+    '            renderTabBarItem(props)\n          ) : (\n            <TabBarItem key={route.key} {...props} />',
   ],
 ];
 

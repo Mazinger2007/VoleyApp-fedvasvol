@@ -400,9 +400,21 @@ export default function LeagueScreen({ route, navigation }) {
   }, [rawRankingBlocks, rankingUrl]);
 
   const subgroupEntities = useMemo(() => {
-    return (rawRankingBlocks || []).filter(
-      (b) => (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket'
-    );
+    const isGenericTeam = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor|1\s*[ºo]|2\s*[ºo]|3\s*[ºo])/i.test(String(t).trim());
+    return (rawRankingBlocks || []).filter((b) => {
+      if (b.type === 'bracket') {
+        const allMatches = b.columns?.flatMap(c => c.matches || []) || [];
+        return allMatches.length > 0 && allMatches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
+      }
+      if (b.type === 'table') {
+        if (!b.rows || b.rows.length === 0) return false;
+        if (b.matches && b.matches.length > 0) {
+          return b.matches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
+        }
+        return true;
+      }
+      return false;
+    });
   }, [rawRankingBlocks]);
 
   const isFlatLeague = useMemo(() => {
@@ -1233,7 +1245,12 @@ export default function LeagueScreen({ route, navigation }) {
             return (
               <Bracket
                 key={`bracket-${i}`}
-                championshipData={{ mainFlow: [{ title: '', blocks: [bracket] }] }}
+                championshipData={{
+                  mainFlow: [{ title: '', blocks: [bracket] }],
+                  placements: Array.isArray(bracket.placements) && bracket.placements.length > 0
+                    ? [{ title: 'Clasificación final', blocks: [{ type: 'bracket', columns: bracket.placements }] }]
+                    : [],
+                }}
                 onMatchPress={openMatchModal}
               />
             );
@@ -1791,7 +1808,7 @@ export default function LeagueScreen({ route, navigation }) {
                     {availableSubgroups.map((sub, idx) => {
                       const isFlatDefaultActive = isFlatLeague && selectedGroupIndex === 0 && idx === 0 && !sub.isTorneo;
                       const isActive = rankingUrl === sub.href || isFlatDefaultActive;
-                      const isBracketType = sub.isBracket || /playoff|ascenso|final|copa|txapelketa|topaketa/i.test(sub.title || '');
+                      const isBracketType = sub.isBracket || isTournament(sub.title || '');
                       const displaySubgroupTitle = getSubgroupLabel(sub.title);
                       return (
                         <TouchableOpacity

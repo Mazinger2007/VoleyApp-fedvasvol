@@ -306,24 +306,27 @@ function parseBlocksFromHtml(html = '') {
   }
 
   // ── 3. Parseo de bracket/eliminatoria (si existe en el DOM) ──────────────
+  const playoffViewerBracketData = parsePlayoffViewerBracket(root);
   const originalBracketData = parseBracketFromDom(root);
-  let finalBracketData = originalBracketData;
+  let finalBracketData = playoffViewerBracketData || originalBracketData;
 
-  // -- MEJORA: Detectar si el bracket original es "deficiente" (pocos equipos o partidos) --
-  const isDeficient = (b) => {
-    if (!b || !b.columns || b.columns.length === 0) return true;
-    const allMatches = b.columns.flatMap(c => c.matches || []);
-    if (allMatches.length === 0) return true;
-    
-    const isGeneric = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor)/i.test(t);
-    // Si algún partido tiene equipos genéricos o nulos, intentamos el parser mejorado
-    return allMatches.some(m => isGeneric(m.homeTeam) || isGeneric(m.awayTeam));
-  };
+  if (!playoffViewerBracketData) {
+    // -- MEJORA: Detectar si el bracket original es "deficiente" (pocos equipos o partidos) --
+    const isDeficient = (b) => {
+      if (!b || !b.columns || b.columns.length === 0) return true;
+      const allMatches = b.columns.flatMap(c => c.matches || []);
+      if (allMatches.length === 0) return true;
 
-  if (isDeficient(originalBracketData)) {
-    const enhancedBracketData = parseBracketFromDomEnhanced(root);
-    if (enhancedBracketData) {
-      finalBracketData = mergeBracketData(originalBracketData, enhancedBracketData);
+      const isGeneric = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor)/i.test(t);
+      // Si algún partido tiene equipos genéricos o nulos, intentamos el parser mejorado
+      return allMatches.some(m => isGeneric(m.homeTeam) || isGeneric(m.awayTeam));
+    };
+
+    if (isDeficient(originalBracketData)) {
+      const enhancedBracketData = parseBracketFromDomEnhanced(root);
+      if (enhancedBracketData) {
+        finalBracketData = mergeBracketData(originalBracketData, enhancedBracketData);
+      }
     }
   }
 
@@ -502,6 +505,211 @@ function extractSeasonLabelFromBlocks(blocks = []) {
     ['paragraph', 'heading'].includes(block.type) && /\b\d{4}\s*\/\s*\d{4}\b/.test(block.content || '')
   );
   return textBlock?.content?.match(/\d{4}\s*\/\s*\d{4}/)?.[0]?.replace(/\s+/g, '') || null;
+}
+
+function parsePlayoffViewerBracket(dom) {
+  const viewer = DomUtils.findOne(
+    (n) => n.type === 'tag' && /\bplayoff-viewer\b/i.test(n.attribs?.class || ''),
+    dom.children || [],
+    true
+  ) || dom;
+
+  const roundNodes = DomUtils.findAll(
+    (n) => n.type === 'tag' && /\bround\b/i.test(n.attribs?.class || ''),
+    [viewer],
+    true
+  );
+
+  if (!roundNodes.length) return null;
+
+  const cleanText = (node) => getTextContent(node).replace(/\s+/g, ' ').trim();
+  const normalizeLogo = (url = '') => url ? url.replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '.200x200') : null;
+  const isGenericTeam = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return !normalized || normalized === 'tbd' || normalized === 'sin equipo' || normalized === 'sin escudo' || normalized === 'por determinar' || /^-+$/.test(normalized);
+  };
+  const hasRealMatchData = (match) => {
+    if (!match) return false;
+    const hasNamedTeams = !isGenericTeam(match.homeTeam) && !isGenericTeam(match.awayTeam);
+    const hasScore = match.scoreText && match.scoreText !== '- -' && !/^-\s*-$/.test(match.scoreText);
+    const hasSchedule = Boolean(match.dateTime) || Boolean(match.venue);
+    return hasNamedTeams || hasScore || hasSchedule;
+  };
+
+  const getPhaseWeight = (title = '') => {
+    const lower = String(title || '').toLowerCase();
+    if (/final/.test(lower) && !/semi/.test(lower)) return 100;
+    if (/3\s*[ºo°]|tercer|clasificaci/i.test(lower)) return 90;
+    if (/semi/.test(lower)) return 80;
+    if (/cuarto|cuartos|1\/4/.test(lower)) return 60;
+    if (/octavo/.test(lower)) return 40;
+    return 10;
+  };
+
+  const parseBracketBox = (boxNode, roundTitle = '') => {
+    if (!boxNode) return null;
+
+    const teamsNode = DomUtils.findOne(
+      (n) => n.type === 'tag' && /\bteams\b/i.test(n.attribs?.class || ''),
+      [boxNode],
+      true
+    );
+
+    const teamNodes = DomUtils.findAll(
+      (n) => n.type === 'tag' && (n.name === 'a' || n.name === 'span') && /\bteam\b/i.test(n.attribs?.class || ''),
+      [teamsNode || boxNode],
+      true
+    ).filter((node) => !node.parent || node.parent === teamsNode || node.parent === boxNode || node.parent?.parent === teamsNode);
+
+    const getTeamInfo = (node) => {
+      if (!node) return { name: 'TBD', logo: null };
+      const name = cleanText(node) || 'TBD';
+      const img = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'img', [node], true);
+      const logo = normalizeLogo(toAbsoluteUrl(img?.attribs?.src || img?.attribs?.['data-src'] || '')) || null;
+      return { name, logo };
+    };
+
+    const home = getTeamInfo(teamNodes[0]);
+    const away = getTeamInfo(teamNodes[1]);
+
+    const matchNode = DomUtils.findOne(
+      (n) => n.type === 'tag' && n.name === 'a' && /\bmatch\b/i.test(n.attribs?.class || '') && /\/match\//i.test(n.attribs?.href || ''),
+      [boxNode],
+      true
+    );
+
+    let scoreText = '- -';
+    if (matchNode) {
+      const scoreSpans = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'span', [matchNode], true);
+      const scoreValues = scoreSpans
+        .map((span) => cleanText(span).replace(/[‐‑‒–—―]/g, '-'))
+        .filter((value) => value === '-' || /^\d+$/.test(value));
+
+      if (scoreValues.length >= 2) {
+        scoreText = `${scoreValues[0]} - ${scoreValues[1]}`;
+      } else {
+        const rawScore = cleanText(matchNode).replace(/[‐‑‒–—―]/g, '-');
+        if (/^\d+\s*-\s*\d+$/.test(rawScore)) {
+          scoreText = rawScore;
+        }
+      }
+    }
+
+    const setNodes = DomUtils.findAll(
+      (n) => n.type === 'tag' && n.name === 'span' && /\bpartial\b/i.test(n.attribs?.class || ''),
+      [boxNode],
+      true
+    );
+    const sets = setNodes
+      .map((partialNode) => {
+        const values = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'span', [partialNode], true)
+          .map((span) => cleanText(span).replace(/[‐‑‒–—―]/g, '-'))
+          .filter(Boolean);
+        return values.length === 2 ? { home: values[0], away: values[1] } : null;
+      })
+      .filter(Boolean);
+
+    const nextMatchNode = DomUtils.findOne(
+      (n) => n.type === 'tag' && n.name === 'a' && /\bnext-match\b/i.test(n.attribs?.class || ''),
+      [boxNode],
+      true
+    );
+
+    let dateTime = '';
+    let venue = '';
+    if (nextMatchNode) {
+      const raw = cleanText(nextMatchNode);
+      const parts = raw.split(/\s*[·•]\s*/).map((part) => part.trim()).filter(Boolean);
+      dateTime = parts[0] || raw;
+      venue = parts[1] || '';
+    }
+
+    const titleNode = DomUtils.findOne(
+      (n) => n.type === 'tag' && /\bbracket-data\b/i.test(n.attribs?.class || ''),
+      [boxNode],
+      true
+    );
+    const title = cleanText(titleNode) || roundTitle || 'Partido';
+    const state = scoreText && scoreText !== '- -' && !/^\-\s*\-$/.test(scoreText) ? 'finished' : (dateTime ? 'scheduled' : undefined);
+
+    return {
+      title,
+      phase: roundTitle || title,
+      homeTeam: home.name,
+      awayTeam: away.name,
+      homeLogo: home.logo,
+      awayLogo: away.logo,
+      scoreText,
+      href: toAbsoluteUrl(matchNode?.attribs?.href || ''),
+      dateTime,
+      venue,
+      sets: sets.length ? sets : undefined,
+      ...(state ? { state } : {}),
+    };
+  };
+
+  const mainColumns = [];
+  const placementColumns = [];
+
+  roundNodes.forEach((roundNode) => {
+    const roundClass = String(roundNode.attribs?.class || '');
+    const roundIndex = Number.parseInt(roundClass.match(/\bround-(\d+)\b/i)?.[1] || '', 10);
+    const headerNode = DomUtils.findOne(
+      (n) => n.type === 'tag' && /\bround-header\b/i.test(n.attribs?.class || ''),
+      [roundNode],
+      true
+    );
+    const roundTitle = cleanText(headerNode) || 'Eliminatoria';
+
+    const bracketContainers = DomUtils.findAll(
+      (n) => n.type === 'tag' && /\bbracket-container\b/i.test(n.attribs?.class || ''),
+      [roundNode],
+      true
+    );
+
+    const matches = bracketContainers
+      .map((container) => DomUtils.findOne((n) => n.type === 'tag' && /\bbox\b/i.test(n.attribs?.class || ''), [container], true))
+      .map((boxNode) => parseBracketBox(boxNode, roundTitle))
+      .filter((match) => Boolean(match) && hasRealMatchData(match));
+
+    if (!matches.length) return;
+
+    const column = { header: roundTitle, matches };
+    if (/tercer|clasificaci[oó]n\s+final|puesto/i.test(roundTitle) || roundIndex === 0) {
+      placementColumns.push(column);
+    } else {
+      mainColumns.push(column);
+    }
+  });
+
+  if (!mainColumns.length && !placementColumns.length) return null;
+
+  mainColumns.sort((a, b) => getPhaseWeight(a.header) - getPhaseWeight(b.header));
+  placementColumns.sort((a, b) => getPhaseWeight(a.header) - getPhaseWeight(b.header));
+
+  const dedupeColumns = (columns = []) => {
+    const seen = new Map();
+    for (const column of columns) {
+      const key = String(column.header || '').trim().toLowerCase();
+      const currentScore = (column.matches || []).reduce((acc, match) => acc + (hasRealMatchData(match) ? 1 : 0), 0);
+      const previous = seen.get(key);
+      if (!previous) {
+        seen.set(key, { ...column, _score: currentScore });
+        continue;
+      }
+
+      const previousScore = previous._score || 0;
+      if (currentScore > previousScore) {
+        seen.set(key, { ...column, _score: currentScore });
+      }
+    }
+    return Array.from(seen.values()).map(({ _score, ...column }) => column);
+  };
+
+  return {
+    columns: dedupeColumns(mainColumns),
+    placements: dedupeColumns(placementColumns),
+  };
 }
 
 async function fetchRankingBlocksViaAjax(inputUrl = '') {
@@ -950,8 +1158,26 @@ function parseTable(tableNode) {
 //   return (node?.attribs?.class || '').toLowerCase();
 // }
 
+function isPlaceholderLogoUrl(url = '') {
+  if (!url) return true;
+  const lowerUrl = url.toLowerCase();
+  // Patron de placeholders comunes en Leverade/Federaciones
+  return (
+    lowerUrl.includes('placeholder') ||
+    lowerUrl.includes('no-logo') ||
+    lowerUrl.includes('generic-shield') ||
+    lowerUrl.includes('escudo-generico') ||
+    lowerUrl.includes('escudo_vacio') ||
+    lowerUrl.includes('sin_escudo') ||
+    lowerUrl.includes('shield-grey') ||
+    lowerUrl.includes('default-logo') ||
+    lowerUrl.includes('/img/shield.') ||
+    lowerUrl.includes('logo_default')
+  );
+}
+
 function normalizeTeamLogoUrl(url = '') {
-  if (!url) return null;
+  if (!url || isPlaceholderLogoUrl(url)) return null;
 
   // Reemplazar siempre el patrón de resolución (ej: .30x30.) por .200x200.
   // Esto aplica para leverade y cualquier otro host, forzando la imagen de alta calidad.
@@ -1449,9 +1675,24 @@ export function extractAllPhases(url = '', html = '', blocks = []) {
 
   // Si no hay enlaces a otras fases, detectamos si la PÁGINA ACTUAL tiene múltiples
   // bloques independientes (tablas o brackets = sub-competiciones).
-  const subgroupEntities = (blocks || []).filter(b =>
-    (b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket'
-  );
+  const isGenericTeam = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor|1\s*[ºo]|2\s*[ºo]|3\s*[ºo])/i.test(String(t).trim());
+
+  const subgroupEntities = (blocks || []).filter(b => {
+    if (b.type === 'bracket') {
+      const allMatches = b.columns?.flatMap(c => c.matches || []) || [];
+      return allMatches.length > 0 && allMatches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
+    }
+    if (b.type === 'table') {
+      if (!b.rows || b.rows.length === 0) return false;
+      if (b.matches && b.matches.length > 0) {
+        // Tabla eliminatoria
+        return b.matches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
+      }
+      // Tabla regular
+      return true; 
+    }
+    return false;
+  });
 
   if (otherPhasesCleaned.length === 0 && subgroupEntities.length > 1) {
     // Cada entidad se convierte en una "fase virtual", usando su title extraído
@@ -1505,7 +1746,7 @@ export async function discoverAllPhases(url) {
  * Descarga y parsea todos los datos de un campeonato (Txapelketa) de forma unificada.
  * Utiliza scraping HTML directo (sin AJAX) para evitar problemas de CORS y AJAX.
  */
-export async function fetchChampionshipData(rankingUrl) {
+export async function fetchChampionshipData(rankingUrl, siblingUrls = []) {
   const cacheKey = normalizeUrlForCache(rankingUrl);
   const cached = championshipDataCache.get(cacheKey);
   if (cached) {
@@ -1513,26 +1754,28 @@ export async function fetchChampionshipData(rankingUrl) {
     if (!isExpired && cached.data) return cached.data;
   }
 
-  // ── Paso 1: Obtener el HTML de la primera fase ──
+  // ── Paso 1: Obtener el HTML de la fase actual ──
   const absoluteUrl = toAbsoluteUrl(rankingUrl);
   const firstHtml = await fetchHTML(absoluteUrl);
   const firstBlocks = parseBlocksFromHtml(firstHtml);
+  const firstTitle = guessPhaseTitle(absoluteUrl, firstHtml);
 
-  // ── Paso 2: Extraer los enlaces a todas las demás fases ──
-  const phases = extractPhaseLinks(firstBlocks, absoluteUrl);
   const normalizedCurrent = absoluteUrl.replace(/\/$/, '').toLowerCase();
 
-  // Siempre incluir la primera fase (la que ya tenemos)
-  const firstTitle = guessPhaseTitle(absoluteUrl, firstHtml);
-  const allPhaseUrls = [{ title: firstTitle, href: absoluteUrl, blocks: firstBlocks }];
+  // Normalize sibling URLs for fast lookup (these are other subgroups from the same league)
+  const siblingSet = new Set((siblingUrls || []).map(u => String(u).replace(/\/$/, '').toLowerCase()));
 
-  // ── Paso 3: Descargar cada fase en paralelo ──
+  let phaseData = [{ title: firstTitle, href: absoluteUrl, blocks: firstBlocks }];
+
+  // ── Paso 2: Extraer y seguir solo las fases internas del bracket ──
+  // Seguimos todos los phase links EXCEPTO los que son grupos hermanos de la liga
+  const phases = extractPhaseLinks(firstBlocks, absoluteUrl);
   const otherPhaseData = await Promise.all(
     phases.map(async (p) => {
       try {
         const normP = toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase();
-        if (normP === normalizedCurrent) return null; // Evitar duplicar la actual
-
+        if (normP === normalizedCurrent) return null; // Saltar la página actual
+        if (siblingSet.has(normP)) return null; // Saltar grupos hermanos de la liga
         const html = await fetchHTML(p.href);
         const blocks = parseBlocksFromHtml(html);
         return { title: p.title, href: p.href, blocks };
@@ -1542,11 +1785,10 @@ export async function fetchChampionshipData(rankingUrl) {
       }
     })
   );
+  phaseData = [...phaseData, ...otherPhaseData.filter(Boolean)];
 
-  const phaseData = [...allPhaseUrls, ...otherPhaseData.filter(Boolean)];
-
-  // ── Paso 4: Clasificar fases ─────────────────────────────────────────────────
-  const placementPatterns = [/puestos?/i, /\d+\s*[ºo°]\s*y\s*\d/i];
+  // ── Clasificar fases ─────────────────────────────────────────────────────────
+  const placementPatterns = [/puestos?/i, /\d+\s*[ºo°]\s*y\s*\d/i, /tercer\s*y\s*cuarto/i];
 
   const mainFlow = [];
   const placementFlow = [];
@@ -1566,7 +1808,7 @@ export async function fetchChampionshipData(rankingUrl) {
     }
   });
 
-  // ── Paso 5: Ordenar el flujo principal cronológicamente (Grupos → Semis → Final) ──
+  // ── Ordenar el flujo principal cronológicamente (Grupos → Semis → Final) ──
   const getWeight = (t) => {
     const lower = (t || '').toLowerCase();
     if (/final/.test(lower) && !/semi/.test(lower)) return 100;
@@ -1732,12 +1974,20 @@ function parseBracketFromDom(dom) {
   const columns = [];
   const searchRoot = dom.children || [];
 
-  // Buscar contenedores de columnas (Clupik fullscreen usa bracket-column, otros usan bracket)
+  // Buscar contenedores de columnas (Leverade usa round, Clupik usa bracket-column, otros usan bracket)
   let colNodes = DomUtils.findAll(
-    (n) => n.type === 'tag' && /\bbracket-column\b/i.test(n.attribs?.class || ''),
+    (n) => n.type === 'tag' && /\bround\b/i.test(n.attribs?.class || ''),
     searchRoot,
     true
   );
+
+  if (colNodes.length === 0) {
+    colNodes = DomUtils.findAll(
+      (n) => n.type === 'tag' && /\bbracket-column\b/i.test(n.attribs?.class || ''),
+      searchRoot,
+      true
+    );
+  }
 
   if (colNodes.length === 0) {
     colNodes = DomUtils.findAll(
@@ -1786,8 +2036,23 @@ function parseBracketFromDom(dom) {
 
   colNodes.forEach(colNode => {
     // Buscar cabecera de ronda
-    const headerNode = DomUtils.findOne(n => /\bbracket-header\b/i.test(n.attribs?.class || ''), [colNode], true);
-    let header = headerNode ? getTextContent(headerNode) : '';
+    let headerNode = DomUtils.findOne(n => /\b(round-header|bracket-header)\b/i.test(n.attribs?.class || ''), [colNode], true);
+    
+    // Si la cabecera incluye <div> adicionales (como small label), intentamos extraer el texto directo
+    let header = '';
+    if (headerNode) {
+      // Extraemos solo el texto del nodo directamente
+      header = (headerNode.children || [])
+        .filter(c => c.type === 'text')
+        .map(c => c.data)
+        .join(' ')
+        .trim();
+      
+      // Si con el texto directo no funciona, cogemos todo
+      if (!header) {
+        header = getTextContent(headerNode);
+      }
+    }
 
     const matches = findMatchBoxes([colNode]);
 

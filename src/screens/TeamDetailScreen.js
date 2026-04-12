@@ -314,20 +314,6 @@ export default function TeamDetailScreen({ route, navigation }) {
   const competitions = useMemo(() => blocks.find(b => b.type === 'competitions')?.items || [], [blocks]);
   const equipaciones = useMemo(() => blocks.find(b => b.type === 'equipaciones')?.items || [], [blocks]);
 
-  useEffect(() => {
-    if (blocks && blocks.length > 0) {
-      console.log('--- TEAM DETAIL BLOCKS ---');
-      blocks.forEach(b => {
-        if (b.type === 'table') {
-          console.log('[Table]', b.headers?.join(' | '), 'Rows:', b.rows?.length);
-        } else if (b.type === 'heading') {
-          console.log('[Heading]', b.content);
-        } else if (b.type === 'paragraph') {
-          console.log('[Paragraph]', b.content?.substring(0, 50));
-        }
-      });
-    }
-  }, [blocks]);
   const [accentColor, setAccentColor] = useState(null);
   const [logoError, setLogoError] = useState(false);
   const [showAllCompetitions, setShowAllCompetitions] = useState(false);

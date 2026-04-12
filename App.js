@@ -4,13 +4,14 @@
 // Cada pestaña corresponde a una pantalla principal.
 
 import React, { useEffect } from 'react';
-import { StyleSheet, Text, View, Platform, TouchableOpacity, Animated } from 'react-native';
+import { StyleSheet, View, Animated, Platform } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
-import { createMaterialTopTabNavigator } from '@react-navigation/material-top-tabs';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
 
 // ── Pantallas ────────────────────────────────────────────────────────────────
@@ -28,16 +29,14 @@ import InfoScreen from './src/screens/InfoScreen';
 import LoadingView from './src/components/LoadingView';
 
 // ── Tema ─────────────────────────────────────────────────────────────────────
-import { Typography } from './src/styles/theme';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
-import { hydrateLogoColorCache } from './src/utils/logoColorCache';
+import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
+import { initTeamsData } from './src/constants/teamColors';
 
-// Kick off AsyncStorage → memory hydration of logo colors immediately at module
 // load time, before any React tree renders. This means getCachedLogoColorSync
 // will return instant results for already-seen URLs.
-hydrateLogoColorCache();
 
-const Tab = createMaterialTopTabNavigator();
+const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
 // ─── Tab icon component ───────────────────────────────────────────────────────
@@ -53,8 +52,11 @@ function TabIcon({ routeName, focused, colors }) {
 
   return (
     <View style={iconStyles.wrap}>
-      <MaterialIcons name={iconByRoute[routeName] || 'circle'} size={24} color={iconColor} />
-      {focused && <View style={[iconStyles.dot, { backgroundColor: colors.primary }]} />}
+      <MaterialIcons
+        name={iconByRoute[routeName] || 'circle'}
+        size={Platform.OS === 'web' ? 24 : 25}
+        color={iconColor}
+      />
     </View>
   );
 }
@@ -66,14 +68,6 @@ const iconStyles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    marginBottom: 2,
-  },
-  dot: {
-    position: 'absolute',
-    bottom: -6,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
   },
 });
 
@@ -84,97 +78,34 @@ const TAB_LABELS = {
   Settings: 'AJUSTES',
 };
 
-// COMPONENTE PERSONALIZADO PARA WEB
-// Evita el bug de la librería material-top-tabs (react-native-tab-view) 
-// que crashea al intentar usar interpolate() en campos undefined.
-function CustomWebTabBar({ state, descriptors, navigation }) {
-  const { colors: Colors } = useTheme();
-
-  return (
-    <View style={{
-      flexDirection: 'row',
-      backgroundColor: Colors.surface,
-      borderTopColor: Colors.border,
-      borderTopWidth: 1,
-      height: 64,
-      paddingBottom: 8,
-      paddingTop: 8,
-    }}>
-      {state.routes.map((route, index) => {
-        const { options } = descriptors[route.key];
-        const label = options.tabBarLabel !== undefined ? options.tabBarLabel : route.name;
-        const isFocused = state.index === index;
-
-        const onPress = () => {
-          const event = navigation.emit({
-            type: 'tabPress',
-            target: route.key,
-            canPreventDefault: true,
-          });
-
-          if (!isFocused && !event.defaultPrevented) {
-            navigation.navigate(route.name);
-          }
-        };
-
-        return (
-          <TouchableOpacity
-            key={route.key}
-            onPress={onPress}
-            style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-            activeOpacity={0.7}
-          >
-            <TabIcon routeName={route.name} focused={isFocused} colors={Colors} />
-            <Text style={{
-              color: isFocused ? Colors.primary : Colors.textMuted,
-              fontSize: 10,
-              fontWeight: '500',
-              marginTop: 4
-            }}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
-
 function MainTabs() {
   const { colors: Colors, isDark } = useTheme();
+  const isMobile = Platform.OS !== 'web';
+
   return (
     <Tab.Navigator
-      tabBar={Platform.OS === 'web' ? (props) => <CustomWebTabBar {...props} /> : undefined}
-      tabBarPosition="bottom"
       screenOptions={({ route }) => ({
         headerShown: false,
-        swipeEnabled: Platform.OS !== 'web',
-        animationEnabled: Platform.OS !== 'web',
         lazy: true,
-        // The material-top-tabs library has a bug on web where it crashes trying to animate/interpolate
-        // if certain props like icons or complex styles are present. We simplify for web.
-        tabBarShowIcon: Platform.OS !== 'web',
-        tabBarIcon: Platform.OS === 'web' ? undefined : ({ focused }) => (
+        tabBarShowIcon: true,
+        tabBarShowLabel: !isMobile,
+        tabBarHideOnKeyboard: true,
+        tabBarIcon: ({ focused }) => (
           <TabIcon routeName={route.name} focused={focused} colors={Colors} />
         ),
         tabBarStyle: {
           backgroundColor: isDark ? 'rgba(15,25,35,0.95)' : 'rgba(255,255,255,0.95)',
           borderTopColor: Colors.border,
           borderTopWidth: 1,
-          height: Platform.OS === 'web' ? 60 : 76,
-          paddingBottom: Platform.OS === 'web' ? 0 : 24,
-          paddingTop: Platform.OS === 'web' ? 0 : 8,
+          height: isMobile ? 85 : 72,
+          paddingBottom: isMobile ? 30 : 10,
+          paddingTop: isMobile ? 12 : 8,
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
           elevation: 0,
         },
-        tabBarIndicatorStyle: {
-          backgroundColor: Platform.OS === 'web' ? Colors.primary : 'transparent',
-          height: Platform.OS === 'web' ? 2 : 0,
-        },
-        tabBarPressColor: 'transparent',
         tabBarActiveTintColor: Colors.primary,
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarLabelStyle: styles.tabLabel,
@@ -206,27 +137,46 @@ function MainTabs() {
 }
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    ...MaterialIcons.font,
+    ...MaterialCommunityIcons.font,
+    ...Ionicons.font,
+  });
+
   useEffect(() => {
-    // Inicializar y bloquear la orientación vertical por defecto para evitar errores de referencia
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP)
-      .catch((error) => console.log('Orientation Lock Error:', error));
+    async function prepare() {
+      try {
+        // Kick off AsyncStorage → memory hydration of logo colors
+        hydrateLogoColors();
+        initTeamsData();
+
+        // Inicializar y bloquear la orientación vertical por defecto
+        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+      } catch (e) {
+        console.warn('Initialization Error:', e);
+      }
+    }
+
+    prepare();
   }, []);
 
   return (
     <ThemeProvider>
-      <AppContent />
+      <AppContent fontsLoaded={fontsLoaded} />
     </ThemeProvider>
   );
 }
 
-function AppContent() {
+function AppContent({ fontsLoaded }) {
   const { colors: Colors, isDark, animColors, isAppReady } = useTheme();
+  const safeBgColor = animColors?.background || Colors.background;
+  const isUiReady = isAppReady && fontsLoaded;
 
   return (
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={Colors.background} />
       {/* Animated background layer — transitions smoothly on theme change */}
-      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: animColors.background }]} pointerEvents="none" />
+      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: safeBgColor }]} pointerEvents="none" />
 
       <View style={{ flex: 1 }}>
         <NavigationContainer
@@ -244,7 +194,7 @@ function AppContent() {
         >
           {/* We keep the navigator ALWAYS rendered so it can mount children (data fetching)
               but we hide it until everything is ready to avoid jumping/partial rendering. */}
-          <View style={{ flex: 1, opacity: isAppReady ? 1 : 0 }}>
+          <View style={{ flex: 1, opacity: isUiReady ? 1 : 0 }}>
             <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
               <Stack.Screen name="MainTabs" component={MainTabs} />
               <Stack.Screen name="League" component={LeagueScreen} />
@@ -259,7 +209,7 @@ function AppContent() {
         </NavigationContainer>
 
         {/* Global Full-Screen Loader */}
-        {!isAppReady && (
+        {!isUiReady && (
           <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
             <LoadingView message="Cargando ligas y torneos..." />
           </View>
@@ -280,10 +230,9 @@ const styles = StyleSheet.create({
   },
   tabItem: {
     flex: 1,
-    paddingTop: 8,
+    paddingTop: 6,
     padding: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    marginLeft: '-22%',
   },
 });

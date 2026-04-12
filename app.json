@@ -34,7 +34,7 @@
           "remindersPermission": "La app necesita acceso a recordatorios para guardar alertas de partidos."
         }
       ],
-      "expo-image"
+      "expo-asset"
     ],
     "extra": {
       "eas": {
