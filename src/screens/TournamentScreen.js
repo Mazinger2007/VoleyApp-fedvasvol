@@ -614,12 +614,28 @@ export default function TournamentScreen({ route, navigation }) {
         if (block.type === 'bracket' && block.columns) {
           block.columns.forEach((col, colIdx) => {
             const targetCol = upsertColumn(col.header || phase.title, colIdx);
-            (col.matches || []).forEach((m) => {
+            (col.matches || []).forEach((m, mIdx) => {
               if (!m) return;
               const key = buildMatchKey(m);
               if (!key || seenMatchKeys.has(key)) return;
               seenMatchKeys.add(key);
-              targetCol.matches.push(m);
+
+              // SI EL PARTIDO ES LA FINAL ABSOLUTA, INTENTAMOS SEPARARLO EN SU PROPIA COLUMNA
+              // Criterio: tiene la palabra 'absoluta' O es el último partido de una columna llamada 'FINAL' con varios partidos
+              const isAbsoluteManual = /absoluta/i.test(m.title || m.phase || '');
+              const isAbsoluteLastChar = (col.matches.length > 2 && mIdx === col.matches.length - 1 && /final/i.test(col.header || phase.title || ''));
+              
+              if (isAbsoluteManual || isAbsoluteLastChar) {
+                let absoluteCol = columns.find(c => /absoluta/i.test(c.title));
+                if (!absoluteCol) {
+                  const newTitle = isAbsoluteManual ? (m.title || 'FINAL ABSOLUTA').toUpperCase() : 'FINAL ABSOLUTA';
+                  absoluteCol = { title: newTitle, matches: [] };
+                  columns.push(absoluteCol);
+                }
+                absoluteCol.matches.push(m);
+              } else {
+                targetCol.matches.push(m);
+              }
             });
           });
         } else if (block.type === 'table' && Array.isArray(block.matches) && block.matches.length > 0) {
@@ -640,12 +656,27 @@ export default function TournamentScreen({ route, navigation }) {
               columns.push(targetCol);
             }
             
-            ms.forEach((m) => {
+            ms.forEach((m, mIdx) => {
               if (!m) return;
               const key = buildMatchKey(m);
               if (!key || seenMatchKeys.has(key)) return;
               seenMatchKeys.add(key);
-              targetCol.matches.push(m);
+
+              // Split absolute final in tables too
+              const isAbsoluteManual = /absoluta/i.test(m.title || m.phase || '');
+              const isAbsoluteLastChar = (ms.length > 2 && mIdx === ms.length - 1 && /final/i.test(ph));
+              
+              if (isAbsoluteManual || isAbsoluteLastChar) {
+                let absoluteCol = columns.find(c => /absoluta/i.test(c.title));
+                if (!absoluteCol) {
+                  const newTitle = isAbsoluteManual ? (m.title || 'FINAL ABSOLUTA').toUpperCase() : 'FINAL ABSOLUTA';
+                  absoluteCol = { title: newTitle, matches: [] };
+                  columns.push(absoluteCol);
+                }
+                absoluteCol.matches.push(m);
+              } else {
+                targetCol.matches.push(m);
+              }
             });
           });
         }
@@ -732,6 +763,7 @@ export default function TournamentScreen({ route, navigation }) {
     // Sort workingColumns chronologically so that Semifinals are rendered before Finals
     const getWeight = (t) => {
       const lower = (t || '').toLowerCase();
+      if (/final\s*absoluta/i.test(lower)) return 110;
       if (/final/.test(lower) && !/semi/.test(lower)) return 100;
       if (/3\s*[ºo°]|tercer|consolaci/i.test(lower)) return 90;
       if (/semi/.test(lower)) return 80;
@@ -788,16 +820,37 @@ export default function TournamentScreen({ route, navigation }) {
     const uniqueSemifinalMatches = dedupeMatches(semifinalMatches);
     const uniqueFinalMatches = dedupeMatches(finalMatches);
 
+    // Detección mejorada de 4-2-1 basada en conteo de partidos si las fases están mal nombradas
+    const allMatchesCount = workingColumns.reduce((acc, col) => acc + (col.matches?.length || 0), 0);
+    const looksLike421Pattern = allMatchesCount === 7 && workingColumns.length >= 2;
+
+    const isClassicByCount = looksLike421Pattern && 
+      (uniqueQuarterMatches.length >= 4 || uniqueSemifinalMatches.length >= 4);
+
     const looksLikeClassicPlayoff =
-      uniqueQuarterMatches.length >= 4 &&
-      uniqueSemifinalMatches.length >= 2 &&
-      uniqueFinalMatches.length >= 1;
+      (uniqueQuarterMatches.length >= 4 && uniqueSemifinalMatches.length >= 2 && uniqueFinalMatches.length >= 1) ||
+      isClassicByCount;
 
     if (looksLikeClassicPlayoff) {
+      // Si entramos por conteo (4-2-1), repartimos los partidos de forma secuencial pura para evitar overlap
+      let allMs = dedupeMatches(workingColumns.flatMap(c => c.matches || []));
+      
+      if (allMs.length === 7) {
+        return [
+          { title: 'CUARTOS DE FINAL', matches: allMs.slice(0, 4) },
+          { title: 'SEMIFINALES', matches: allMs.slice(4, 6) },
+          { title: 'FINAL', matches: [allMs[6]] },
+        ];
+      }
+
+      const qMs = uniqueQuarterMatches.length >= 4 ? uniqueQuarterMatches : allMs.slice(0, 4);
+      const sMs = uniqueSemifinalMatches.length >= 2 ? uniqueSemifinalMatches : allMs.slice(4, 6);
+      const fM = uniqueFinalMatches.find(m => /absoluta/i.test(m.title || m.phase || '')) || uniqueFinalMatches[uniqueFinalMatches.length - 1];
+
       return [
-        { title: 'CUARTOS DE FINAL', matches: uniqueQuarterMatches.slice(0, 4) },
-        { title: 'SEMIFINALES', matches: uniqueSemifinalMatches.slice(0, 2) },
-        { title: 'FINAL', matches: uniqueFinalMatches.slice(0, 1) },
+        { title: 'CUARTOS DE FINAL', matches: qMs.slice(0, 4) },
+        { title: 'SEMIFINALES', matches: sMs.slice(0, 2) },
+        { title: 'FINAL', matches: [fM].filter(Boolean) },
       ];
     }
 
@@ -944,14 +997,28 @@ export default function TournamentScreen({ route, navigation }) {
     function getBracketFinalMatch() {
       // Buscar la columna cuyo título es exactamente 'FINAL' (ignorando espacios y mayúsculas)
       const normalize = t => String(t || '').replace(/\s+/g, '').toLowerCase();
+      
+      // PRIORIDAD 1: Buscar columna que diga 'ABSOLUTA'
+      const absoluteCol = displayColumns.find(col => /absoluta/i.test(col?.title || ''));
+      if (absoluteCol && Array.isArray(absoluteCol.matches) && absoluteCol.matches.length > 0) {
+        return absoluteCol.matches[absoluteCol.matches.length - 1]; // El último de esa columna
+      }
+
+      // PRIORIDAD 2: Buscar columna 'FINAL'
       const finalCol = displayColumns.find(col => normalize(col?.title) === 'final');
       if (finalCol && Array.isArray(finalCol.matches) && finalCol.matches.length > 0) {
-        return finalCol.matches[0];
+        // Buscar un partido que tenga "absoluta" en su título interno si la columna no lo decía
+        const absoluta = finalCol.matches.find(m => /absoluta/i.test(m.title || m.phase || ''));
+        if (absoluta) return absoluta;
+        // Si no, tomar el ÚLTIMO de la columna (suele ser el más importante)
+        return finalCol.matches[finalCol.matches.length - 1];
       }
+      
       // Si no existe, buscar la primera columna que contenga 'final' pero no 'semi'
       const altFinalCol = displayColumns.find(col => /final/i.test(String(col?.title || '')) && !/semi/i.test(String(col?.title || '')));
       if (altFinalCol && Array.isArray(altFinalCol.matches) && altFinalCol.matches.length > 0) {
-        return altFinalCol.matches[0];
+        const absolutaMatch = altFinalCol.matches.find(m => /absoluta/i.test(m.title || m.phase || ''));
+        return absolutaMatch || altFinalCol.matches[altFinalCol.matches.length - 1];
       }
       // Si no hay columna de final, intentar calcularla a partir de los ganadores de semifinales
       const semCol = displayColumns.find(col => /semi/i.test(String(col?.title || '')));
@@ -986,9 +1053,10 @@ export default function TournamentScreen({ route, navigation }) {
           const teamsPlacement = [String(m.homeTeam).toLowerCase(), String(m.awayTeam).toLowerCase()].sort().join('|');
           const dateBracket = String(bracketFinal.dateTime || '').split('T')[0];
           const datePlacement = String(m.dateTime || '').split('T')[0];
-          return teamsBracket === teamsPlacement && dateBracket === datePlacement;
+          return teamsPlacement === teamsBracket && (datePlacement === dateBracket || !datePlacement || !dateBracket);
         });
-        match = matchFromPlacements || bracketFinal;
+        // PRIORIDAD AL RESULTADO DEL BRACKET SI HAY CONFLICTO
+        match = bracketFinal || matchFromPlacements;
       } else {
         match = placementMatchesFiltered.find(m => re.test(m._placementTitle));
       }

@@ -1,18 +1,18 @@
 // App.js
 // Punto de entrada de la app.
-// Configura React Navigation con NavigationContainer y Bottom Tabs.
-// Cada pestaña corresponde a una pantalla principal.
+// Configura React Navigation con NavigationContainer.
+// La navegación principal usa un pager deslizable y una barra inferior fija.
 
-import React, { useEffect } from 'react';
-import { StyleSheet, View, Animated, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { StyleSheet, View, Animated, Platform, TouchableOpacity } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
-import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import PagerView from './src/components/PagerViewWrapper';
 
 // ── Pantallas ────────────────────────────────────────────────────────────────
 import MatchesScreen from './src/screens/MatchesScreen';
@@ -36,24 +36,23 @@ import { initTeamsData } from './src/constants/teamColors';
 // load time, before any React tree renders. This means getCachedLogoColorSync
 // will return instant results for already-seen URLs.
 
-const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
 
-// ─── Tab icon component ───────────────────────────────────────────────────────
-function TabIcon({ routeName, focused, colors }) {
-  const iconColor = focused ? colors.primary : colors.textMuted;
+const TAB_ITEMS = [
+  { key: 'Matches', title: 'LIGAS', icon: 'emoji-events', component: MatchesScreen },
+  { key: 'Beach', title: 'VOLEY PLAYA', icon: 'beach-access', component: BeachScreen },
+  { key: 'News', title: 'NOTICIAS', icon: 'newspaper', component: NewsScreen },
+  { key: 'Settings', title: 'AJUSTES', icon: 'settings', component: SettingsScreen },
+];
 
-  const iconByRoute = {
-    Matches: 'emoji-events',
-    Beach: 'beach-access',
-    News: 'newspaper',
-    Settings: 'settings',
-  };
+// ─── Tab icon component ───────────────────────────────────────────────────────
+function TabIcon({ iconName, focused, colors }) {
+  const iconColor = focused ? colors.primary : colors.textMuted;
 
   return (
     <View style={iconStyles.wrap}>
       <MaterialIcons
-        name={iconByRoute[routeName] || 'circle'}
+        name={iconName || 'circle'}
         size={Platform.OS === 'web' ? 24 : 25}
         color={iconColor}
       />
@@ -63,76 +62,71 @@ function TabIcon({ routeName, focused, colors }) {
 
 const iconStyles = StyleSheet.create({
   wrap: {
-    width: 48,
-    height: 32,
+    width: 44,
+    height: 28,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
   },
 });
 
-const TAB_LABELS = {
-  Matches: 'LIGAS',
-  Beach: 'VOLEY PLAYA',
-  News: 'NOTICIAS',
-  Settings: 'AJUSTES',
-};
-
-function MainTabs() {
+function MainTabs({ navigation }) {
   const { colors: Colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
   const isMobile = Platform.OS !== 'web';
+  const pagerRef = useRef(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const tabBarHeight = isMobile ? 62 : 56;
+
+  const goToTab = (index) => {
+    if (index < 0 || index >= TAB_ITEMS.length) return;
+    pagerRef.current?.setPage?.(index);
+  };
 
   return (
-    <Tab.Navigator
-      screenOptions={({ route }) => ({
-        headerShown: false,
-        lazy: true,
-        tabBarShowIcon: true,
-        tabBarShowLabel: !isMobile,
-        tabBarHideOnKeyboard: true,
-        tabBarIcon: ({ focused }) => (
-          <TabIcon routeName={route.name} focused={focused} colors={Colors} />
-        ),
-        tabBarStyle: {
-          backgroundColor: isDark ? 'rgba(15,25,35,0.95)' : 'rgba(255,255,255,0.95)',
-          borderTopColor: Colors.border,
-          borderTopWidth: 1,
-          height: isMobile ? 85 : 72,
-          paddingBottom: isMobile ? 30 : 10,
-          paddingTop: isMobile ? 12 : 8,
-          position: 'absolute',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          elevation: 0,
-        },
-        tabBarActiveTintColor: Colors.primary,
-        tabBarInactiveTintColor: Colors.textMuted,
-        tabBarLabelStyle: styles.tabLabel,
-        tabBarItemStyle: styles.tabItem,
-      })}
-    >
-      <Tab.Screen
-        name="Matches"
-        component={MatchesScreen}
-        options={{ tabBarLabel: TAB_LABELS.Matches }}
-      />
-      <Tab.Screen
-        name="Beach"
-        component={BeachScreen}
-        options={{ tabBarLabel: TAB_LABELS.Beach }}
-      />
-      <Tab.Screen
-        name="News"
-        component={NewsScreen}
-        options={{ tabBarLabel: TAB_LABELS.News }}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{ tabBarLabel: TAB_LABELS.Settings }}
-      />
-    </Tab.Navigator>
+    <View style={{ flex: 1 }}>
+      <PagerView
+        ref={pagerRef}
+        style={{ flex: 1 }}
+        initialPage={0}
+        onPageSelected={(event) => setActiveIndex(event.nativeEvent.position)}
+      >
+        {TAB_ITEMS.map((tab) => {
+          const ScreenComponent = tab.component;
+          return (
+            <View key={tab.key} style={{ flex: 1, paddingBottom: tabBarHeight + insets.bottom }}>
+              <ScreenComponent navigation={navigation} />
+            </View>
+          );
+        })}
+      </PagerView>
+
+      <View
+        style={[
+          styles.tabBar,
+          {
+            backgroundColor: isDark ? 'rgba(15,25,35,0.98)' : 'rgba(255,255,255,0.98)',
+            borderTopColor: Colors.border,
+            height: tabBarHeight + insets.bottom,
+            paddingBottom: Math.max(insets.bottom, isMobile ? 6 : 4),
+          },
+        ]}
+      >
+        {TAB_ITEMS.map((tab, index) => {
+          const focused = index === activeIndex;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              onPress={() => goToTab(index)}
+              activeOpacity={0.8}
+              style={styles.tabButton}
+            >
+              <TabIcon iconName={tab.icon} focused={focused} colors={Colors} />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 
@@ -220,18 +214,18 @@ function AppContent({ fontsLoaded }) {
 }
 
 const styles = StyleSheet.create({
-  tabLabel: {
-    fontSize: 10,
-    fontWeight: '700',
-    marginTop: 6,
-    textTransform: 'uppercase',
-    letterSpacing: -0.5,
-    textAlign: 'center',
+  tabBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    elevation: 0,
   },
-  tabItem: {
+  tabButton: {
     flex: 1,
-    paddingTop: 6,
-    padding: 0,
+    paddingTop: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },
