@@ -48,7 +48,9 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
-    "babel-preset-expo": "~56.0.0"
+    "babel-preset-expo": "~56.0.0",
+    "canvas": "^3.2.3",
+    "tesseract.js": "^4.1.4"
   },
   "private": true
 }

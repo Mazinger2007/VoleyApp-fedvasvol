@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Modal, TextInput, Animated } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { fetchAndParse, URLS } from '../utils/htmlParser';
 import { Spacing } from '../styles/theme';
@@ -27,6 +27,18 @@ export default function BeachScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [gender, setGender] = useState(null);
   const [showGenderPicker, setShowGenderPicker] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef(null);
+  const searchAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(searchAnim, {
+      toValue: showSearch ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [showSearch, searchAnim]);
 
   useEffect(() => {
     setIsAppReady(true);
@@ -53,8 +65,13 @@ export default function BeachScreen({ navigation }) {
 
   const filteredFiles = useMemo(() => {
     if (!gender) return [];
-    return allFiles.filter(f => matchesGender(f.name, gender));
-  }, [allFiles, gender]);
+    let files = allFiles.filter(f => matchesGender(f.name, gender));
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      files = files.filter(f => f.name.toLowerCase().includes(q));
+    }
+    return files;
+  }, [allFiles, gender, searchQuery]);
 
   const handleGenderSelect = useCallback(async (selected) => {
     setGender(selected);
@@ -208,8 +225,44 @@ export default function BeachScreen({ navigation }) {
         <View style={styles.headerTitleContainer}>
           <Text style={styles.headerTitleText}>VOLEY PLAYA</Text>
         </View>
-        {gender ? <View style={styles.headerRight} /> : <View style={styles.spacer} />}
+        {gender ? (
+          <TouchableOpacity
+            style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
+            onPress={() => setShowSearch(prev => { if (!prev) setTimeout(() => searchInputRef.current?.focus(), 300); return !prev; })}
+            activeOpacity={0.7}
+          >
+            <MaterialIcons name={showSearch ? 'close' : 'search'} size={22} color={showSearch ? Colors.primary : Colors.textMuted} />
+          </TouchableOpacity>
+        ) : <View style={styles.spacer} />}
       </View>
+      <Animated.View style={{
+        opacity: searchAnim,
+        transform: [{ translateY: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
+        overflow: 'hidden',
+      }}>
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.md, marginBottom: Spacing.sm,
+          backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.primary + '60',
+          paddingHorizontal: 12, height: 44,
+        }}>
+          <MaterialIcons name="search" size={18} color={Colors.textMuted} />
+          <TextInput
+            ref={searchInputRef}
+            style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 8 }}
+            placeholder="Buscar PDF..."
+            placeholderTextColor={Colors.textMuted}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 ? (
+            <TouchableOpacity onPress={() => setSearchQuery('')} activeOpacity={0.7}>
+              <MaterialIcons name="close" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </Animated.View>
       {content()}
       <Modal visible={showGenderPicker} transparent animationType="fade" statusBarTranslucent>
         <View style={styles.modalOverlay}>

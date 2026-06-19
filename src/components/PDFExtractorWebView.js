@@ -31,7 +31,7 @@ function generateHTML(base64) {
 '  for (var p = 1; p <= doc.numPages; p++) {\n' +
 '    sendProgress(\'Procesando pagina \' + p + \' de \' + doc.numPages + \'...\');\n' +
 '    var page = await doc.getPage(p);\n' +
-'    var viewport = page.getViewport({ scale: 2 });\n' +
+'    var viewport = page.getViewport({ scale: 3 });\n' +
 '    var canvas = document.createElement(\'canvas\');\n' +
 '    canvas.width = viewport.width;\n' +
 '    canvas.height = viewport.height;\n' +
@@ -43,9 +43,45 @@ function generateHTML(base64) {
 '    try { await page.render({ canvasContext: ctx, viewport: viewport }).promise; } catch(e) { document.body.removeChild(canvas); throw e; }\n' +
 '    var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);\n' +
 '    var d = imageData.data;\n' +
-'    for (var i = 0; i < d.length; i += 4) {\n' +
-'      var gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];\n' +
-'      if (gray < 180) { d[i] = d[i+1] = d[i+2] = 0; }\n' +
+'    var w = canvas.width, h = canvas.height;\n' +
+'    var pixels = w * h;\n' +
+'    var gray = new Uint8Array(pixels);\n' +
+'    for (var i = 0, j = 0; i < d.length; i += 4, j++) {\n' +
+'      gray[j] = (0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2]) | 0;\n' +
+'    }\n' +
+'    var blurred = new Uint8Array(gray);\n' +
+'    for (var y = 1; y < h - 1; y++) {\n' +
+'      for (var x = 1; x < w - 1; x++) {\n' +
+'        var n = [];\n' +
+'        for (var ky = -1; ky <= 1; ky++) {\n' +
+'          for (var kx = -1; kx <= 1; kx++) {\n' +
+'            n.push(gray[(y + ky) * w + (x + kx)]);\n' +
+'          }\n' +
+'        }\n' +
+'        n.sort(function(a, b) { return a - b; });\n' +
+'        blurred[y * w + x] = n[4];\n' +
+'      }\n' +
+'    }\n' +
+'    var hist = [];\n' +
+'    for (var i = 0; i < 256; i++) hist[i] = 0;\n' +
+'    for (var i = 0; i < pixels; i++) hist[blurred[i]]++;\n' +
+'    var total = pixels;\n' +
+'    var sum = 0;\n' +
+'    for (var i = 0; i < 256; i++) sum += i * hist[i];\n' +
+'    var sumB = 0, wB = 0, maxVar = 0, threshold = 128;\n' +
+'    for (var i = 0; i < 256; i++) {\n' +
+'      wB += hist[i];\n' +
+'      if (wB === 0) continue;\n' +
+'      var wF = total - wB;\n' +
+'      if (wF === 0) break;\n' +
+'      sumB += i * hist[i];\n' +
+'      var mB = sumB / wB;\n' +
+'      var mF = (sum - sumB) / wF;\n' +
+'      var v = wB * wF * (mB - mF) * (mB - mF);\n' +
+'      if (v > maxVar) { maxVar = v; threshold = i; }\n' +
+'    }\n' +
+'    for (var i = 0, j = 0; i < d.length; i += 4, j++) {\n' +
+'      if (blurred[j] < threshold) { d[i] = d[i+1] = d[i+2] = 0; }\n' +
 '      else { d[i] = d[i+1] = d[i+2] = 255; }\n' +
 '    }\n' +
 '    ctx.putImageData(imageData, 0, 0);\n' +

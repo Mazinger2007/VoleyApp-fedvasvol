@@ -511,7 +511,29 @@ function fixOcrCode(code) {
 }
 
 function fixOcrName(name) {
-  return name.replace(/[!|]/g, '/');
+  return name.replace(/[!|7$¢]/g, '/');
+}
+
+function splitOcrTeams(nameTokens) {
+  const groups = [];
+  let cur = [];
+  for (const t of nameTokens) {
+    if (t === '/') {
+      if (cur.length > 0) groups.push(cur.join(' ').trim());
+      cur = [];
+      continue;
+    }
+    cur.push(t);
+    if (t.includes('/')) {
+      groups.push(cur.join(' ').trim());
+      cur = [];
+    }
+  }
+  if (cur.length > 0) {
+    if (groups.length > 0) groups[groups.length - 1] += ' ' + cur.join(' ').trim();
+    else groups.push(cur.join(' ').trim());
+  }
+  return groups;
 }
 
 function expandScoreNumbers(token) {
@@ -530,7 +552,7 @@ function expandScoreNumbers(token) {
 
 function parseOcrLine(line) {
   const tokens = line.trim().split(/\s+/);
-  if (tokens.length < 6) return null;
+  if (tokens.length < 5) return null;
   let idx = 0;
   const partido = parseInt(tokens[idx++]);
   if (isNaN(partido) || partido < 1) return null;
@@ -538,26 +560,58 @@ function parseOcrLine(line) {
   if (!/^\d{1,2}:\d{2}$/.test(hora)) return null;
   const pista = parseInt(tokens[idx++]);
   if (isNaN(pista)) return null;
-  if (idx + 1 >= tokens.length) return null;
+  if (idx >= tokens.length) return null;
   const fase = fixOcrCode(tokens[idx++]);
-  idx++;
+
+  // Collect name tokens until we hit score-like numbers
   const nameTokens = [];
-  while (idx < tokens.length && !/^\d+$/.test(tokens[idx])) {
-    nameTokens.push(tokens[idx++]);
+  while (idx < tokens.length) {
+    const tok = tokens[idx];
+    if (/^\d+$/.test(tok)) {
+      const num = parseInt(tok, 10);
+      if (num >= 0 && num <= 30 && idx + 1 < tokens.length && /^\d+$/.test(tokens[idx + 1])) {
+        const nextNum = parseInt(tokens[idx + 1], 10);
+        if (nextNum >= 0 && nextNum <= 30) break;
+      }
+    }
+    nameTokens.push(tok);
+    idx++;
   }
   if (nameTokens.length === 0) return null;
+
   let teamA, teamB;
-  const isBye = nameTokens.some(t => t === 'BYE');
-  if (nameTokens.length >= 2) {
-    const first = nameTokens[0];
-    const last = nameTokens[nameTokens.length - 1];
-    if (first === 'BYE' && last === 'BYE') { teamA = 'BYE'; teamB = 'BYE'; }
-    else if (first === 'BYE') { teamA = 'BYE'; teamB = fixOcrName(last); }
-    else if (last === 'BYE') { teamA = fixOcrName(first); teamB = 'BYE'; }
-    else { teamA = fixOcrName(nameTokens[0]); teamB = fixOcrName(nameTokens[1]); }
+  const nameStr = nameTokens.join(' ');
+  const isBye = /BYE/i.test(nameStr);
+
+  if (isBye) {
+    teamA = 'BYE'; teamB = 'BYE';
+    const byeTokens = nameTokens.filter(t => !/^BYE$/i.test(t));
+    if (byeTokens.length > 0) {
+      const beforeBye = nameTokens.indexOf(nameTokens.find(t => /^BYE$/i.test(t)));
+      if (beforeBye === 0) teamB = fixOcrName(byeTokens.join(' '));
+      else teamA = fixOcrName(byeTokens.join(' '));
+    }
   } else {
-    teamA = fixOcrName(nameTokens[0]); teamB = '?';
+    const groups = splitOcrTeams(nameTokens);
+    if (groups.length >= 2) {
+      teamA = fixOcrName(groups[0]);
+      teamB = fixOcrName(groups.slice(1).join(' '));
+    } else if (groups.length === 1) {
+      const spaces = groups[0].split(/\s{3,}/);
+      if (spaces.length >= 2) {
+        teamA = fixOcrName(spaces[0]);
+        teamB = fixOcrName(spaces.slice(1).join(' '));
+      } else {
+        const half = Math.ceil(nameTokens.length / 2);
+        teamA = fixOcrName(nameTokens.slice(0, half).join(' '));
+        teamB = fixOcrName(nameTokens.slice(half).join(' '));
+      }
+    } else {
+      teamA = fixOcrName(nameTokens[0]);
+      teamB = nameTokens.length > 1 ? fixOcrName(nameTokens.slice(1).join(' ')) : '?';
+    }
   }
+
   let setsA, setsB, set1, set2, set3;
   let _rankingPos = null, _rankingName = null;
   const remaining = tokens.slice(idx);
@@ -578,10 +632,8 @@ function parseOcrLine(line) {
   if (!isBye && remaining.length >= 2) {
     setsA = parseInt(remaining[0]);
     let rawSetsB = remaining[1];
-    // Handle leading-zero merged case: "0151158" → setsB=0, scores merged as "151158"
     if (/^0\d+$/.test(rawSetsB)) {
       setsB = 0;
-      // Insert the rest of the digits as a synthetic token at index 2
       remaining.splice(2, 0, rawSetsB.substring(1));
     } else {
       setsB = parseInt(rawSetsB);
@@ -589,7 +641,6 @@ function parseOcrLine(line) {
     if (!isNaN(setsA) && !isNaN(setsB) && setsA >= 0 && setsA <= 3 && setsB >= 0 && setsB <= 3) {
       const totalSets = setsA + setsB;
       const expected = totalSets * 2;
-      // Concatenate all digit characters from remaining score tokens (skip ranking)
       let allDigits = '';
       for (let i = 2; i < remaining.length; i++) {
         if (_rankingPos !== null && i >= remaining.length - 2) continue;
@@ -601,7 +652,6 @@ function parseOcrLine(line) {
         while (di < allDigits.length && scores.length < expected) {
           const needed = expected - scores.length;
           const left = allDigits.length - di;
-          // Prefer 2-digit if it's a plausible score (1-30) and leaves enough for remaining scores
           if (left >= 2 && parseInt(allDigits.substring(di, di + 2)) <= 30 && left - 2 >= needed - 1) {
             scores.push(parseInt(allDigits.substring(di, di + 2)));
             di += 2;
@@ -616,7 +666,6 @@ function parseOcrLine(line) {
           if (totalSets === 3) set3 = { a: scores[4], b: scores[5] };
         }
       }
-      // Fallback: try old token expansion method
       if (!set1) {
         let scoreTokens = [];
         for (let i = 2; i < remaining.length; i++) {

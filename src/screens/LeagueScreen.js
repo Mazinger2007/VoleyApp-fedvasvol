@@ -1502,7 +1502,7 @@ export default function LeagueScreen({ route, navigation }) {
     rankingTables.length === 0 && rankingBrackets.length === 0 && (isChampionship || calendarTables.length === 0);
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
+    <View style={[styles.safe, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
 
       {/* Modal de Temporada en Configuración */}
@@ -2109,6 +2109,6 @@ export default function LeagueScreen({ route, navigation }) {
         type={statusModal.type}
         onClose={() => setStatusModal({ ...statusModal, visible: false })}
       />
-    </SafeAreaView>
+    </View>
   );
 }

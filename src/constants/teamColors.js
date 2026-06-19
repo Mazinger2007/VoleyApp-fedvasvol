@@ -28,7 +28,7 @@ export async function initTeamsData() {
       await AsyncStorage.setItem('teams_data_cache', JSON.stringify(teamsData));
       console.log('[TeamsData] ✅ Datos de equipos actualizados desde Supabase');
     } else if (error) {
-      console.log('[TeamsData] ⚠️ Error al obtener teams_data:', error);
+      console.log('[TeamsData] ⚠️ Error al obtener teams_data:', JSON.stringify({ code: error.code, message: error.message, details: error.details, hint: error.hint }));
     }
   } catch (error) {
     console.warn('[TeamsData] Error en initTeamsData:', error);

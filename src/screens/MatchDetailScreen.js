@@ -25,7 +25,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
 import { getCachedLogoColorSync } from '../utils/logoColorCache';
-import { getTeamManualCoords } from '../constants/teamColors';
+import { getTeamManualCoords, OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../constants/teamColors';
 import { fetchAndParse } from '../utils/htmlParser';
 import VenueMap from '../components/VenueMap';
 import { getTeamFromCache } from '../utils/teamCache';
@@ -165,14 +165,12 @@ export default function MatchDetailScreen({ route, navigation }) {
   }, [matchBlocks, currentMatch, summary.homeTeam]);
 
   // 4. Funciones auxiliares
-  const OFFICIAL_CHANNELS = [
+  const FALLBACK_CHANNELS = [
     { name: 'Getxo', id: 'UCYHKUaL8kC4QDe5Cx7TgMyg', patterns: [/getxo/i], priority: true },
     { name: 'Jatorkide', id: 'UCDv0NQL_EFWtPC3i5v_Drbw', patterns: [/jatorkide/i], priority: true },
     { name: 'Galdakao', id: 'UCheRHnoAnFsI7Ogd9xSYAFQ', patterns: [/galdakao/i] },
     { name: 'C.V.Sestao', id: 'UC0RH2gitr2hjNYHhCENpzLg', patterns: [/sestao/i] },
     { name: 'Cafés Foronda Ekialde', id: 'UCEeow14MIifOsTXS4uSCB5g', patterns: [/ekialde/i] },
-    // Ostadar SKT: pendiente verificar ID correcto del canal
-    // { name: 'Ostadar SKT', id: 'PENDIENTE', patterns: [/ostadar/i] },
     { name: 'Madre de Dios Deusto', id: 'UCxGbXULdYqJJTn97vBhK8cw', patterns: [/madre de dios/i, /madi/i, /deusto/i] },
     { name: 'Ocisa Logroño', id: 'UC9bIaWAOGv4hGkGgN-FDnhQ', patterns: [/logrono/i, /logroño/i] },
     { name: 'Gallartaren Ahotsa', id: 'UCi0OUunq4dpoeIDnrRnKaiw', patterns: [/gallarta/i] },
@@ -181,6 +179,7 @@ export default function MatchDetailScreen({ route, navigation }) {
     { name: 'Aidean ZKE', id: 'UChXUSuJD-XCLjmFZUYcCtVg', patterns: [/aidean/i] },
     { name: 'Navarvoley', id: 'UC_utcf6nsss9TBzw0IkTs2w', patterns: [/navar/i] }
   ];
+  const getChannels = () => SUPABASE_CHANNELS.length > 0 ? SUPABASE_CHANNELS : FALLBACK_CHANNELS;
 
   // ── Extrae el nombre BASE de un equipo eliminando prefijos corporativos y patrocinadores ──
   // Ejemplo: "Ekialde Cafés Foronda" → "ekialde" | "Ostadar SKT" → "ostadar"
@@ -400,7 +399,7 @@ export default function MatchDetailScreen({ route, navigation }) {
 
       // ─── PASO 1 y 2: Búsqueda en canales oficiales de los equipos ───────────────
       // Mejorado: también hacer match usando nombres base (sin patrocinador)
-      const relevantChannels = OFFICIAL_CHANNELS.filter(c =>
+      const relevantChannels = getChannels().filter(c =>
         c.patterns.some(p =>
           p.test(summary.homeTeam) || p.test(summary.awayTeam) ||
           p.test(homeBase) || p.test(awayBase)

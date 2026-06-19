@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Animated } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { fetchAndParse, URLS } from '../utils/htmlParser';
 import { Spacing } from '../styles/theme';
@@ -87,6 +87,19 @@ export default function NewsScreen({ navigation }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchTimer = useRef(null);
+  const searchInputRef = useRef(null);
+  const searchAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(searchAnim, {
+      toValue: showSearch ? 1 : 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [showSearch, searchAnim]);
   const [filters, setFilters] = useState({
     date_from: '',
     date_to: '',
@@ -136,6 +149,35 @@ export default function NewsScreen({ navigation }) {
     setIsAppReady(true);
     fetchPosts(1, {});
   }, [setIsAppReady, fetchPosts]);
+
+  const applySearch = useCallback((query) => {
+    const newFilters = { ...appliedFilters.current };
+    if (query) newFilters.title = query;
+    else delete newFilters.title;
+    appliedFilters.current = newFilters;
+    setCurrentPage(1);
+    fetchPosts(1, appliedFilters.current);
+  }, [fetchPosts]);
+
+  const handleSearchChange = useCallback((text) => {
+    setSearchQuery(text);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => applySearch(text), 400);
+  }, [applySearch]);
+
+  const toggleSearch = useCallback(() => {
+    setShowSearch(prev => {
+      if (prev) {
+        const hadQuery = appliedFilters.current.title !== '';
+        setSearchQuery('');
+        if (searchTimer.current) clearTimeout(searchTimer.current);
+        if (hadQuery) applySearch('');
+      } else {
+        setTimeout(() => searchInputRef.current?.focus(), 300);
+      }
+      return !prev;
+    });
+  }, [applySearch]);
 
   const handlePageChange = useCallback((page) => {
     if (page < 1 || page > totalPages) return;
@@ -326,11 +368,6 @@ export default function NewsScreen({ navigation }) {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.background} />
       <View style={styles.header}>
-        <View style={styles.spacer} />
-        <View style={styles.headerTitleContainer}>
-          <MaterialIcons name="newspaper" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-          <Text style={styles.headerTitleText}>NOTICIAS</Text>
-        </View>
         <TouchableOpacity
           style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
           onPress={() => setShowFilters(true)}
@@ -339,7 +376,46 @@ export default function NewsScreen({ navigation }) {
           <MaterialIcons name="filter-list" size={22} color={hasActiveFilters ? Colors.primary : Colors.textMuted} />
           {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
         </TouchableOpacity>
+        <View style={styles.headerTitleContainer}>
+          <MaterialIcons name="newspaper" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
+          <Text style={styles.headerTitleText}>NOTICIAS</Text>
+        </View>
+        <TouchableOpacity
+          style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
+          onPress={toggleSearch}
+          activeOpacity={0.7}
+        >
+          <MaterialIcons name={showSearch ? 'close' : 'search'} size={22} color={showSearch ? Colors.primary : Colors.textMuted} />
+        </TouchableOpacity>
       </View>
+      <Animated.View style={{
+        opacity: searchAnim,
+        transform: [{ translateY: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
+        overflow: 'hidden',
+      }}>
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.md, marginBottom: Spacing.sm,
+          backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.primary + '60',
+          paddingHorizontal: 12, height: 44,
+        }}>
+          <MaterialIcons name="search" size={18} color={Colors.textMuted} />
+          <TextInput
+            ref={searchInputRef}
+            style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 8 }}
+            placeholder="Buscar por título..."
+            placeholderTextColor={Colors.textMuted}
+            value={searchQuery}
+            onChangeText={handleSearchChange}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {searchQuery.length > 0 ? (
+            <TouchableOpacity onPress={() => { setSearchQuery(''); if (searchTimer.current) clearTimeout(searchTimer.current); applySearch(''); }} activeOpacity={0.7}>
+              <MaterialIcons name="close" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      </Animated.View>
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={Colors.primary} />
