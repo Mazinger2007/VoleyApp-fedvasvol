@@ -9,6 +9,7 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as NavigationBar from 'expo-navigation-bar';
 import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
@@ -25,6 +26,8 @@ import TeamDetailScreen from './src/screens/TeamDetailScreen';
 import RankingTableScreen from './src/screens/RankingTableScreen';
 import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
 import MatchDetailScreen from './src/screens/MatchDetailScreen';
+import PostDetailScreen from './src/screens/PostDetailScreen';
+import BeachResultScreen from './src/screens/BeachResultScreen';
 import InfoScreen from './src/screens/InfoScreen';
 import LoadingView from './src/components/LoadingView';
 
@@ -166,6 +169,12 @@ function AppContent({ fontsLoaded }) {
   const safeBgColor = animColors?.background || Colors.background;
   const isUiReady = isAppReady && fontsLoaded;
 
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      NavigationBar.setStyle(isDark ? 'light' : 'dark');
+    }
+  }, [isDark]);
+
   return (
     <SafeAreaProvider>
       <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={Colors.background} />
@@ -198,6 +207,8 @@ function AppContent({ fontsLoaded }) {
               <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
               <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
               <Stack.Screen name="Info" component={InfoScreen} />
+              <Stack.Screen name="PostDetail" component={PostDetailScreen} />
+              <Stack.Screen name="BeachResult" component={BeachResultScreen} />
             </Stack.Navigator>
           </View>
         </NavigationContainer>

@@ -1,14 +1,13 @@
 // src/hooks/useFetch.js
 // Hook reutilizable para descargar y parsear cualquier URL de la federación.
 // Gestiona los estados: cargando, datos, error y recarga.
-// V3: Evita flash de datos cacheados de URLs anteriores al cambiar de URL.
+// V4: Soporta señal de aborto para cancelar navegación.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchAndParse } from '../utils/htmlParser';
 
-// Keyed by URL → parsed block array. Persists for the entire app session.
+// Keyed by URL → parsed block array. Solo dura lo que la sesión de la app.
 const resultCache = new Map();
-const inFlightByUrl = new Map();
 
 /**
  * @param {string} url - URL pública a parsear
@@ -52,6 +51,7 @@ export function useFetch(url, options = {}) {
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
+    // Memoria (solo sesión actual)
     const cached = resultCache.get(currentUrl);
     if (cached && !forceRefresh) {
       if (latestRequestTokenRef.current === nextToken) {
@@ -60,16 +60,11 @@ export function useFetch(url, options = {}) {
       return;
     }
 
-    if (forceRefresh || state.url !== currentUrl) {
-      setState(prev => ({ ...prev, loading: true, error: null }));
-    }
+    // Red
+    setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      // Note: htmlParser.js fetchAndParse doesn't currently take a signal, 
-      // but the network layer (axios) in fetchHTML does support it if we pass it down.
-      // For now, we handle the state updates only if not aborted via latestRequestTokenRef.
-      
-      const result = await fetchAndParse(currentUrl);
+      const result = await fetchAndParse(currentUrl, { signal });
       
       if (latestRequestTokenRef.current === nextToken && !signal.aborted) {
         resultCache.set(currentUrl, result);

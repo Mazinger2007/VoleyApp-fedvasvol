@@ -4,6 +4,11 @@
     "slug": "voleibol-vizcaya",
     "version": "0.3.9",
     "orientation": "portrait",
+    "splash": {
+      "image": "./assets/Logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFFFFF"
+    },
     "userInterfaceStyle": "light",
     "icon": "./assets/Logo.png",
     "ios": {
@@ -34,7 +39,15 @@
           "remindersPermission": "La app necesita acceso a recordatorios para guardar alertas de partidos."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-navigation-bar",
+        {
+          "buttonStyle": "dark"
+        }
+      ],
+      "expo-image",
+      "expo-status-bar"
     ],
     "extra": {
       "eas": {

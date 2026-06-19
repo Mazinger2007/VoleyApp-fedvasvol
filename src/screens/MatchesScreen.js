@@ -28,13 +28,10 @@ import { openTournamentDetail } from '../utils/navigationHelper';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 
-const FILTERS = [
-  { key: 'all', label: 'Todas' },
-  { key: 'senior', label: 'Senior' },
-  { key: 'junior', label: 'Junior' },
-  { key: 'cadete', label: 'Cadete' },
-  { key: 'playa', label: 'Voley Playa' },
-];
+// Orden preferido para las categorías
+const CATEGORY_ORDER = ['infantil', 'junior', 'juvenil', 'cadete', 'senior', 'voley playa', 'playa'];
+
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
 export default function MatchesScreen({ navigation }) {
   const { colors: Colors, isDark, setIsAppReady, isAppReady } = useTheme();
@@ -59,14 +56,16 @@ export default function MatchesScreen({ navigation }) {
 
   const { blocks, loading, error, refresh } = useFetch(fetchUrl);
 
-  const tournamentTable = useMemo(() => {
-    // Extract seasons metadata if present
+  // Inicializar temporadas desde los metadatos (solo una vez)
+  useEffect(() => {
     const seasonsBlock = blocks.find(b => b.type === 'seasons');
     if (seasonsBlock && availableSeasons.length === 0) {
       setAvailableSeasons(seasonsBlock.items);
       if (!selectedSeason) setSelectedSeason(seasonsBlock.current);
     }
+  }, [blocks, availableSeasons.length, selectedSeason]);
 
+  const tournamentTable = useMemo(() => {
     const tables = blocks.filter((b) => b.type === 'table');
     return tables[0] || null;
   }, [blocks]);
@@ -82,16 +81,64 @@ export default function MatchesScreen({ navigation }) {
     setIsAppReady(true);
   }, [setIsAppReady]);
 
+  // Extraer categorías únicas de la tabla para generar filtros dinámicos
+  const dynamicFilters = useMemo(() => {
+    const base = [{ key: 'all', label: 'Todas' }];
+    if (!tournamentTable) return base;
+    const { rows, headers } = tournamentTable;
+    if (!Array.isArray(rows) || !Array.isArray(headers)) return base;
+
+    const catIdx = headers.findIndex((h) => /categor/i.test(h));
+    if (catIdx < 0) return base;
+
+    const seen = new Set();
+    const categories = [];
+    for (const row of rows) {
+      if (!Array.isArray(row)) continue;
+      const raw = row[catIdx];
+      if (!raw || !raw.trim()) continue;
+      const key = raw.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      categories.push({ key, label: capitalize(raw.trim()) });
+    }
+
+    categories.sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a.key);
+      const bi = CATEGORY_ORDER.indexOf(b.key);
+      return (ai !== -1 ? ai : 99) - (bi !== -1 ? bi : 99) || a.key.localeCompare(b.key);
+    });
+
+    return [...base, ...categories];
+  }, [tournamentTable]);
+
+  // Si el filtro activo ya no existe en las categorías disponibles, resetear a 'all'
+  useEffect(() => {
+    if (activeFilter !== 'all' && !dynamicFilters.some(f => f.key === activeFilter)) {
+      setActiveFilter('all');
+    }
+  }, [dynamicFilters, activeFilter]);
+
   const filteredTable = useMemo(() => {
     if (!tournamentTable) return null;
     const { rows, headers, rowLinks, rowLogos, rowImages } = tournamentTable;
-    const q = search.toLowerCase().trim();
 
+    // Seguridad: si los datos no tienen la forma esperada, devolvemos la tabla sin filtrar
+    if (!Array.isArray(rows) || !Array.isArray(headers)) return tournamentTable;
+
+    const q = search.toLowerCase().trim();
     const categoryIdx = headers.findIndex((h) => /categor/i.test(h));
     const sexIdx = headers.findIndex((h) => /sexo|género|genero/i.test(h));
 
     const filtered = rows.reduce(
       (acc, row, i) => {
+        if (!Array.isArray(row)) {
+          acc.rows.push(row);
+          acc.rowLinks.push(rowLinks?.[i] || null);
+          acc.rowLogos.push(rowLogos?.[i] || null);
+          acc.rowImages.push(rowImages?.[i] || null);
+          return acc;
+        }
         const text = row.join(' ').toLowerCase();
         const category = (categoryIdx >= 0 ? row[categoryIdx] : '')?.toLowerCase() || '';
         const sex = (sexIdx >= 0 ? row[sexIdx] : '')?.toLowerCase() || '';
@@ -252,18 +299,20 @@ export default function MatchesScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
-          {FILTERS.map((f) => (
-            <TouchableOpacity
-              key={f.key}
-              style={[styles.chip, activeFilter === f.key && styles.chipActive]}
-              activeOpacity={0.85}
-              onPress={() => setActiveFilter(f.key)}
-            >
-              <Text style={[styles.chipText, activeFilter === f.key && styles.chipTextActive]}>{f.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {dynamicFilters.length > 1 && (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
+            {dynamicFilters.map((f) => (
+              <TouchableOpacity
+                key={f.key}
+                style={[styles.chip, activeFilter === f.key && styles.chipActive]}
+                activeOpacity={0.85}
+                onPress={() => setActiveFilter(f.key)}
+              >
+                <Text style={[styles.chipText, activeFilter === f.key && styles.chipTextActive]}>{f.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        )}
       </View>
 
       <ScrollView

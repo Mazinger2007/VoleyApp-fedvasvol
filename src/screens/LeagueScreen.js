@@ -356,29 +356,27 @@ export default function LeagueScreen({ route, navigation }) {
     setCurrentRankingUrl(initialRankingUrl);
   }, [initialRankingUrl]);
 
-  // Load phases exactly once when the screen mounts (for the initialURL)
   useEffect(() => {
-    let mounted = true;
+    const abort = new AbortController();
     async function fetchSubgroups() {
       try {
-        const phases = await discoverAllPhases(initialRankingUrl);
+        const phases = await discoverAllPhases(initialRankingUrl, { signal: abort.signal });
         const filtered = phases.filter(p => {
           const low = (p.title || '').toLowerCase();
-          // Remove garbage options
           if (/excel|exportar|imprimir|csv|pdf|seleccionar competición|competiciones/.test(low)) return false;
           return true;
         });
 
-        if (mounted) {
+        if (!abort.signal.aborted) {
           setAvailableSubgroups(filtered);
           setIsFetchingSubgroups(false);
         }
       } catch (error) {
-        if (mounted) setIsFetchingSubgroups(false);
+        if (!abort.signal.aborted) setIsFetchingSubgroups(false);
       }
     }
     fetchSubgroups();
-    return () => { mounted = false; };
+    return () => abort.abort();
   }, [initialRankingUrl, title]);
 
 
@@ -498,21 +496,21 @@ export default function LeagueScreen({ route, navigation }) {
   }, [rawRankingBlocks, rankingUrl]);
 
   useEffect(() => {
-    let mounted = true;
+    const abort = new AbortController();
 
     async function resolveCalendar() {
       if (calendarUrlFromBlocks && /\/calendar\/\d+/i.test(calendarUrlFromBlocks)) {
-        if (mounted) setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks));
+        if (!abort.signal.aborted) setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks));
         return;
       }
 
       try {
-        const discovered = await discoverCalendarUrlFromRanking(rankingUrl);
-        if (mounted) {
+        const discovered = await discoverCalendarUrlFromRanking(rankingUrl, { signal: abort.signal });
+        if (!abort.signal.aborted) {
           setResolvedCalendarUrl(getUrlWithSeason(discovered || calendarUrlFromBlocks || null));
         }
       } catch (_) {
-        if (mounted) {
+        if (!abort.signal.aborted) {
           setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks || null));
         }
       }
@@ -520,9 +518,7 @@ export default function LeagueScreen({ route, navigation }) {
 
     resolveCalendar();
 
-    return () => {
-      mounted = false;
-    };
+    return () => abort.abort();
   }, [calendarUrlFromBlocks, rankingUrl, season]);
 
   // --- NUEVO: Manejo de Campeonatos (Txapelketas) ---
@@ -600,17 +596,17 @@ export default function LeagueScreen({ route, navigation }) {
   const activeCalendarUrl = fetchCalendarUrl || resolvedCalendarUrl;
 
   useEffect(() => {
-    let mounted = true;
+    const abort = new AbortController();
     async function resolveSeason() {
       try {
-        const discoveredSeason = await discoverSeasonLabel(rankingUrl);
-        if (mounted) setSeasonLabel(discoveredSeason || null);
+        const discoveredSeason = await discoverSeasonLabel(rankingUrl, { signal: abort.signal });
+        if (!abort.signal.aborted) setSeasonLabel(discoveredSeason || null);
       } catch (_) {
-        if (mounted) setSeasonLabel(null);
+        if (!abort.signal.aborted) setSeasonLabel(null);
       }
     }
     resolveSeason();
-    return () => { mounted = false; };
+    return () => abort.abort();
   }, [rankingUrl]);
 
   // Cache logo colors directly reading from rankingBlocks once available
@@ -1235,11 +1231,47 @@ export default function LeagueScreen({ route, navigation }) {
           {rankingBrackets.map((bracket, i) => {
             const isComplexBracket = (bracket.columns || []).length > 1;
             const totalMatches = (bracket.columns || []).reduce((acc, col) => acc + (col.matches?.length || 0), 0);
-            
+
             // Si hay tablas de clasificación y el bracket es muy simple (ej: una sola tarjeta redundant)
             // lo ocultamos a menos que sea explícitamente un torneo por nombre.
             if (rankingTables.length > 0 && !isComplexBracket && totalMatches < 2 && !isTournament) {
               return null;
+            }
+
+            // Para torneos con grupos, mostrar primero las tablas (Grupos)
+            // y luego los bloques de puestos (7º/8º, 5º/6º, 3º/4º, Final) cada uno como su propio mini-bracket.
+            if (isTournament && rankingTables.length > 0) {
+              const placementCols = Array.isArray(bracket.placements) ? bracket.placements : [];
+              const mainCols = Array.isArray(bracket.columns) ? bracket.columns : [];
+              const combinedCols = [...placementCols, ...mainCols];
+
+              const ordered = [
+                { key: '7', regex: /7\s*[ºo°]|7º|7/i, label: 'Puestos 7º y 8º' },
+                { key: '5', regex: /5\s*[ºo°]|5º|5/i, label: 'Puestos 5º y 6º' },
+                { key: '3', regex: /3\s*[ºo°]|3º|3|tercer/i, label: 'Puestos 3º y 4º' },
+                { key: 'final', regex: /final/i, label: 'Final' },
+              ];
+
+              return (
+                <View key={`tournament-${i}`} style={{ marginBottom: Spacing.xl }}>
+                  {ordered.map((o) => {
+                    const matches = combinedCols.filter((col) => o.regex.test(String(col.header || col.title || '')));
+                    if (!matches.length) return null;
+                    return matches.map((col, idx) => (
+                      <View key={`placement-${i}-${o.key}-${idx}`} style={{ marginBottom: Spacing.md }}>
+                        <Text style={[styles.sectionLabel, { color: Colors.textMuted, marginBottom: Spacing.sm }]}>{o.label}</Text>
+                        <Bracket
+                          championshipData={{
+                            mainFlow: [{ title: col.header || o.label, blocks: [{ type: 'bracket', columns: [col] }] }],
+                            placements: [],
+                          }}
+                          onMatchPress={openMatchModal}
+                        />
+                      </View>
+                    ));
+                  })}
+                </View>
+              );
             }
 
             return (

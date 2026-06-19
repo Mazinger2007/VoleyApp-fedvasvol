@@ -82,7 +82,8 @@ export default function MatchDetailScreen({ route, navigation }) {
   const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
   const [isPlaying, setIsPlaying] = useState(false);
   const [matchBlocks, setMatchBlocks] = useState([]);
-  const [matchBlocksLoading, setMatchBlocksLoading] = useState(false);
+  const [matchBlocksLoading, setMatchBlocksLoading] = useState(true);
+  const initialLoadAttempted = useRef(false);
 
   // 2. Refs
   const pagerRef = useRef(null);
@@ -878,16 +879,21 @@ export default function MatchDetailScreen({ route, navigation }) {
         console.warn('[MatchDetail] Error al refrescar desde href:', error?.message || error);
       }
     }
-    // Si no hay href, buscar por nombre en los bloques
+    // Si no hay href, buscar por nombre y extraer href de rowLinks
     let found = null;
+    let foundHref = null;
     for (const block of blocks) {
       if (block.type !== 'table') continue;
       const matches = block.matches || [];
-      found = matches.find(m => {
+      const idx = matches.findIndex(m => {
         const s = getMatchSummary(m);
         return (s.homeTeam || '').trim().toLowerCase() === hT && (s.awayTeam || '').trim().toLowerCase() === aT;
       });
-      if (found) break;
+      if (idx !== -1) {
+        found = matches[idx];
+        foundHref = block.rowLinks?.[idx] || null;
+        break;
+      }
     }
 
     // Si no, buscar el primero con sets válidos
@@ -895,8 +901,12 @@ export default function MatchDetailScreen({ route, navigation }) {
       for (const block of blocks) {
         if (block.type !== 'table') continue;
         const matches = block.matches || [];
-        found = matches.find(m => (m.sets || []).length > 0);
-        if (found) break;
+        const idx = matches.findIndex(m => (m.sets || []).length > 0);
+        if (idx !== -1) {
+          found = matches[idx];
+          foundHref = block.rowLinks?.[idx] || null;
+          break;
+        }
       }
     }
     // Si no, usar el primero
@@ -906,6 +916,7 @@ export default function MatchDetailScreen({ route, navigation }) {
         const matches = block.matches || [];
         if (matches.length > 0) {
           found = matches[0];
+          foundHref = block.rowLinks?.[0] || null;
           break;
         }
       }
@@ -913,9 +924,32 @@ export default function MatchDetailScreen({ route, navigation }) {
     if (found) {
       setCurrentMatch(prev => {
         if (prev?.scoreText === found.scoreText && (prev?.sets || []).length === (found.sets || []).length) return prev;
-        return { ...prev, ...found };
+        return { ...prev, ...found, href: foundHref || prev?.href || found?.href || null };
       });
       setMatchBlocks(blocks || []);
+
+      // Si conseguimos href del partido, fetchear detalle para coordenadas
+      if (foundHref) {
+        try {
+          const directBlocks = await fetchAndParse(foundHref);
+          if (directBlocks?.length && directBlocks.some(b => b.type === 'map_coordinates')) {
+            setMatchBlocks(prev => {
+              const existingTypes = new Set((prev || []).map(b => b.type));
+              const merged = [...(prev || [])];
+              for (const b of directBlocks) {
+                if (b.type === 'map_coordinates') {
+                  const existingIdx = merged.findIndex(x => x.type === b.type);
+                  if (existingIdx !== -1) merged[existingIdx] = b;
+                  else merged.push(b);
+                }
+              }
+              return merged;
+            });
+          }
+        } catch (e) {
+          console.warn('[MatchDetail] Error fetching match detail:', e.message);
+        }
+      }
     }
   }, []); // ESTABLE
 
@@ -925,50 +959,58 @@ export default function MatchDetailScreen({ route, navigation }) {
       .filter((b) => b.type === 'table')
       .flatMap((b) => b.matches || []);
 
-    if (!blockMatches.length) return false;
+    if (blockMatches.length) {
+      const hTarget = (hTargetRef.current || '').trim().toLowerCase();
+      const aTarget = (aTargetRef.current || '').trim().toLowerCase();
 
-    const hTarget = (hTargetRef.current || '').trim().toLowerCase();
-    const aTarget = (aTargetRef.current || '').trim().toLowerCase();
+      const found = blockMatches.find((m) => {
+        const s = getMatchSummary(m);
+        const hMatch = (s.homeTeam || '').trim().toLowerCase();
+        const aMatch = (s.awayTeam || '').trim().toLowerCase();
+        return hMatch === hTarget && aMatch === aTarget;
+      }) || blockMatches.find(m => (m.sets || []).length > 0) || blockMatches[0];
 
-    const found = blockMatches.find((m) => {
-      const s = getMatchSummary(m);
-      const hMatch = (s.homeTeam || '').trim().toLowerCase();
-      const aMatch = (s.awayTeam || '').trim().toLowerCase();
-      return hMatch === hTarget && aMatch === aTarget;
-    }) || blockMatches.find(m => (m.sets || []).length > 0) || blockMatches[0];
-
-    if (found) {
-      setCurrentMatch(prev => {
-        // Solo actualizar si realmente ha cambiado algo relevante
-        if (prev?.scoreText === found.scoreText && (prev?.sets || []).length === (found.sets || []).length) {
-          return prev;
-        }
-        return { ...prev, ...found, href: prev?.href || found?.href || null };
-      });
-      setMatchBlocks(blocks);
-      return true;
+      if (found) {
+        setCurrentMatch(prev => {
+          if (prev?.scoreText === found.scoreText && (prev?.sets || []).length === (found.sets || []).length) {
+            return prev;
+          }
+          return { ...prev, ...found, href: prev?.href || found?.href || null };
+        });
+      }
     }
-    return false;
+
+    // Siempre guardar bloques (especialmente map_coordinates) aunque no haya tabla
+    setMatchBlocks(blocks);
+    return blockMatches.length > 0;
   }, []); // CERO DEPENDENCIAS: usa Ref para los nombres objetivos
 
-  // Auto-refresh cada 30 segundos, INDEPENDIENTEMENTE del estado (Live/Finished)
-  // para corregir posibles errores de estado en la web.
+  // Auto-refresh cada 15 segundos + fetch inmediato al montar
   useEffect(() => {
-    const intervalId = setInterval(async () => {
-      try {
-        if (calendarUrl) {
-          const blocks = await fetchAndParse(calendarUrl);
-          updateMatchFromBlocks(blocks);
-        }
-        if (currentMatch?.href) {
-          const directBlocks = await fetchAndParse(currentMatch.href);
-          updateMatchFromDirectMatchBlocks(directBlocks);
-        }
-      } catch (e) {
-        console.warn('[MatchDetail] Error en auto-refresh:', e.message);
+    let cancelled = false;
+    const refresh = async () => {
+      if (cancelled) return;
+      if (calendarUrl) {
+        const blocks = await fetchAndParse(calendarUrl);
+        if (!cancelled) updateMatchFromBlocks(blocks);
       }
-    }, 15000); // 15 segundos
-    return () => clearInterval(intervalId);
+      if (currentMatch?.href) {
+        const directBlocks = await fetchAndParse(currentMatch.href);
+        if (!cancelled) updateMatchFromDirectMatchBlocks(directBlocks);
+      }
+    };
+    const firstPromise = refresh();
+    const intervalId = setInterval(refresh, 15000);
+    Promise.resolve(firstPromise).finally(() => {
+      if (!cancelled && !initialLoadAttempted.current) {
+        initialLoadAttempted.current = true;
+        setMatchBlocksLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
   }, [calendarUrl, currentMatch?.href, updateMatchFromBlocks, updateMatchFromDirectMatchBlocks]);
 
   const onRefresh = useCallback(async () => {

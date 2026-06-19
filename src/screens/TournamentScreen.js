@@ -376,28 +376,30 @@ export default function TournamentScreen({ route, navigation }) {
   }, [url]);
 
   useEffect(() => {
+    const abort = new AbortController();
     async function loadInfo() {
       if (!url) return;
       try {
         const iUrl = toInfoUrl(url);
-        const data = await fetchInfoData(iUrl);
-        if (data) setInfoData(data);
+        const data = await fetchInfoData(iUrl, { signal: abort.signal });
+        if (!abort.signal.aborted && data) setInfoData(data);
       } catch (err) { }
     }
     loadInfo();
+    return () => abort.abort();
   }, [url]);
 
   useEffect(() => {
-    let mounted = true;
+    const abort = new AbortController();
     async function getSeason() {
       if (!url) return;
       try {
-        const s = await discoverSeasonLabel(url);
-        if (mounted && s) setResolvedSeason(s);
+        const s = await discoverSeasonLabel(url, { signal: abort.signal });
+        if (!abort.signal.aborted && s) setResolvedSeason(s);
       } catch { }
     }
     getSeason();
-    return () => { mounted = false; };
+    return () => abort.abort();
   }, [url]);
 
   const toggleFullscreen = useCallback(async () => {
@@ -418,29 +420,36 @@ export default function TournamentScreen({ route, navigation }) {
   }, []);
 
   useEffect(() => {
+    const abortRef = { current: new AbortController() };
     async function loadData(showLoading = true) {
       if (!url) { setLoading(false); return; }
       try {
         if (showLoading) setLoading(true);
         setError(null);
         if (showLoading) setData(null);
-        const result = await fetchChampionshipData(url);
-        setData(result);
+        const result = await fetchChampionshipData(url, [], { signal: abortRef.current.signal });
+        if (!abortRef.current.signal.aborted) setData(result);
       } catch (error) {
-        console.error('[Tournament] Error loading data:', error);
-        setError('No se pudo cargar la información del torneo.');
+        if (!abortRef.current.signal.aborted) {
+          console.error('[Tournament] Error loading data:', error);
+          setError('No se pudo cargar la información del torneo.');
+        }
       } finally {
-        if (showLoading) setLoading(false);
+        if (showLoading && !abortRef.current.signal.aborted) setLoading(false);
       }
     }
     loadData(true);
 
-    // Live refresh for active tournaments without UI flicker.
     const intervalId = setInterval(() => {
+      abortRef.current.abort();
+      abortRef.current = new AbortController();
       loadData(false);
     }, 30000);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      clearInterval(intervalId);
+      abortRef.current.abort();
+    };
   }, [url]);
 
   // ── Match card ─────────────────────────────────────────────────────────────

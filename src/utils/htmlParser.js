@@ -67,6 +67,25 @@ function parseTournamentMatchDetail(html) {
   console.log('[parseTournamentMatchDetail] No se pudieron extraer ambos equipos y sets correctamente:', JSON.stringify(teamRows));
   return [];
 }
+
+function extractMatchCoordinates(html) {
+  if (!html) return null;
+  const lugarRegex = /<div[^>]*>\s*<div[^>]*>Lugar\s*<\/div>\s*<a\s+href="https:\/\/www\.google\.com\/maps\?q=([^&"']+),([^&"']+)"[^>]*>([^<]*)<\/a>/i;
+  const match = String(html).match(lugarRegex);
+  if (match) {
+    const lat = parseFloat(match[1]);
+    const lng = parseFloat(match[2]);
+    if (!isNaN(lat) && !isNaN(lng)) {
+      return {
+        type: 'map_coordinates',
+        latitude: lat,
+        longitude: lng,
+        venue: match[3].trim(),
+      };
+    }
+  }
+  return null;
+}
 // src/utils/htmlParser.js
 // Utilidad central para descargar y parsear el HTML de la federación.
 // Usa htmlparser2 + domutils para recorrer el DOM sin ningún CSS original.
@@ -94,6 +113,9 @@ export const URLS = {
   competitions: 'https://fedvasvol.com/es/tournaments',
   teams: 'https://fedvasvol.com/es/information',
   results: 'https://fedvasvol.com/es/tournaments',
+  beachVolleyball: `${BASE_URL}/es/section/seccion-3`,
+  posts: `${BASE_URL}/es/posts`,
+  postNews: `${BASE_URL}/es/posts/news`,
 };
 
 const AJAX_URLS = {
@@ -107,7 +129,7 @@ const tournamentsAjaxContextCache = new Map();
 const calendarAjaxContextCache = new Map();
 const infoDataCache = new Map();
 const championshipDataCache = new Map();
-const CHAMPIONSHIP_CACHE_TTL_MS = 30000;
+const CHAMPIONSHIP_CACHE_TTL_MS = Infinity;
 
 let globalSessionCookie = '';
 
@@ -383,7 +405,7 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
   }
 }
 
-async function fetchTournamentContext(inputUrl = '') {
+async function fetchTournamentContext(inputUrl = '', { signal } = {}) {
   const baseUrl = getTournamentBaseUrl(inputUrl);
   if (!baseUrl) {
     return {
@@ -413,7 +435,7 @@ async function fetchTournamentContext(inputUrl = '') {
 
   const loadContextPromise = (async () => {
     const rankingBaseUrl = `${baseUrl}/ranking`;
-    const html = await fetchHTML(rankingBaseUrl);
+    const html = await fetchHTML(rankingBaseUrl, { signal });
     const blocks = parseBlocksFromHtml(html);
     const secondaryInputs = findSecondaryInputSets(html);
     const rankingInputs = secondaryInputs.find((fields) => fields.type === '12') || null;
@@ -675,7 +697,8 @@ function parsePlayoffViewerBracket(dom) {
     if (!matches.length) return;
 
     const column = { header: roundTitle, matches };
-    if (/tercer|clasificaci[oó]n\s+final|puesto/i.test(roundTitle) || roundIndex === 0) {
+    // Detectar fases de colocación/tercer puesto (ej: "3º", "tercer", "consolación", "clasificación final")
+    if (/3\s*[ºo°]|tercer|consolaci|clasificaci[oó]n\s+final|puesto/i.test(roundTitle) || roundIndex === 0) {
       placementColumns.push(column);
     } else {
       mainColumns.push(column);
@@ -735,7 +758,7 @@ async function fetchRankingBlocksViaAjax(inputUrl = '') {
   }
 }
 
-async function fetchCalendarBlocksViaAjax(inputUrl = '') {
+async function fetchCalendarBlocksViaAjax(inputUrl = '', { signal } = {}) {
   const t0 = Date.now();
   const currentUrl = ensureCalendarCurrentUrl(inputUrl); // appends /all
   const cacheKey = normalizeUrlForCache(currentUrl);
@@ -748,7 +771,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
 
   // Fetch the /all page which already contains every matchday in HTML
   console.log('\n\n[DEBUG CALENDAR] 1. Requesting URL:', currentUrl);
-  const allHtml = await fetchHTML(currentUrl);
+  const allHtml = await fetchHTML(currentUrl, { signal });
   console.log('[DEBUG CALENDAR] 2. Received HTML length:', allHtml?.length);
   const allBlocks = parseBlocksFromHtml(allHtml);
 
@@ -803,7 +826,7 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '') {
   }
 }
 
-async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
+async function fetchTournamentsBlocksViaAjax(inputUrl = '', { signal } = {}) {
   const t0 = Date.now();
   const tournamentsUrl = toAbsoluteUrl(inputUrl || URLS.home);
 
@@ -818,6 +841,7 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
     const response = await axios.get(tournamentsUrl, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
+      signal,
     });
     const html = typeof response.data === 'string' ? response.data : String(response.data || '');
     const cookieHeader = (response.headers?.['set-cookie'] || [])
@@ -825,12 +849,14 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
       .filter(Boolean)
       .join('; ');
 
+    const secondaryInputs = findSecondaryInputSets(html)?.[0] || {};
     context = {
       csrfToken: extractCsrfToken(html),
       season: requestedSeason || extractSelectedSeason(html),
       allSeasons: extractAllSeasons(html),
       contextBlocks: parseBlocksFromHtml(html),
       cookieHeader,
+      secondaryInputs,
     };
     tournamentsAjaxContextCache.set(cacheKey, context);
   }
@@ -844,6 +870,18 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
   // Priority: 1. URL search param, 2. context default
   const seasonToFetch = requestedSeason || context.season;
   if (seasonToFetch) payload.append('season', seasonToFetch);
+  // Include hidden fields the website sends with every AJAX request
+  if (context.secondaryInputs) {
+    for (const [key, value] of Object.entries(context.secondaryInputs)) {
+      if (key !== 'csrf_token' && key !== 'season') {
+        payload.append(key, value);
+      }
+    }
+  }
+
+  const seasonMetadata = context.allSeasons?.length > 0
+    ? [{ type: 'seasons', items: context.allSeasons, current: seasonToFetch }]
+    : [];
 
   try {
     const response = await axios.post(AJAX_URLS.tournaments, payload.toString(), {
@@ -856,20 +894,18 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '') {
         Origin: BASE_URL,
         ...(context.cookieHeader ? { Cookie: context.cookieHeader } : {}),
       },
+      signal,
     });
 
     const ajaxHtml = extractHtmlFromAjaxData(response.data);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
     const metadataBlocks = (context.contextBlocks || []).filter((block) => block.type !== 'table');
 
-    // Inyectamos un bloque especial de metadatos con las temporadas si existen
-    const seasonMetadata = context.allSeasons?.length > 0
-      ? [{ type: 'seasons', items: context.allSeasons, current: seasonToFetch }]
-      : [];
-
     return [...seasonMetadata, ...metadataBlocks, ...ajaxBlocks];
   } catch (error) {
-    return context.contextBlocks || [];
+    // Incluso si falla el AJAX, devolvemos metadatos y bloques del HTML inicial
+    const metadataBlocks = (context.contextBlocks || []).filter((block) => block.type !== 'table');
+    return [...seasonMetadata, ...metadataBlocks];
   }
 }
 
@@ -890,18 +926,16 @@ function extractSeasonFromInformationHtml(html = '') {
   return null;
 }
 
-export async function discoverSeasonLabel(inputUrl = '') {
-  const context = await fetchTournamentContext(inputUrl);
+export async function discoverSeasonLabel(inputUrl = '', { signal } = {}) {
+  const context = await fetchTournamentContext(inputUrl, { signal });
   if (context.seasonLabel) return context.seasonLabel;
 
-  // Fallback: try the /information page which usually has "Temporada YYYY/YYYY"
   try {
     const infoUrl = toInfoUrl(inputUrl);
     if (infoUrl) {
-      const infoHtml = await fetchHTML(infoUrl);
+      const infoHtml = await fetchHTML(infoUrl, { signal });
       const fromInfo = extractSeasonFromInformationHtml(infoHtml);
       if (fromInfo) return fromInfo;
-      // Also try extracting from the select on the info page
       const fromSelect = extractSelectedSeasonLabel(infoHtml);
       if (fromSelect) {
         const yearMatch = fromSelect.match(/\b\d{4}\s*\/\s*\d{2,4}\b/);
@@ -915,8 +949,8 @@ export async function discoverSeasonLabel(inputUrl = '') {
   return null;
 }
 
-export async function discoverCalendarUrlFromRanking(rankingUrl = '') {
-  const context = await fetchTournamentContext(rankingUrl);
+export async function discoverCalendarUrlFromRanking(rankingUrl = '', { signal } = {}) {
+  const context = await fetchTournamentContext(rankingUrl, { signal });
   return context.calendarUrl || null;
 }
 
@@ -934,13 +968,14 @@ const INLINE_TAGS = new Set([
 ]);
 
 // ─── Descarga el HTML de una URL y lo devuelve como string ──────────────────
-export async function fetchHTML(url) {
+export async function fetchHTML(url, { signal } = {}) {
   const start = Date.now();
 
   try {
     const response = await axios.get(url, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
+      signal,
     });
 
     const html = typeof response.data === 'string' ? response.data : '';
@@ -1464,7 +1499,7 @@ function extractCellText(cellNode) {
 }
 
 // ─── Añadido para procesar dinámicamente las pestañas AJAX de un equipo ───
-async function fetchTeamContextViaAjax(teamUrl) {
+async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   const currentUrl = toAbsoluteUrl(teamUrl);
   let html = '';
   let cookieHeader = '';
@@ -1473,6 +1508,7 @@ async function fetchTeamContextViaAjax(teamUrl) {
     const response = await axios.get(currentUrl, {
       timeout: 15000,
       headers: defaultRequestHeaders(),
+      signal,
     });
     html = typeof response.data === 'string' ? response.data : '';
     cookieHeader = (response.headers?.['set-cookie'] || [])
@@ -1514,6 +1550,7 @@ async function fetchTeamContextViaAjax(teamUrl) {
             'Cookie': cookieHeader,
           },
           timeout: 10000,
+          signal,
         }
       );
       return resp.data?.content || resp.data?.html || '';
@@ -1582,27 +1619,203 @@ async function fetchTeamContextViaAjax(teamUrl) {
   return [...initialBlocks, ...extraBlocks, ...customBlocks];
 }
 
+// ─── Parsea una sección de descargas (ej: /section/seccion-3) ────────────────
+function parseSectionFiles(html) {
+  if (!html) return [];
+  const dom = parseHTML(String(html || ''));
+  const body = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'body', dom.children) || dom;
+  const table = DomUtils.findOne(
+    (n) => n.type === 'tag' && n.name === 'table' && (n.attribs?.class || '').includes('tablestyle'),
+    body.children || []
+  );
+  if (!table) return [];
+  const rows = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'tr', table);
+  const files = [];
+  for (const row of rows.slice(1)) {
+    const cells = DomUtils.findAll((n) => n.type === 'tag' && (n.name === 'td' || n.name === 'th'), row);
+    if (cells.length < 1) continue;
+    const link = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'a' && n.attribs?.href, cells[0].children || []);
+    if (!link) continue;
+    const url = toAbsoluteUrl(link.attribs.href);
+    if (!/\.pdf$/i.test(url)) continue;
+    const name = extractCellText(cells[0]);
+    const size = cells.length > 1 ? extractCellText(cells[1]) : '';
+    const date = cells.length > 2 ? extractCellText(cells[2]) : '';
+    files.push({ type: 'file', name, url, size, date });
+  }
+  return files;
+}
+
+// ─── Parsea la lista de posts (ej: /es/posts) ─────────────────────────────────
+function parsePostsList(html) {
+  if (!html) return [];
+  const dom = parseHTML(String(html || ''));
+  const body = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'body', dom.children) || dom;
+  const containers = DomUtils.findAll(
+    (n) => n.type === 'tag' && n.name === 'div' && n.attribs?.class?.includes('post-container'),
+    body.children || []
+  );
+  const posts = [];
+  for (const container of containers) {
+    const absLink = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'a' && n.attribs?.class === 'absolute', container.children || []);
+    const href = absLink ? toAbsoluteUrl(absLink.attribs.href) : '';
+    if (!href) continue;
+    const img = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'img' && n.attribs?.src?.includes('1170'), container);
+    const image = img ? toAbsoluteUrl(img.attribs.src) : '';
+    const titleEl = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'h2', container);
+    const title = titleEl ? getTextContent(titleEl).trim() : '';
+    const excerptEl = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'p', container).pop();
+    const excerpt = excerptEl ? getTextContent(excerptEl).trim() : '';
+    const header = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'div' && n.attribs?.class?.includes('post-header'), container);
+    const dateSpan = header ? DomUtils.findOne((n) => n.type === 'tag' && n.name === 'span', header) : null;
+    const date = dateSpan ? getTextContent(dateSpan).trim() : '';
+    const featured = header ? DomUtils.findOne((n) => n.type === 'tag' && n.name === 'i' && n.attribs?.class?.includes('fa-star'), header) : null;
+    posts.push({ type: 'post', title, image, excerpt: excerpt.replace(/Ver más$/, '').trim(), href, date, featured: !!featured });
+  }
+  return posts;
+}
+
+
+function parsePagination(html) {
+  if (!html) return null;
+  const dom = parseHTML(String(html || ''));
+  const body = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'body', dom.children) || dom;
+  const paginationDiv = DomUtils.findOne(
+    (n) => n.type === 'tag' && n.name === 'div' && n.attribs?.class?.includes('pagination'),
+    body.children || []
+  );
+  if (!paginationDiv) return null;
+  const items = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'li', paginationDiv.children || []);
+  let currentPage = 1;
+  let totalPages = 1;
+  for (const li of items) {
+    const a = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'a', li.children || []);
+    if (!a) continue;
+    const href = a.attribs?.href || '';
+    const text = getTextContent(a).trim();
+    if (li.attribs?.class?.includes('active') && /^\d+$/.test(text)) {
+      currentPage = parseInt(text, 10);
+    }
+    const pageMatch = href.match(/[?&]page=(\d+)/);
+    if (pageMatch) {
+      const p = parseInt(pageMatch[1], 10);
+      if (p > totalPages) totalPages = p;
+    }
+  }
+  if (totalPages < currentPage) totalPages = currentPage;
+  if (totalPages < 1) totalPages = 1;
+  return { currentPage, totalPages };
+}
+
+
+// ─── Parsea el detalle de un post (ej: /es/posts/news/360203) ────────────────
+function parsePostDetail(html) {
+  if (!html) return null;
+  const dom = parseHTML(String(html || ''));
+  const body = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'body', dom.children) || dom;
+  const container = DomUtils.findOne(
+    (n) => n.type === 'tag' && n.name === 'div' && n.attribs?.class?.includes('post-container'),
+    body.children || []
+  );
+  if (!container) return null;
+  const headerImg = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'img' && n.attribs?.alt === 'Cabecera', container);
+  const image = headerImg ? toAbsoluteUrl(headerImg.attribs.src) : '';
+  const titleEl = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'h1', container);
+  const title = titleEl ? getTextContent(titleEl).trim() : '';
+  const allPTags = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'p', container);
+  const paragraphs = allPTags.map(p => getTextContent(p).trim()).filter(t => t.length > 5);
+  const galleryEl = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'div' && n.attribs?.id === 'legacy-news-gallery', container);
+  const gallery = [];
+  if (galleryEl) {
+    const imgs = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'img', galleryEl);
+    for (const img of imgs) {
+      if (img.attribs?.src) gallery.push(toAbsoluteUrl(img.attribs.src));
+    }
+  }
+  const fileTable = DomUtils.findOne(
+    (n) => n.type === 'tag' && n.name === 'table' && (n.attribs?.class || '').includes('tablestyle'),
+    container
+  );
+  const files = [];
+  if (fileTable) {
+    const rows = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'tr', fileTable);
+    for (const row of rows.slice(1)) {
+      const cells = DomUtils.findAll((n) => n.type === 'tag' && (n.name === 'td' || n.name === 'th'), row);
+      if (cells.length < 1) continue;
+      const link = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'a' && n.attribs?.href, cells[0].children || []);
+      if (!link) continue;
+      const url = toAbsoluteUrl(link.attribs.href);
+      if (!/\.pdf$/i.test(url)) continue;
+      const name = extractCellText(cells[0]);
+      const size = cells.length > 1 ? extractCellText(cells[1]) : '';
+      const date = cells.length > 2 ? extractCellText(cells[2]) : '';
+      files.push({ type: 'file', name, url, size, date });
+    }
+  }
+  const headerInfo = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'div' && n.attribs?.class?.includes('post-header'), container);
+  const dateSpan = headerInfo ? DomUtils.findOne((n) => n.type === 'tag' && n.name === 'span', headerInfo) : null;
+  const date = dateSpan ? getTextContent(dateSpan).trim() : '';
+  const featured = headerInfo ? DomUtils.findOne((n) => n.type === 'tag' && n.name === 'i' && n.attribs?.class?.includes('fa-star'), headerInfo) : null;
+  return { title, image, paragraphs, gallery, files, date, featured: !!featured };
+}
+
 // ─── Función principal: URL → array de bloques listos para renderizar ─────────
-export async function fetchAndParse(url) {
+export async function fetchAndParse(url, { signal } = {}) {
   const t0 = Date.now();
   const absoluteUrl = toAbsoluteUrl(url);
   let blocks;
 
   if (/\/tournaments/i.test(absoluteUrl)) {
-    blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl);
+    blocks = await fetchTournamentsBlocksViaAjax(absoluteUrl, { signal });
   } else if (/\/tournament\/\d+\/ranking/i.test(absoluteUrl)) {
-    // SOLO HTML: NO AJAX PARA TORNEOS
-    const html = await fetchHTML(absoluteUrl);
-    blocks = parseBlocksFromHtml(html);
+    // Reutilizar caché compartido de fetchTournamentContext si existe
+    const baseUrl = getTournamentBaseUrl(absoluteUrl);
+    const cacheKey = baseUrl ? normalizeUrlForCache(baseUrl) : null;
+    const cached = cacheKey ? tournamentContextCache.get(cacheKey) : null;
+    if (cached?.blocks) {
+      blocks = cached.blocks;
+    } else if (cacheKey && tournamentContextInFlight.has(cacheKey)) {
+      // Otra llamada ya está fetcheando la misma página, esperamos
+      const context = await tournamentContextInFlight.get(cacheKey);
+      blocks = context.blocks;
+    } else {
+      const html = await fetchHTML(absoluteUrl, { signal });
+      if (signal?.aborted) return [];
+      blocks = parseBlocksFromHtml(html);
+    }
   } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
-    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl);
+    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl, { signal });
   } else if (/\/team\/\d+/i.test(absoluteUrl)) {
-    // Carga de equipo mediante peticiones AJAX combinadas simulando Vue
-    blocks = await fetchTeamContextViaAjax(absoluteUrl);
-  } else {
-    const html = await fetchHTML(absoluteUrl);
+    blocks = await fetchTeamContextViaAjax(absoluteUrl, { signal });
+  } else if (/\/posts\/news\/\d+/i.test(absoluteUrl)) {
+    const html = await fetchHTML(absoluteUrl, { signal });
+    if (signal?.aborted) return [];
+    const post = parsePostDetail(html);
+    blocks = post ? [{ type: 'post_detail', ...post }] : [{ type: 'post_detail', title: '', paragraphs: [], gallery: [], files: [] }];
+  } else if (/\/posts/i.test(absoluteUrl)) {
+    const html = await fetchHTML(absoluteUrl, { signal });
+    if (signal?.aborted) return [];
     blocks = parseBlocksFromHtml(html);
-    // Si no se extrajo ningún partido válido, intenta el parser específico
+    const posts = parsePostsList(html);
+    if (posts.length > 0) {
+      blocks.push({ type: 'posts', posts });
+    }
+    const pagination = parsePagination(html);
+    if (pagination) {
+      blocks.push({ type: 'pagination', ...pagination });
+    }
+  } else if (/\/section\//i.test(absoluteUrl)) {
+    const html = await fetchHTML(absoluteUrl, { signal });
+    if (signal?.aborted) return [];
+    blocks = parseBlocksFromHtml(html);
+    const files = parseSectionFiles(html);
+    if (files.length > 0) {
+      blocks.push({ type: 'files', files });
+    }
+  } else {
+    const html = await fetchHTML(absoluteUrl, { signal });
+    if (signal?.aborted) return [];
+    blocks = parseBlocksFromHtml(html);
     const hasValidMatch = blocks.some(b => b.type === 'table' && Array.isArray(b.matches) && b.matches.length > 0);
     if (!hasValidMatch) {
       const matches = parseTournamentMatchDetail(html);
@@ -1613,9 +1826,12 @@ export async function fetchAndParse(url) {
         console.log('[fetchAndParse] Parser torneo no devolvió ningún partido válido');
       }
     }
+    const coords = extractMatchCoordinates(html);
+    if (coords) {
+      blocks.push(coords);
+    }
   }
 
-  // Elimina bloques duplicados consecutivos
   const result = blocks.filter((block, i) => {
     if (i === 0) return true;
     const prev = blocks[i - 1];
@@ -1732,11 +1948,10 @@ export function extractAllPhases(url = '', html = '', blocks = []) {
   return [{ title: currentTitle, href: url }];
 }
 
-export async function discoverAllPhases(url) {
+export async function discoverAllPhases(url, { signal } = {}) {
   try {
-    const html = await fetchHTML(url);
-    const blocks = parseBlocksFromHtml(html);
-    return extractAllPhases(url, html, blocks);
+    const context = await fetchTournamentContext(url, { signal });
+    return extractAllPhases(context.rankingBaseUrl || url, context.html, context.blocks);
   } catch (e) {
     return [{ title: 'Liga', href: url }];
   }
@@ -1746,37 +1961,34 @@ export async function discoverAllPhases(url) {
  * Descarga y parsea todos los datos de un campeonato (Txapelketa) de forma unificada.
  * Utiliza scraping HTML directo (sin AJAX) para evitar problemas de CORS y AJAX.
  */
-export async function fetchChampionshipData(rankingUrl, siblingUrls = []) {
+export async function fetchChampionshipData(rankingUrl, siblingUrls = [], { signal } = {}) {
   const cacheKey = normalizeUrlForCache(rankingUrl);
   const cached = championshipDataCache.get(cacheKey);
-  if (cached) {
-    const isExpired = (Date.now() - (cached.cachedAt || 0)) > CHAMPIONSHIP_CACHE_TTL_MS;
-    if (!isExpired && cached.data) return cached.data;
-  }
+  if (cached?.data) return cached.data;
 
   // ── Paso 1: Obtener el HTML de la fase actual ──
   const absoluteUrl = toAbsoluteUrl(rankingUrl);
-  const firstHtml = await fetchHTML(absoluteUrl);
+  const firstHtml = await fetchHTML(absoluteUrl, { signal });
+  if (signal?.aborted) return { mainFlow: [], placements: [] };
   const firstBlocks = parseBlocksFromHtml(firstHtml);
   const firstTitle = guessPhaseTitle(absoluteUrl, firstHtml);
 
   const normalizedCurrent = absoluteUrl.replace(/\/$/, '').toLowerCase();
 
-  // Normalize sibling URLs for fast lookup (these are other subgroups from the same league)
   const siblingSet = new Set((siblingUrls || []).map(u => String(u).replace(/\/$/, '').toLowerCase()));
 
   let phaseData = [{ title: firstTitle, href: absoluteUrl, blocks: firstBlocks }];
 
   // ── Paso 2: Extraer y seguir solo las fases internas del bracket ──
-  // Seguimos todos los phase links EXCEPTO los que son grupos hermanos de la liga
   const phases = extractPhaseLinks(firstBlocks, absoluteUrl);
   const otherPhaseData = await Promise.all(
     phases.map(async (p) => {
       try {
         const normP = toAbsoluteUrl(p.href).replace(/\/$/, '').toLowerCase();
-        if (normP === normalizedCurrent) return null; // Saltar la página actual
-        if (siblingSet.has(normP)) return null; // Saltar grupos hermanos de la liga
-        const html = await fetchHTML(p.href);
+        if (normP === normalizedCurrent) return null;
+        if (siblingSet.has(normP)) return null;
+        const html = await fetchHTML(p.href, { signal });
+        if (signal?.aborted) return null;
         const blocks = parseBlocksFromHtml(html);
         return { title: p.title, href: p.href, blocks };
       } catch (err) {
@@ -1876,11 +2088,11 @@ function guessPhaseTitle(url = '', html = '') {
 /**
  * Extrae información detallada del torneo desde la página /information.
  */
-export async function fetchInfoData(infoUrl) {
+export async function fetchInfoData(infoUrl, { signal } = {}) {
   const cacheKey = normalizeUrlForCache(infoUrl);
   if (infoDataCache.has(cacheKey)) return infoDataCache.get(cacheKey);
 
-  const html = await fetchHTML(infoUrl);
+  const html = await fetchHTML(infoUrl, { signal });
   const dom = parseHTML(html);
 
   const results = [];

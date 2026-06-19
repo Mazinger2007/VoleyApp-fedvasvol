@@ -1,12 +1,19 @@
 import React from 'react';
-import { Image, StyleSheet } from 'react-native';
+import { StyleSheet } from 'react-native';
 
-export default function VenueMap({ query }) {
-  // Web implementation: strictly use Image to avoid native-only markers/WebView issues
+export default function VenueMap({ venue, colors, isDark, latitude, longitude }) {
+  const hasCoords = typeof latitude === 'number' && typeof longitude === 'number' &&
+                    Number.isFinite(latitude) && Number.isFinite(longitude) &&
+                    (Math.abs(latitude) > 0.0001 || Math.abs(longitude) > 0.0001);
+
+  if (!hasCoords) return null;
+
   return (
-    <Image 
-      source={{ uri: `https://images.unsplash.com/photo-1569336415962-a4bd9f69c07a?auto=format&fit=crop&q=80&w=800&sig=${query}` }} 
-      style={StyleSheet.absoluteFill} 
+    <iframe
+      title={venue || 'Mapa'}
+      src={`https://maps.google.com/maps?q=${latitude},${longitude}&hl=es&z=17&t=p&output=embed`}
+      style={{ border: 0, width: '100%', height: '100%' }}
+      allowFullScreen
     />
   );
 }
