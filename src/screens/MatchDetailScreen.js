@@ -25,7 +25,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import StatusModal from '../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
 import { getCachedLogoColorSync } from '../utils/logoColorCache';
-import { getTeamManualCoords, OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../constants/teamColors';
+import { OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../constants/teamColors';
 import { fetchAndParse } from '../utils/htmlParser';
 import VenueMap from '../components/VenueMap';
 import { getTeamFromCache } from '../utils/teamCache';
@@ -157,7 +157,7 @@ export default function MatchDetailScreen({ route, navigation }) {
       if (currentMatch?.coordinates?.latitude && currentMatch?.coordinates?.longitude) {
         return currentMatch.coordinates;
       }
-      // REQUISITO: No usar manualCoords (habituales) si no hay oficiales
+
     } catch (e) {
       console.warn('[MatchDetail] Error calculating coordinates:', e.message);
     }

@@ -3,7 +3,6 @@ import { supabase } from '../utils/supabase';
 
 // --- INITIAL FALLBACK DATA ---
 export let CLUB_BASE_COLORS = {};
-export let CLUB_VENUE_COORDS = {};
 export let OFFICIAL_CHANNELS = [];
 export let CLUB_BASES = [];
 // ------------------------------
@@ -37,7 +36,6 @@ export async function initTeamsData() {
 
 function applyTeamsData(teamsData) {
   const newColors = {};
-  const newCoords = {};
   const newChannels = [];
   const newBases = [];
 
@@ -47,12 +45,6 @@ function applyTeamsData(teamsData) {
     }
     if (row.color) {
       newColors[row.base_name] = row.color;
-    }
-    if (row.venue_lat && row.venue_lon) {
-      newCoords[row.base_name] = {
-        latitude: parseFloat(row.venue_lat),
-        longitude: parseFloat(row.venue_lon)
-      };
     }
     if (row.youtube_id && row.youtube_patterns && row.youtube_patterns.length > 0) {
       newChannels.push({
@@ -66,7 +58,6 @@ function applyTeamsData(teamsData) {
   });
 
   CLUB_BASE_COLORS = newColors;
-  CLUB_VENUE_COORDS = newCoords;
   OFFICIAL_CHANNELS = newChannels;
   CLUB_BASES = newBases;
 }
@@ -79,14 +70,6 @@ export function getClubBaseName(teamName) {
   const upperName = teamName.toUpperCase();
   const baseName = CLUB_BASES.find(base => upperName.includes(base.toUpperCase()));
   return baseName || null;
-}
-
-/**
- * Obtiene las coordenadas manuales de un equipo basándose en su nombre.
- */
-export function getTeamManualCoords(teamName) {
-  const baseName = getClubBaseName(teamName);
-  return baseName ? CLUB_VENUE_COORDS[baseName] : null;
 }
 
 /**

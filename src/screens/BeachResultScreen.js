@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Linking, TextInput, Animated } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Linking, TextInput, Keyboard, Modal, Platform } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { Spacing } from '../styles/theme';
+import { Spacing, Radius } from '../styles/theme';
 import { downloadPdfBase64 } from '../utils/pdfExtractor';
 import PDFExtractorWebView from '../components/PDFExtractorWebView';
 import { parseBeachResults } from '../utils/parseBeachResults';
@@ -75,6 +75,8 @@ function MatchCard({ match, highlighted }) {
   const { colors: Colors } = useTheme();
   const allSets = [match.set1, match.set2, match.set3].filter(Boolean);
   const maxSets = Math.max(allSets.length, 3);
+  const aWon = match.setsA > match.setsB;
+  const bWon = match.setsB > match.setsA;
 
   return (
     <View style={{
@@ -101,8 +103,8 @@ function MatchCard({ match, highlighted }) {
       <View style={{ gap: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsA} {match.setsA > match.setsB ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: '900', color: Colors.primary, fontSize: 14 }}>{match.parejaA}</Text>
+            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsA} {aWon ? '(W)' : ''}</Text>
+            <Text style={{ fontWeight: aWon ? '900' : '400', color: aWon ? Colors.primary : Colors.textPrimary, fontSize: 14 }}>{match.parejaA}</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {Array.from({ length: maxSets }).map((_, idx) => {
@@ -124,8 +126,8 @@ function MatchCard({ match, highlighted }) {
         </View>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsB} {match.setsB > match.setsA ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: '700', color: Colors.textPrimary, fontSize: 14 }}>{match.parejaB}</Text>
+            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsB} {bWon ? '(W)' : ''}</Text>
+            <Text style={{ fontWeight: bWon ? '900' : '400', color: bWon ? Colors.primary : Colors.textPrimary, fontSize: 14 }}>{match.parejaB}</Text>
           </View>
           <View style={{ flexDirection: 'row', gap: 6 }}>
             {Array.from({ length: maxSets }).map((_, idx) => {
@@ -157,6 +159,8 @@ export default function BeachResultScreen({ route, navigation }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [lastDebug, setLastDebug] = useState(null);
+  const loadStartRef = useRef(Date.now());
 
   // Safety timeout: 180s for OCR-heavy PDFs
   useEffect(() => {
@@ -170,10 +174,9 @@ export default function BeachResultScreen({ route, navigation }) {
   const [showAllRanking, setShowAllRanking] = useState(false);
   const [showAllMatches, setShowAllMatches] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [showSearch, setShowSearch] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [pdfBase64, setPdfBase64] = useState(null);
   const [extractKey, setExtractKey] = useState(0);
-  const [searchAnim] = useState(() => new Animated.Value(0));
   const [ocrProgress, setOcrProgress] = useState(null);
   const searchRef = useRef(null);
 
@@ -194,6 +197,7 @@ export default function BeachResultScreen({ route, navigation }) {
   const handleDataExtracted = useCallback((pages, ocrText) => {
     try {
       const parsed = parseBeachResults(pages, ocrText);
+      setLastDebug(parsed._debug || null);
       if (parsed.partidos.length === 0 && parsed.ranking.length === 0) {
         const isImage = parsed._debug?.totalItems === 0 || parsed._debug?.ocr;
         setError(isImage
@@ -206,7 +210,12 @@ export default function BeachResultScreen({ route, navigation }) {
     } catch (e) {
       setError('Error al procesar: ' + e.message);
     }
-    setLoading(false);
+    const elapsed = Date.now() - loadStartRef.current;
+    if (elapsed < 400) {
+      setTimeout(() => setLoading(false), 400 - elapsed);
+    } else {
+      setLoading(false);
+    }
   }, []);
 
   const handleOcrProgress = useCallback((msg) => {
@@ -227,24 +236,23 @@ export default function BeachResultScreen({ route, navigation }) {
     Linking.openURL(pdfUrl).catch(() => {});
   }, [pdfUrl]);
 
-  const toggleSearch = useCallback(() => {
-    setShowSearch(prev => {
-      const next = !prev;
-      if (next) {
-        setSearchQuery('');
-        Animated.timing(searchAnim, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-      } else {
-        Animated.timing(searchAnim, { toValue: 0, duration: 150, useNativeDriver: true }).start();
-      }
-      return next;
-    });
-  }, [searchAnim]);
+  const handleSearchChange = useCallback((text) => {
+    setSearchQuery(text);
+  }, []);
 
-  useEffect(() => {
-    if (showSearch && searchRef.current) {
-      setTimeout(() => searchRef.current?.focus(), 300);
-    }
-  }, [showSearch]);
+  const handleSearchSubmit = useCallback(() => {
+    Keyboard.dismiss();
+    setShowSearchModal(false);
+  }, []);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+  }, []);
+
+  const openSearchModal = useCallback(() => {
+    setShowSearchModal(true);
+    setTimeout(() => searchRef.current?.focus(), 300);
+  }, []);
 
   const searchLower = searchQuery.toLowerCase().trim();
 
@@ -281,8 +289,9 @@ export default function BeachResultScreen({ route, navigation }) {
     setShowAllRanking(false);
     setShowAllMatches(false);
     setSearchQuery('');
-    setShowSearch(false);
+    setShowSearchModal(false);
     setOcrProgress(null);
+    loadStartRef.current = Date.now();
     setExtractKey(k => k + 1);
   }, []);
 
@@ -321,14 +330,25 @@ export default function BeachResultScreen({ route, navigation }) {
     emptySectionText: { color: Colors.textMuted, fontSize: 14, textAlign: 'center' },
     retryBtn: { marginTop: 20, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: Colors.primary, borderRadius: 12 },
     retryText: { color: '#fff', fontWeight: '700', fontSize: 15 },
-    searchBar: {
-      flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.lg, marginBottom: 16,
-      backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.primary + '60',
-      paddingHorizontal: 12, height: 44,
-    },
-    searchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 8 },
-    searchClear: { padding: 4 },
     searchResultsText: { fontSize: 13, color: Colors.textMuted, fontWeight: '600', marginBottom: 12 },
+    centeredModalWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
+    premiumSearchCard: {
+      width: '100%',
+      maxWidth: 400,
+      borderRadius: Radius.xxl,
+      padding: Spacing.lg,
+      elevation: 10,
+      ...(Platform.OS === 'web'
+        ? { boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }
+        : { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20 }
+      ),
+    },
+    searchModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
+    searchModalTitle: { fontSize: 20, fontWeight: 'bold' },
+    searchModalBody: { maxHeight: 500 },
+    searchFilterPill: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
+    searchModalBtn: { height: 54, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', marginTop: Spacing.md },
+    searchModalBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
   }), [Colors]);
 
   const renderSkeleton = () => (
@@ -387,8 +407,8 @@ export default function BeachResultScreen({ route, navigation }) {
             </TouchableOpacity>
             <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Resultados'}</Text>
             <View style={styles.headerRight}>
-              <TouchableOpacity style={styles.headerBtn} onPress={toggleSearch} activeOpacity={0.7}>
-                <MaterialIcons name={showSearch ? 'search-off' : 'search'} size={22} color={showSearch ? Colors.primary : Colors.textMuted} />
+              <TouchableOpacity style={styles.headerBtn} onPress={openSearchModal} activeOpacity={0.7}>
+                <MaterialIcons name="search" size={22} color={Colors.textMuted} />
               </TouchableOpacity>
               <TouchableOpacity style={styles.headerBtn} onPress={openPDF} activeOpacity={0.7}>
                 <MaterialIcons name="download" size={22} color={Colors.primary} />
@@ -396,29 +416,6 @@ export default function BeachResultScreen({ route, navigation }) {
             </View>
           </View>
           <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
-            {showSearch && (
-              <Animated.View style={[styles.searchBar, {
-                opacity: searchAnim,
-                transform: [{ translateY: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [-10, 0] }) }],
-              }]}>
-                <MaterialIcons name="search" size={18} color={Colors.textMuted} />
-                <TextInput
-                  ref={searchRef}
-                  style={styles.searchInput}
-                  placeholder="Buscar jugador..."
-                  placeholderTextColor={Colors.textMuted}
-                  value={searchQuery}
-                  onChangeText={setSearchQuery}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity style={styles.searchClear} onPress={() => setSearchQuery('')} activeOpacity={0.7}>
-                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                )}
-              </Animated.View>
-            )}
 
             <View style={styles.section}>
               <Text style={styles.heroTitle}>{data?.torneo?.categoria || 'Torneo Voley Playa'}</Text>
@@ -505,14 +502,24 @@ export default function BeachResultScreen({ route, navigation }) {
               </View>
             )}
 
-            {data?._debug ? (
+            {(data?._debug || lastDebug) ? (
               <View style={[{ backgroundColor: '#fef2f2', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#fca5a5', marginHorizontal: Spacing.lg, marginBottom: 24 }]}>
                 <Text style={{ fontSize: 12, color: '#991b1b', fontWeight: '700', marginBottom: 4 }}>Diagnóstico {!hasRanking ? '(sin clasificación)' : ''}</Text>
                 <Text style={{ fontSize: 11, color: '#7f1d1d', fontFamily: 'monospace' }}>
-                  Paginas: {data._debug.pages}, Items: {data._debug.totalItems}, Filas: {data._debug.totalRows}
-                  {'\n'}matchRows: {data._debug.matchRows}, rankingRows: {data._debug.rankingRows}, fallback: {data._debug.fallbackFound}
-                  {data._debug.ocrLines !== undefined ? ('\nOCR: ' + data._debug.ocrLines + ' lineas') : ''}
-                  {data._debug.ocrTextPreview ? ('\nOCR preview: ' + data._debug.ocrTextPreview) : ''}
+                  {(() => {
+                    const d = data?._debug || lastDebug || {};
+                    return [
+                      'Paginas: ' + (d.pages ?? '?'),
+                      'Items: ' + (d.totalItems ?? '?'),
+                      'Filas: ' + (d.totalRows ?? '?'),
+                      'matchRows: ' + (d.matchRows ?? '?'),
+                      'rankingRows: ' + (d.rankingRows ?? '?'),
+                      'fallback: ' + (d.fallbackFound ?? '?'),
+                      d.ocrLines !== undefined ? 'OCR: ' + d.ocrLines + ' lineas' : null,
+                      d.ocrTextPreview ? 'OCR preview: ' + d.ocrTextPreview : null,
+                      d.rowSamples ? '\n--- Filas crudas (3 primeras) ---\n' + d.rowSamples.join('\n\n') : null,
+                    ].filter(Boolean).join('\n');
+                  })()}
                 </Text>
               </View>
             ) : null}
@@ -542,6 +549,49 @@ export default function BeachResultScreen({ route, navigation }) {
           </ScrollView>
         </SafeAreaView>
       )}
+      <Modal visible={showSearchModal} transparent animationType="fade" onRequestClose={() => setShowSearchModal(false)}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowSearchModal(false)} activeOpacity={1} />
+        </View>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
+            <View style={styles.searchModalHeader}>
+              <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Buscar pareja</Text>
+              <TouchableOpacity onPress={() => setShowSearchModal(false)}>
+                <MaterialIcons name="close" size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
+              <View style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}>
+                <MaterialIcons name="search" size={20} color={Colors.primary} />
+                <TextInput
+                  ref={searchRef}
+                  style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 10 }}
+                  placeholder="Buscar pareja..."
+                  placeholderTextColor={Colors.textMuted}
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  onSubmitEditing={handleSearchSubmit}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={handleClearSearch} style={{ padding: 4 }}>
+                    <MaterialIcons name="close" size={16} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <TouchableOpacity
+                style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
+                activeOpacity={0.9}
+                onPress={handleSearchSubmit}
+              >
+                <Text style={styles.searchModalBtnText}>BUSCAR</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

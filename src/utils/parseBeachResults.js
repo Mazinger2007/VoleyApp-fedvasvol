@@ -161,7 +161,7 @@ function splitRankingRows(rows) {
     // ALWAYS add to matchRows — every row is a match candidate
     const matchItems = splitIdx > 0 ? items.slice(0, splitIdx) : items;
     const matchTexts = mergeItems(matchItems);
-    matchRows.push({ ...row, cells: matchTexts, cellTexts: matchTexts });
+    matchRows.push({ ...row, items: matchItems, cells: matchTexts, cellTexts: matchTexts });
 
     // If ranking detected at end of match row, add to rankingRows (NOT re-merged)
     if (splitIdx > 0) {
@@ -253,98 +253,51 @@ function extractByeMatch(texts) {
   };
 }
 
-function extractMatchFromRow(row) {
-  // Use raw items (unmerged) for reliable column detection
-  const items = (row.items || []).filter(i => i.text.trim().length > 0);
-  items.sort((a, b) => a.x - b.x);
-  const texts = items.map(i => i.text.trim());
-
-  // Pattern: [matchNum,] hora, pista, fase, referencia, parejaA, parejaB, setsA, setsB, set1A, set1B, set2A, set2B, [set3A, set3B]
-  // Find hora: standalone "19:00" or merged "80 19:00"
-  const horaIdx = texts.findIndex(t => /\b\d{1,2}:\d{2}\b/.test(t));
-  if (horaIdx < 0) return extractByeMatch(texts);
-  const horaMatch = texts[horaIdx].match(/(\d{1,2}:\d{2})/);
-  const hora = horaMatch[1];
-
-  // Extract match number if present before hora
-  let partido = 0;
-  const numBefore = horaIdx > 0 ? texts[horaIdx - 1].match(/^(\d+)$/) : null;
-  if (numBefore) {
-    partido = parseInt(numBefore[1], 10);
-  } else {
-    const mergedPrefix = texts[horaIdx].match(/^(\d+)\s+\d{1,2}:\d{2}/);
-    if (mergedPrefix) partido = parseInt(mergedPrefix[1], 10);
-  }
-
-  let h = horaIdx + 1;
-  // pista: standalone number, or first part of merged cell like "1 1/2"
+function extractNoTimeMatch(texts) {
+  if (texts.length < 4) return null;
+  const partido = parseInt(texts[0], 10);
+  if (isNaN(partido) || partido < 1) return null;
+  let h = 1;
   let pista = '';
-  if (h < texts.length) {
-    const m = texts[h].match(/^(\d+)(?:\s|$)/);
-    if (m) pista = m[1];
-    if (/^\d+$/.test(texts[h])) h++;
+  if (h < texts.length && /^\d{1,2}$/.test(texts[h]) && !texts[h].includes('/') && !texts[h].includes('-')) {
+    pista = texts[h]; h++;
   }
-  const fase = h < texts.length && texts[h].includes('/') ? texts[h++] : '';
-  const referencia = h < texts.length && texts[h].includes('-') ? texts[h++] : '';
+  const fase = (h < texts.length && texts[h].includes('/')) ? texts[h++] : '';
+  const referencia = (h < texts.length && texts[h].includes('-')) ? texts[h++] : '';
 
-  // Remaining texts: pair names then scores
   let scoreStart = -1;
+  let setsA = 0, setsB = 0;
   for (let i = h; i < texts.length; i++) {
+    const dashMatch = texts[i].match(/^(\d)-(\d)$/);
+    if (dashMatch) {
+      const a = parseInt(dashMatch[1], 10);
+      const b = parseInt(dashMatch[2], 10);
+      if (a >= 0 && a <= 3 && b >= 0 && b <= 3) {
+        scoreStart = i; setsA = a; setsB = b; break;
+      }
+    }
     if (/^\d+$/.test(texts[i])) {
       const v = parseInt(texts[i], 10);
-      if (v >= 0 && v <= 3) {
-        if (i + 1 < texts.length && /^\d+$/.test(texts[i + 1])) {
-          const nextV = parseInt(texts[i + 1], 10);
-          if (nextV >= 0 && nextV <= 3) {
-            scoreStart = i;
-            break;
-          }
-        }
+      if (v >= 0 && v <= 3 && i + 1 < texts.length && /^\d+$/.test(texts[i + 1])) {
+        const nv = parseInt(texts[i + 1], 10);
+        if (nv >= 0 && nv <= 3) { scoreStart = i; setsA = v; setsB = nv; break; }
       }
     }
   }
+  if (scoreStart < 0) return null;
 
-  if (scoreStart < 0) {
-    // BYE match with hora: team names contain BYE, scores may be partial
-    const byeIdx = texts.findIndex(t => /^BYE$/i.test(t));
-    if (byeIdx >= 0) {
-      const teamAText = texts.slice(h, byeIdx).join(' ').trim();
-      const afterBye = texts.slice(byeIdx + 1).filter(t => !/^\d{1,2}\s+[A-Z]/.test(t));
-      const setsNum = afterBye.find(t => /^\d+$/.test(t));
-      return {
-        partido, hora, pista, fase, referencia,
-        parejaA: teamAText ? teamAText.replace(/\s*\/\s*/g, '/') : 'BYE',
-        parejaB: 'BYE',
-        setsA: setsNum ? parseInt(setsNum, 10) : 0, setsB: 0,
-        set1: null, set2: null, set3: null,
-      };
-    }
-    return null;
-  }
-
-  const setsA = parseInt(texts[scoreStart], 10);
-  const setsB = parseInt(texts[scoreStart + 1], 10);
-
-  // Pair names between fixed columns and scores
   const pairTexts = texts.slice(h, scoreStart);
   let parejaA = '', parejaB = '';
 
   if (pairTexts.length === 2) {
-    parejaA = pairTexts[0];
-    parejaB = pairTexts[1];
+    parejaA = pairTexts[0]; parejaB = pairTexts[1];
   } else if (pairTexts.length === 1) {
     const t = pairTexts[0];
     const parts = t.split(/\s{2,}/);
-    if (parts.length >= 2) {
-      parejaA = parts[0];
-      parejaB = parts.slice(1).join(' ');
-    } else {
-      parejaA = t;
-      parejaB = '';
-    }
+    if (parts.length >= 2) { parejaA = parts[0]; parejaB = parts.slice(1).join(' '); }
+    else { parejaA = t; parejaB = ''; }
   } else if (pairTexts.length > 2) {
-    const merged = [];
-    let cur = '';
+    const merged = []; let cur = '';
     for (const pt of pairTexts) {
       if (cur && (cur.endsWith('/') || pt.startsWith('/') || /^[A-ZÑÁÉÍÓÚ][a-záéíóú]/.test(pt))) {
         cur += ' ' + pt;
@@ -354,26 +307,154 @@ function extractMatchFromRow(row) {
       }
     }
     if (cur) merged.push(cur);
-    parejaA = merged[0] || '';
-    parejaB = merged.slice(1).join(' ') || '';
+    parejaA = merged[0] || ''; parejaB = merged.slice(1).join(' ') || '';
   }
 
-  const setNumbers = texts.slice(scoreStart + 2).filter(t => /^\d+$/.test(t)).map(Number);
+  // Collect set scores: expand dash-merged numbers (e.g., "21-19" -> 21, 19)
+  const setNumbers = [];
+  for (const t of texts.slice(scoreStart + (/\d-\d/.test(texts[scoreStart]) ? 1 : 2))) {
+    const dash = t.match(/^(\d+)-(\d+)$/);
+    if (dash) {
+      setNumbers.push(parseInt(dash[1], 10), parseInt(dash[2], 10));
+    } else if (/^\d+$/.test(t)) {
+      setNumbers.push(parseInt(t, 10));
+    }
+  }
   const setData = [];
   for (let si = 0; si + 1 < setNumbers.length && si < 6; si += 2) {
     setData.push({ A: setNumbers[si], B: setNumbers[si + 1] });
   }
 
   return {
-    partido,
-    hora, pista, fase, referencia,
+    partido, hora: null, pista, fase, referencia,
     parejaA: parejaA.replace(/\s*\/\s*/g, '/').trim(),
     parejaB: parejaB.replace(/\s*\/\s*/g, '/').trim(),
     setsA, setsB,
-    set1: setData[0] || null,
-    set2: setData[1] || null,
-    set3: setData[2] || null,
+    set1: setData[0] || null, set2: setData[1] || null, set3: setData[2] || null,
   };
+}
+
+function extractMatchFromRow(row) {
+  // Use raw items (unmerged) for reliable column detection
+  const items = (row.items || []).filter(i => i.text.trim().length > 0);
+  items.sort((a, b) => a.x - b.x);
+  const texts = items.map(i => i.text.trim());
+
+  // Pattern: [matchNum,] hora, pista, fase, referencia, parejaA, parejaB, setsA, setsB, set1A, set1B, set2A, set2B, [set3A, set3B]
+  // Find hora: standalone "19:00" or merged "80 19:00"
+  const horaIdx = texts.findIndex(t => /\b\d{1,2}:\d{2}\b/.test(t));
+  if (horaIdx >= 0) {
+    const horaMatch = texts[horaIdx].match(/(\d{1,2}:\d{2})/);
+    const hora = horaMatch[1];
+
+    let partido = 0;
+    const numBefore = horaIdx > 0 ? texts[horaIdx - 1].match(/^(\d+)$/) : null;
+    if (numBefore) {
+      partido = parseInt(numBefore[1], 10);
+    } else {
+      const mergedPrefix = texts[horaIdx].match(/^(\d+)\s+\d{1,2}:\d{2}/);
+      if (mergedPrefix) partido = parseInt(mergedPrefix[1], 10);
+    }
+
+    let h = horaIdx + 1;
+    let pista = '';
+    if (h < texts.length) {
+      const m = texts[h].match(/^(\d+)(?:\s|$)/);
+      if (m) pista = m[1];
+      if (/^\d+$/.test(texts[h])) h++;
+    }
+    const fase = h < texts.length && texts[h].includes('/') ? texts[h++] : '';
+    const referencia = h < texts.length && texts[h].includes('-') ? texts[h++] : '';
+
+    let scoreStart = -1;
+    let setsA = 0, setsB = 0;
+    for (let i = h; i < texts.length; i++) {
+      const dashMatch = texts[i].match(/^(\d)-(\d)$/);
+      if (dashMatch) {
+        const a = parseInt(dashMatch[1], 10);
+        const b = parseInt(dashMatch[2], 10);
+        if (a >= 0 && a <= 3 && b >= 0 && b <= 3) {
+          scoreStart = i; setsA = a; setsB = b; break;
+        }
+      }
+      if (/^\d+$/.test(texts[i])) {
+        const v = parseInt(texts[i], 10);
+        if (v >= 0 && v <= 3 && i + 1 < texts.length && /^\d+$/.test(texts[i + 1])) {
+          const nv = parseInt(texts[i + 1], 10);
+          if (nv >= 0 && nv <= 3) { scoreStart = i; setsA = v; setsB = nv; break; }
+        }
+      }
+    }
+
+    if (scoreStart < 0) {
+      const byeIdx = texts.findIndex(t => /^BYE$/i.test(t));
+      if (byeIdx >= 0) {
+        const teamAText = texts.slice(h, byeIdx).join(' ').trim();
+        const afterBye = texts.slice(byeIdx + 1).filter(t => !/^\d{1,2}\s+[A-Z]/.test(t));
+        const setsNum = afterBye.find(t => /^\d+$/.test(t));
+        return {
+          partido, hora, pista, fase, referencia,
+          parejaA: teamAText ? teamAText.replace(/\s*\/\s*/g, '/') : 'BYE',
+          parejaB: 'BYE',
+          setsA: setsNum ? parseInt(setsNum, 10) : 0, setsB: 0,
+          set1: null, set2: null, set3: null,
+        };
+      }
+      return null;
+    }
+
+    const pairTexts = texts.slice(h, scoreStart);
+    let parejaA = '', parejaB = '';
+
+    if (pairTexts.length === 2) {
+      parejaA = pairTexts[0]; parejaB = pairTexts[1];
+    } else if (pairTexts.length === 1) {
+      const t = pairTexts[0];
+      const parts = t.split(/\s{2,}/);
+      if (parts.length >= 2) { parejaA = parts[0]; parejaB = parts.slice(1).join(' '); }
+      else { parejaA = t; parejaB = ''; }
+    } else if (pairTexts.length > 2) {
+      const merged = []; let cur = '';
+      for (const pt of pairTexts) {
+        if (cur && (cur.endsWith('/') || pt.startsWith('/') || /^[A-ZÑÁÉÍÓÚ][a-záéíóú]/.test(pt))) {
+          cur += ' ' + pt;
+        } else {
+          if (cur) merged.push(cur);
+          cur = pt;
+        }
+      }
+      if (cur) merged.push(cur);
+      parejaA = merged[0] || ''; parejaB = merged.slice(1).join(' ') || '';
+    }
+
+    // Collect set scores: expand dash-merged numbers
+    const setNumbers = [];
+    const scoreEndOffset = /\d-\d/.test(texts[scoreStart]) ? 1 : 2;
+    for (const t of texts.slice(scoreStart + scoreEndOffset)) {
+      const dash = t.match(/^(\d+)-(\d+)$/);
+      if (dash) {
+        setNumbers.push(parseInt(dash[1], 10), parseInt(dash[2], 10));
+      } else if (/^\d+$/.test(t)) {
+        setNumbers.push(parseInt(t, 10));
+      }
+    }
+    const setData = [];
+    for (let si = 0; si + 1 < setNumbers.length && si < 6; si += 2) {
+      setData.push({ A: setNumbers[si], B: setNumbers[si + 1] });
+    }
+
+    return {
+      partido, hora, pista, fase, referencia,
+      parejaA: parejaA.replace(/\s*\/\s*/g, '/').trim(),
+      parejaB: parejaB.replace(/\s*\/\s*/g, '/').trim(),
+      setsA, setsB,
+      set1: setData[0] || null, set2: setData[1] || null, set3: setData[2] || null,
+    };
+  }
+
+  const byeMatch = extractByeMatch(texts);
+  if (byeMatch) return byeMatch;
+  return extractNoTimeMatch(texts);
 }
 
 
@@ -500,6 +581,98 @@ function bruteForceRanking(pages) {
   }
   ranking.sort((a, b) => a.posicion - b.posicion);
   return ranking;
+}
+
+
+// === COLUMNAR PARSER (for multi-column table layouts) ===
+// Some PDFs arrange matches as vertical columns rather than horizontal rows.
+// Each y-layer contains one data field for ALL matches (e.g., all match numbers,
+// all times, all courts, etc.) at different x-positions.
+
+function columnarParse(pages) {
+  const allItems = [];
+  for (const page of pages) {
+    for (const item of page.items || []) {
+      allItems.push({ x: item.x, y: item.y, text: item.text, w: item.w || 0 });
+    }
+  }
+  if (allItems.length === 0) return null;
+
+  // 1) Cluster items by x-position (column boundaries).
+  // Sort by x, group consecutive items where gap ≤ 6px.
+  const xSorted = [...allItems].sort((a, b) => a.x - b.x);
+  const xClusters = [];
+  let curCluster = null;
+  for (const it of xSorted) {
+    if (!curCluster || it.x - curCluster.x > 6) {
+      curCluster = { x: it.x, items: [] };
+      xClusters.push(curCluster);
+    }
+    curCluster.items.push(it);
+  }
+
+  // 2) For each x-cluster (column), sort items by y descending,
+  //    group into y-layers, merge text within each y-layer.
+  const columns = [];
+  for (const cluster of xClusters) {
+    cluster.items.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > Y_TOLERANCE) return b.y - a.y;
+      return a.x - b.x;
+    });
+
+    const yLayers = [];
+    let curLayer = null;
+    for (const it of cluster.items) {
+      if (!curLayer || Math.abs(it.y - curLayer.y) > Y_TOLERANCE) {
+        curLayer = { y: it.y, texts: [] };
+        yLayers.push(curLayer);
+      }
+      // Merge adjacent items close in x or with slash continuations
+      if (curLayer.texts.length > 0) {
+        const last = curLayer.texts[curLayer.texts.length - 1];
+        if (last.endsWith('/') || it.text.startsWith('/') || it.x - (curLayer.lastX || it.x) <= X_CELL_GAP) {
+          curLayer.texts[curLayer.texts.length - 1] += ' ' + it.text;
+          curLayer.lastX = it.x + (it.w || 0);
+          continue;
+        }
+      }
+      curLayer.texts.push(it.text);
+      curLayer.lastX = it.x + (it.w || 0);
+    }
+
+    const texts = yLayers.map(l => l.texts.join(' ')).filter(t => t.length > 0);
+    // Accept columns with a hora-like token or with at least 6 non-empty texts
+    const hasHora = texts.some(t => /\d{1,2}:\d{2}/.test(t));
+    if (hasHora && texts.length >= 6) {
+      columns.push({ x: cluster.x, texts });
+    }
+  }
+
+  if (columns.length === 0) return null;
+
+  // 3) Parse each column's texts as a match row
+  const matches = [];
+  for (const col of columns) {
+    const fakeRow = { items: col.texts.map((t, i) => ({ x: i, text: t, w: 0 })) };
+    const match = extractMatchFromRow(fakeRow);
+    if (match) {
+      if (!match.partido) match.partido = matches.length + 1;
+      matches.push(match);
+    }
+  }
+
+  return matches;
+}
+
+function detectColumnarLayout(layers, maxRows = 10) {
+  let wideCount = 0;
+  const counts = [];
+  for (let i = 0; i < Math.min(layers.length, maxRows); i++) {
+    const n = (layers[i].items || []).length;
+    counts.push(n);
+    if (n >= 10) wideCount++;
+  }
+  return wideCount >= 3;
 }
 
 
@@ -731,44 +904,58 @@ export function parseBeachResults(pages, ocrText) {
   const torneo = extractTournamentInfo(allRows);
   const { matchRows, rankingRows } = splitRankingRows(allRows);
 
-  const partidos = [];
+  let partidos = [];
+  let ranking = [];
   const fallbackRanking = [];
+  let usedColumnar = false;
 
-  // Parse each match row
-  for (const row of matchRows) {
-    const match = extractMatchFromRow(row);
-    if (match) {
-      if (!match.partido) match.partido = partidos.length + 1;
-      partidos.push(match);
-    }
+  // Detect columnar layout: if the first rows have many items (10+)
+  const isColumnar = detectColumnarLayout(allRows);
 
-    // Fallback: extract ranking from original items by scanning ALL positions
-    // This catches ranking even if splitRankingRows didn't split this row
-    const rankingInfo = findRankingInItems(row.items);
-    if (rankingInfo) {
-      fallbackRanking.push({ posicion: rankingInfo.pos, pareja: rankingInfo.pareja.replace(/\s*\/\s*/g, '/') });
+  if (isColumnar) {
+    const colMatches = columnarParse(pages);
+    if (colMatches && colMatches.length > 3) {
+      partidos = colMatches;
+      usedColumnar = true;
     }
   }
 
-  // Parse ranking rows (right side after split)
-  const ranking = extractRanking(rankingRows);
+  if (!usedColumnar) {
+    // Parse each match row
+    for (const row of matchRows) {
+      const match = extractMatchFromRow(row);
+      if (match) {
+        if (!match.partido) match.partido = partidos.length + 1;
+        partidos.push(match);
+      }
 
-  // Merge: deduplicate by position, fallback fills gaps the split might have missed
-  const seen = new Set(ranking.map(r => r.posicion));
-  for (const r of fallbackRanking) {
-    if (!seen.has(r.posicion)) {
-      ranking.push(r);
-      seen.add(r.posicion);
+      // Fallback: extract ranking from original items
+      const rankingInfo = findRankingInItems(row.items);
+      if (rankingInfo) {
+        fallbackRanking.push({ posicion: rankingInfo.pos, pareja: rankingInfo.pareja.replace(/\s*\/\s*/g, '/') });
+      }
     }
-  }
 
-  // Last resort: brute force scan of all raw items, independent of row splitting
-  if (ranking.length === 0) {
-    const brute = bruteForceRanking(pages);
-    for (const r of brute) {
+    // Parse ranking rows (right side after split)
+    ranking = extractRanking(rankingRows);
+
+    // Merge: deduplicate by position
+    const seen = new Set(ranking.map(r => r.posicion));
+    for (const r of fallbackRanking) {
       if (!seen.has(r.posicion)) {
         ranking.push(r);
         seen.add(r.posicion);
+      }
+    }
+
+    // Last resort: brute force scan
+    if (ranking.length === 0) {
+      const brute = bruteForceRanking(pages);
+      for (const r of brute) {
+        if (!seen.has(r.posicion)) {
+          ranking.push(r);
+          seen.add(r.posicion);
+        }
       }
     }
   }
@@ -779,7 +966,12 @@ export function parseBeachResults(pages, ocrText) {
   // Diagnostics
   const totalItems = pages.reduce((s, p) => s + (p.items || []).length, 0);
   const totalRows = allRows.length;
-  const _debug = { pages: pages.length, totalItems, totalRows, matchRows: matchRows.length, rankingRows: rankingRows.length, fallbackFound: fallbackRanking.length };
+  const rowSamples = (usedColumnar ? [] : matchRows).slice(0, 3).map(r => {
+    const raw = (r.items || []).map(i => i.text.trim()).filter(Boolean).join(' | ');
+    const merged = (r.cells || []).map(c => c.text || c).join(' | ');
+    return raw + '  =>  ' + merged;
+  });
+  const _debug = { pages: pages.length, totalItems, totalRows, matchRows: matchRows.length, rankingRows: rankingRows.length, fallbackFound: fallbackRanking.length, columnar: usedColumnar, detectedColumnar: isColumnar, rowSamples };
 
   return { torneo, partidos, ranking, _debug };
 }

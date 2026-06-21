@@ -4,7 +4,7 @@
 // La navegación principal usa un pager deslizable y una barra inferior fija.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Animated, Platform, TouchableOpacity } from 'react-native';
+import { StyleSheet, View, Animated, Platform, TouchableOpacity, AppState } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -35,6 +35,8 @@ import LoadingView from './src/components/LoadingView';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
 import { initTeamsData } from './src/constants/teamColors';
+import { checkForNewNews } from './src/services/newsNotificationService';
+import NotificationBanner from './src/components/NotificationBanner';
 
 // load time, before any React tree renders. This means getCachedLogoColorSync
 // will return instant results for already-seen URLs.
@@ -168,12 +170,44 @@ function AppContent({ fontsLoaded }) {
   const { colors: Colors, isDark, animColors, isAppReady } = useTheme();
   const safeBgColor = animColors?.background || Colors.background;
   const isUiReady = isAppReady && fontsLoaded;
+  const appStartRef = useRef(Date.now());
+  const [showLoader, setShowLoader] = useState(true);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (Platform.OS === 'android') {
       NavigationBar.setStyle(isDark ? 'light' : 'dark');
     }
   }, [isDark]);
+
+  // Keep global loader visible for at least 600ms to avoid flash of empty content
+  useEffect(() => {
+    if (isUiReady) {
+      const elapsed = Date.now() - appStartRef.current;
+      const delay = Math.max(0, 600 - elapsed);
+      const timer = setTimeout(() => setShowLoader(false), delay);
+      return () => clearTimeout(timer);
+    }
+  }, [isUiReady]);
+
+  // Fade navigator in smoothly instead of snapping
+  useEffect(() => {
+    Animated.timing(fadeAnim, {
+      toValue: isUiReady ? 1 : 0,
+      duration: 350,
+      useNativeDriver: true,
+    }).start();
+  }, [isUiReady, fadeAnim]);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkForNewNews();
+      }
+    });
+
+    return () => sub.remove();
+  }, []);
 
   return (
     <SafeAreaProvider>
@@ -196,8 +230,8 @@ function AppContent({ fontsLoaded }) {
           }}
         >
           {/* We keep the navigator ALWAYS rendered so it can mount children (data fetching)
-              but we hide it until everything is ready to avoid jumping/partial rendering. */}
-          <View style={{ flex: 1, opacity: isUiReady ? 1 : 0 }}>
+              but we fade it in smoothly once everything is ready. */}
+          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
             <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
               <Stack.Screen name="MainTabs" component={MainTabs} />
               <Stack.Screen name="League" component={LeagueScreen} />
@@ -210,11 +244,14 @@ function AppContent({ fontsLoaded }) {
               <Stack.Screen name="PostDetail" component={PostDetailScreen} />
               <Stack.Screen name="BeachResult" component={BeachResultScreen} />
             </Stack.Navigator>
-          </View>
+          </Animated.View>
         </NavigationContainer>
 
+        {/* Notification Banner */}
+        <NotificationBanner />
+
         {/* Global Full-Screen Loader */}
-        {!isUiReady && (
+        {showLoader && (
           <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
             <LoadingView message="Cargando ligas y torneos..." />
           </View>

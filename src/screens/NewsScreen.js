@@ -1,11 +1,16 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Animated } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Keyboard, Dimensions, Animated, PanResponder } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { fetchAndParse, URLS } from '../utils/htmlParser';
-import { Spacing } from '../styles/theme';
+import { Spacing, Radius } from '../styles/theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { checkForNewNews } from '../services/newsNotificationService';
 
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+const RECENT_SEARCHES_KEY = '@news_recent_searches';
 
 const DISCIPLINE_OPTIONS = [
   { value: '', label: '– Sin especificar –' },
@@ -87,19 +92,21 @@ export default function NewsScreen({ navigation }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const searchTimer = useRef(null);
+  const [recentSearches, setRecentSearches] = useState([]);
+  const [zoomImageUrl, setZoomImageUrl] = useState(null);
+  const zoomAnim = useRef(new Animated.Value(1)).current;
+  const panAnim = useRef(new Animated.ValueXY()).current;
+  const scaleRef = useRef(1);
+  const panRef = useRef({ x: 0, y: 0 });
+  const panBaseRef = useRef({ x: 0, y: 0 });
+  const lastTapRef = useRef(0);
+  const lastPinchRef = useRef({ dist: 0, scale: 1 });
+  const pinchTrackingRef = useRef(false);
+  const PAN_SENSITIVITY = 1.8;
   const searchInputRef = useRef(null);
-  const searchAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    Animated.timing(searchAnim, {
-      toValue: showSearch ? 1 : 0,
-      duration: 200,
-      useNativeDriver: true,
-    }).start();
-  }, [showSearch, searchAnim]);
+  const searchTimer = useRef(null);
   const [filters, setFilters] = useState({
     date_from: '',
     date_to: '',
@@ -143,11 +150,20 @@ export default function NewsScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
+    if (page === 1 && !filterParams.title && !filterParams.date_from) {
+      checkForNewNews();
+    }
   }, [buildUrl]);
 
   useEffect(() => {
     setIsAppReady(true);
     fetchPosts(1, {});
+    (async () => {
+      try {
+        const saved = await AsyncStorage.getItem(RECENT_SEARCHES_KEY);
+        if (saved) setRecentSearches(JSON.parse(saved));
+      } catch {}
+    })();
   }, [setIsAppReady, fetchPosts]);
 
   const applySearch = useCallback((query) => {
@@ -165,19 +181,137 @@ export default function NewsScreen({ navigation }) {
     searchTimer.current = setTimeout(() => applySearch(text), 400);
   }, [applySearch]);
 
-  const toggleSearch = useCallback(() => {
-    setShowSearch(prev => {
-      if (prev) {
-        const hadQuery = appliedFilters.current.title !== '';
-        setSearchQuery('');
-        if (searchTimer.current) clearTimeout(searchTimer.current);
-        if (hadQuery) applySearch('');
-      } else {
-        setTimeout(() => searchInputRef.current?.focus(), 300);
-      }
-      return !prev;
-    });
+  const saveRecentSearch = useCallback((query) => {
+    if (!query.trim()) return;
+    const updated = [query, ...recentSearches.filter(s => s !== query)].slice(0, 8);
+    setRecentSearches(updated);
+    try {
+      AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(updated));
+    } catch {}
+  }, [recentSearches]);
+
+  const handleSearchSubmit = useCallback(() => {
+    applySearch(searchQuery);
+    saveRecentSearch(searchQuery);
+    Keyboard.dismiss();
+    setShowSearchModal(false);
+  }, [applySearch, saveRecentSearch, searchQuery]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+    applySearch('');
   }, [applySearch]);
+
+  const handleRecentPress = useCallback((query) => {
+    setSearchQuery(query);
+    applySearch(query);
+    Keyboard.dismiss();
+    setShowSearchModal(false);
+  }, [applySearch]);
+
+  const getDistance = useCallback((touches) => {
+    if (!touches || touches.length < 2) return 0;
+    const dx = touches[0].pageX - touches[1].pageX;
+    const dy = touches[0].pageY - touches[1].pageY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }, []);
+
+  const zoomPanResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (e, g) => {
+      return scaleRef.current > 1 || e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2;
+    },
+    onStartShouldSetPanResponderCapture: () => false,
+    onMoveShouldSetPanResponderCapture: (e, g) => {
+      return scaleRef.current > 1 || e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2;
+    },
+    onPanResponderGrant: (e, _g) => {
+      panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
+      pinchTrackingRef.current = false;
+    },
+    onPanResponderMove: (e, gestureState) => {
+      const touches = e.nativeEvent.touches;
+      const multi = (touches?.length >= 2) || gestureState.numberActiveTouches >= 2;
+      if (multi) {
+        let dist = 0;
+        if (touches?.length >= 2) dist = getDistance(touches);
+        if (dist > 0) {
+          if (!pinchTrackingRef.current) {
+            pinchTrackingRef.current = true;
+            lastPinchRef.current = { dist, scale: scaleRef.current };
+          } else {
+            const ratio = dist / lastPinchRef.current.dist;
+            const damped = 1 + (ratio - 1) * 0.5;
+            const newScale = Math.max(1, Math.min(4, lastPinchRef.current.scale * damped));
+            scaleRef.current = newScale;
+            zoomAnim.setValue(newScale);
+            lastPinchRef.current = { dist, scale: newScale };
+          }
+        }
+      } else {
+        pinchTrackingRef.current = false;
+        if (scaleRef.current > 1) {
+          const s = scaleRef.current;
+          const maxPx = (SCREEN_WIDTH * (s - 1)) / 2;
+          const maxPy = Math.max(0, (SCREEN_HEIGHT * 0.8 * s - SCREEN_HEIGHT) / 2);
+          let tx = Math.max(-maxPx, Math.min(maxPx, panBaseRef.current.x + PAN_SENSITIVITY * gestureState.dx / s));
+          let ty = Math.max(-maxPy, Math.min(maxPy, panBaseRef.current.y + PAN_SENSITIVITY * gestureState.dy / s));
+          panRef.current = { x: tx, y: ty };
+          panAnim.x.setValue(tx);
+          panAnim.y.setValue(ty);
+        }
+      }
+    },
+    onPanResponderRelease: () => {
+      pinchTrackingRef.current = false;
+      const s = scaleRef.current;
+      if (s < 1) {
+        scaleRef.current = 1;
+        panRef.current = { x: 0, y: 0 };
+        panBaseRef.current = { x: 0, y: 0 };
+        Animated.parallel([
+          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, bounciness: 4 }),
+          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 4 }),
+        ]).start();
+      } else if (s > 4) {
+        scaleRef.current = 4;
+        Animated.spring(zoomAnim, { toValue: 4, useNativeDriver: true, bounciness: 4 }).start();
+      }
+    },
+  })).current;
+
+  const handleImageDoubleTap = useCallback(() => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      if (scaleRef.current > 1.5) {
+        scaleRef.current = 1;
+        panRef.current = { x: 0, y: 0 };
+        panBaseRef.current = { x: 0, y: 0 };
+        Animated.parallel([
+          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, bounciness: 6 }),
+          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 6 }),
+        ]).start();
+      } else {
+        scaleRef.current = 2.5;
+        Animated.spring(zoomAnim, { toValue: 2.5, useNativeDriver: true, bounciness: 6 }).start();
+      }
+    }
+    lastTapRef.current = now;
+  }, []);
+
+  const closeZoom = useCallback(() => {
+    scaleRef.current = 1;
+    panRef.current = { x: 0, y: 0 };
+    panBaseRef.current = { x: 0, y: 0 };
+    zoomAnim.setValue(1);
+    panAnim.setValue({ x: 0, y: 0 });
+    setZoomImageUrl(null);
+  }, [zoomAnim, panAnim]);
+
+  const openSearchModal = useCallback(() => {
+    setShowSearchModal(true);
+    setTimeout(() => searchInputRef.current?.focus(), 300);
+  }, []);
 
   const handlePageChange = useCallback((page) => {
     if (page < 1 || page > totalPages) return;
@@ -262,21 +396,6 @@ export default function NewsScreen({ navigation }) {
     loadingWrap: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
     emptyText: { color: Colors.textMuted, fontSize: 16, fontWeight: '500', textAlign: 'center' },
-    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-    modalContent: {
-      backgroundColor: Colors.surface,
-      borderTopLeftRadius: 20, borderTopRightRadius: 20,
-      paddingBottom: Platform.OS === 'ios' ? 40 : 24,
-      maxHeight: '85%',
-    },
-    modalHeader: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingHorizontal: 20, paddingVertical: 16,
-      borderBottomWidth: 1, borderBottomColor: Colors.border,
-    },
-    modalTitle: { fontSize: 17, fontWeight: '900', color: Colors.textPrimary },
-    modalClose: { padding: 4 },
-    modalScroll: { paddingHorizontal: 20, paddingTop: 16 },
     filterLabel: { fontSize: 12, fontWeight: '700', color: Colors.textMuted, marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
     filterInput: {
       backgroundColor: Colors.background,
@@ -299,11 +418,6 @@ export default function NewsScreen({ navigation }) {
     filterActions: {
       flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16,
     },
-    filterApplyBtn: {
-      flex: 1, height: 48, borderRadius: 12, backgroundColor: Colors.primary,
-      justifyContent: 'center', alignItems: 'center',
-    },
-    filterApplyText: { color: '#fff', fontWeight: '700', fontSize: 15 },
     filterClearBtn: {
       height: 48, borderRadius: 12, borderWidth: 1, borderColor: Colors.border,
       justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20,
@@ -313,12 +427,36 @@ export default function NewsScreen({ navigation }) {
       borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.surface,
       paddingHorizontal: Spacing.md,
     },
+    centeredModalWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
+    premiumSearchCard: {
+      width: '100%',
+      maxWidth: 400,
+      borderRadius: Radius.xxl,
+      padding: Spacing.lg,
+      elevation: 10,
+      ...(Platform.OS === 'web'
+        ? { boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }
+        : { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20 }
+      ),
+    },
+    searchModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
+    searchModalTitle: { fontSize: 20, fontWeight: 'bold' },
+    searchModalBody: { maxHeight: 500 },
+    searchFilterPill: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
+    searchModalBtn: { height: 54, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', marginTop: Spacing.md },
+    searchModalBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
+    zoomOverlay: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+    zoomClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
+    zoomBody: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    zoomImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
   }), [Colors]);
 
   const renderPost = useCallback(({ item }) => (
     <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={() => handlePostPress(item)}>
       {item.image ? (
-        <Image source={{ uri: item.image }} style={styles.cardImage} resizeMode="cover" />
+        <TouchableOpacity activeOpacity={0.9} onPress={() => setZoomImageUrl(item.image)}>
+          <Image source={{ uri: item.image }} style={styles.cardImage} resizeMode="cover" />
+        </TouchableOpacity>
       ) : null}
       <View style={styles.cardBody}>
         {item.featured ? (
@@ -382,40 +520,12 @@ export default function NewsScreen({ navigation }) {
         </View>
         <TouchableOpacity
           style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
-          onPress={toggleSearch}
+          onPress={openSearchModal}
           activeOpacity={0.7}
         >
-          <MaterialIcons name={showSearch ? 'close' : 'search'} size={22} color={showSearch ? Colors.primary : Colors.textMuted} />
+          <MaterialIcons name="search" size={22} color={Colors.textMuted} />
         </TouchableOpacity>
       </View>
-      <Animated.View style={{
-        opacity: searchAnim,
-        transform: [{ translateY: searchAnim.interpolate({ inputRange: [0, 1], outputRange: [-16, 0] }) }],
-        overflow: 'hidden',
-      }}>
-        <View style={{
-          flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.md, marginBottom: Spacing.sm,
-          backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.primary + '60',
-          paddingHorizontal: 12, height: 44,
-        }}>
-          <MaterialIcons name="search" size={18} color={Colors.textMuted} />
-          <TextInput
-            ref={searchInputRef}
-            style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 8 }}
-            placeholder="Buscar por título..."
-            placeholderTextColor={Colors.textMuted}
-            value={searchQuery}
-            onChangeText={handleSearchChange}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          {searchQuery.length > 0 ? (
-            <TouchableOpacity onPress={() => { setSearchQuery(''); if (searchTimer.current) clearTimeout(searchTimer.current); applySearch(''); }} activeOpacity={0.7}>
-              <MaterialIcons name="close" size={18} color={Colors.textMuted} />
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      </Animated.View>
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -439,67 +549,152 @@ export default function NewsScreen({ navigation }) {
           <Text style={styles.emptyText}>No hay publicaciones</Text>
         </View>
       )}
-      <Modal visible={showFilters} transparent animationType="slide" onRequestClose={() => setShowFilters(false)}>
-        <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setShowFilters(false)}>
-          <TouchableOpacity activeOpacity={1} onPress={() => {}}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Filtros</Text>
-                <TouchableOpacity style={styles.modalClose} onPress={() => setShowFilters(false)} activeOpacity={0.7}>
-                  <MaterialIcons name="close" size={24} color={Colors.textMuted} />
-                </TouchableOpacity>
-              </View>
-              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-                <Text style={styles.filterLabel}>Fecha (Desde)</Text>
-                <TextInput
-                  style={styles.filterInput}
-                  placeholder="dd/mm/aaaa"
-                  placeholderTextColor={Colors.textMuted}
-                  value={filters.date_from}
-                  onChangeText={(v) => setFilters(f => ({ ...f, date_from: v }))}
-                  autoCapitalize="none"
-                />
-                <Text style={styles.filterLabel}>Fecha (Hasta)</Text>
-                <TextInput
-                  style={styles.filterInput}
-                  placeholder="dd/mm/aaaa"
-                  placeholderTextColor={Colors.textMuted}
-                  value={filters.date_to}
-                  onChangeText={(v) => setFilters(f => ({ ...f, date_to: v }))}
-                  autoCapitalize="none"
-                />
-                {renderFilterSelect('Disciplina', 'discipline', DISCIPLINE_OPTIONS, filters.discipline, (v) => setFilters(f => ({ ...f, discipline: v })))}
-                {renderFilterSelect('Destacada', 'featured', FEATURED_OPTIONS, filters.featured, (v) => setFilters(f => ({ ...f, featured: v })))}
-                <Text style={styles.filterLabel}>Etiqueta</Text>
-                <TextInput
-                  style={styles.filterInput}
-                  placeholder="– Sin especificar –"
-                  placeholderTextColor={Colors.textMuted}
-                  value={filters.tag}
-                  onChangeText={(v) => setFilters(f => ({ ...f, tag: v }))}
-                  autoCapitalize="none"
-                />
-                <Text style={styles.filterLabel}>Título</Text>
-                <TextInput
-                  style={styles.filterInput}
-                  placeholder="Buscar por título..."
-                  placeholderTextColor={Colors.textMuted}
-                  value={filters.title}
-                  onChangeText={(v) => setFilters(f => ({ ...f, title: v }))}
-                  autoCapitalize="none"
-                />
-              </ScrollView>
+      <Modal visible={showFilters} transparent animationType="fade" onRequestClose={() => setShowFilters(false)}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowFilters(false)} activeOpacity={1} />
+        </View>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
+            <View style={styles.searchModalHeader}>
+              <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Filtros</Text>
+              <TouchableOpacity onPress={() => setShowFilters(false)}>
+                <MaterialIcons name="close" size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
+              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Desde)</Text>
+              <TextInput
+                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                placeholder="dd/mm/aaaa"
+                placeholderTextColor={Colors.textMuted}
+                value={filters.date_from}
+                onChangeText={(v) => setFilters(f => ({ ...f, date_from: v }))}
+                autoCapitalize="none"
+              />
+              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Hasta)</Text>
+              <TextInput
+                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                placeholder="dd/mm/aaaa"
+                placeholderTextColor={Colors.textMuted}
+                value={filters.date_to}
+                onChangeText={(v) => setFilters(f => ({ ...f, date_to: v }))}
+                autoCapitalize="none"
+              />
+              {renderFilterSelect('Disciplina', 'discipline', DISCIPLINE_OPTIONS, filters.discipline, (v) => setFilters(f => ({ ...f, discipline: v })))}
+              {renderFilterSelect('Destacada', 'featured', FEATURED_OPTIONS, filters.featured, (v) => setFilters(f => ({ ...f, featured: v })))}
+              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Etiqueta</Text>
+              <TextInput
+                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                placeholder="– Sin especificar –"
+                placeholderTextColor={Colors.textMuted}
+                value={filters.tag}
+                onChangeText={(v) => setFilters(f => ({ ...f, tag: v }))}
+                autoCapitalize="none"
+              />
+              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Título</Text>
+              <TextInput
+                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                placeholder="Buscar por título..."
+                placeholderTextColor={Colors.textMuted}
+                value={filters.title}
+                onChangeText={(v) => setFilters(f => ({ ...f, title: v }))}
+                autoCapitalize="none"
+              />
               <View style={styles.filterActions}>
                 <TouchableOpacity style={styles.filterClearBtn} onPress={handleClearFilters} activeOpacity={0.7}>
                   <Text style={styles.filterClearText}>Limpiar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.filterApplyBtn} onPress={handleApplyFilters} activeOpacity={0.7}>
-                  <Text style={styles.filterApplyText}>Filtrar</Text>
+                <TouchableOpacity style={[styles.searchModalBtn, { backgroundColor: Colors.primary, flex: 1, marginTop: 0 }]} onPress={handleApplyFilters} activeOpacity={0.9}>
+                  <Text style={styles.searchModalBtnText}>FILTRAR</Text>
                 </TouchableOpacity>
               </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={showSearchModal} transparent animationType="fade" onRequestClose={() => setShowSearchModal(false)}>
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowSearchModal(false)} activeOpacity={1} />
+        </View>
+        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
+          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
+            <View style={styles.searchModalHeader}>
+              <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Buscar noticias</Text>
+              <TouchableOpacity onPress={() => setShowSearchModal(false)}>
+                <MaterialIcons name="close" size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
             </View>
+            <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
+              <View style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}>
+                <MaterialIcons name="search" size={20} color={Colors.primary} />
+                <TextInput
+                  ref={searchInputRef}
+                  style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 10 }}
+                  placeholder="Buscar por título..."
+                  placeholderTextColor={Colors.textMuted}
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  onSubmitEditing={handleSearchSubmit}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={handleClearSearch} style={{ padding: 4 }}>
+                    <MaterialIcons name="close" size={16} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              {recentSearches.length > 0 && (
+                <View style={{ marginTop: Spacing.sm }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.sm }}>
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.textMuted, letterSpacing: 0.5 }}>BÚSQUEDAS RECIENTES</Text>
+                    <TouchableOpacity onPress={() => { setRecentSearches([]); try { AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify([])); } catch {} }}>
+                      <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.primary }}>Limpiar</Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    {recentSearches.map((s, i) => (
+                      <TouchableOpacity
+                        key={i}
+                        style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surfaceAlt, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 16, paddingVertical: 10 }}
+                        onPress={() => handleRecentPress(s)}
+                        activeOpacity={0.7}
+                      >
+                        <MaterialIcons name="history" size={16} color={Colors.textMuted} style={{ marginRight: 6 }} />
+                        <Text style={{ fontSize: 14, color: Colors.textPrimary }}>{s}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
+              <TouchableOpacity
+                style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
+                activeOpacity={0.9}
+                onPress={handleSearchSubmit}
+              >
+                <Text style={styles.searchModalBtnText}>BUSCAR</Text>
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={zoomImageUrl !== null} transparent animationType="fade" statusBarTranslucent onRequestClose={closeZoom}>
+        <View style={styles.zoomOverlay} {...zoomPanResponder.panHandlers}>
+          <TouchableOpacity style={styles.zoomClose} onPress={closeZoom} activeOpacity={0.7}>
+            <MaterialIcons name="close" size={28} color="#fff" />
           </TouchableOpacity>
-        </TouchableOpacity>
+          <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap} style={styles.zoomBody}>
+            <Animated.View style={{ transform: [
+              { translateX: panAnim.x },
+              { translateY: panAnim.y },
+              { scale: zoomAnim },
+            ]}}>
+              {zoomImageUrl ? (
+                <Image source={{ uri: zoomImageUrl }} style={styles.zoomImage} resizeMode="contain" />
+              ) : null}
+            </Animated.View>
+          </TouchableOpacity>
+        </View>
       </Modal>
     </SafeAreaView>
   );

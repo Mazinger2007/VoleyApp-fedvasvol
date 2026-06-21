@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -112,6 +112,26 @@ function getDiffBadgeStyle(value, colors) {
   };
 }
 
+const COLUMN_FULL_NAMES = {
+  points: 'Puntos',
+  played: 'Partidos Jugados',
+  won: 'Partidos Ganados',
+  draw: 'Partidos Empatados',
+  lost: 'Partidos Perdidos',
+  g3: 'Ganados 3-0',
+  g2: 'Ganados 3-1 o 3-2',
+  p1: 'Perdidos 1-3 o 2-3',
+  p0: 'Perdidos 0-3',
+  setsFavor: 'Sets a Favor',
+  setsAgainst: 'Sets en Contra',
+  setsDiff: 'Diferencia de Sets',
+  favor: 'Puntos a Favor',
+  against: 'Puntos en Contra',
+  diff: 'Diferencia de Puntos',
+  ad: 'Average (F/C)',
+  pfpc: 'Average de Puntos (PF/PC)',
+};
+
 function findExactHeaderIndex(headers, ...candidates) {
   const normalizedHeaders = headers.map((header) => normalizeHeader(header).replace(/\s+/g, ''));
   for (const candidate of candidates) {
@@ -126,6 +146,8 @@ export default function RankingTableScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
   const { tableBlock, title, subtitle } = route.params || {};
   const { width: windowWidth } = useWindowDimensions();
+  const [tooltipKey, setTooltipKey] = useState(null);
+  const tooltipTimer = useRef(null);
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
@@ -161,11 +183,30 @@ export default function RankingTableScreen({ route, navigation }) {
   const favorCol = useMemo(() => findExactHeaderIndex(headers, 'pf') >= 0 ? findExactHeaderIndex(headers, 'pf') : findColIndex(headers, 'favor'), [headers]);
   const againstCol = useMemo(() => findExactHeaderIndex(headers, 'pc') >= 0 ? findExactHeaderIndex(headers, 'pc') : findColIndex(headers, 'contra'), [headers]);
   const diffCol = useMemo(() => {
-    const explicit = findExactHeaderIndex(headers, 'dp', 'f/c', 'a/d');
+    const explicit = findExactHeaderIndex(headers, 'dp');
     if (explicit >= 0) return explicit;
     return findColIndex(headers, 'difer');
   }, [headers]);
-  const adCol = useMemo(() => findExactHeaderIndex(headers, 'a/d'), [headers]);
+  const adCol = useMemo(() => {
+    const exact = findExactHeaderIndex(headers, 'a/d', 'f/c');
+    if (exact >= 0) return exact;
+    return findColIndex(headers, 'a/d', 'f/c');
+  }, [headers]);
+  const pfpcCol = useMemo(() => {
+    const exact = findExactHeaderIndex(headers, 'pf/pc');
+    if (exact >= 0) return exact;
+    return findColIndex(headers, 'pf/pc');
+  }, [headers]);
+
+  const hasAdData = useMemo(() => {
+    if (adCol < 0) return false;
+    return rows.some((row) => getCell(row, adCol, '').length > 0);
+  }, [rows, adCol]);
+
+  const adLabel = useMemo(() => {
+    if (adCol >= 0 && hasAdData) return headers[adCol].toUpperCase();
+    return 'F/C';
+  }, [headers, adCol, hasAdData]);
 
   const statColumns = useMemo(() => {
     const columns = [
@@ -184,11 +225,28 @@ export default function RankingTableScreen({ route, navigation }) {
       { key: 'favor', label: 'PF', index: favorCol, tone: 'neutral' },
       { key: 'against', label: 'PC', index: againstCol, tone: 'neutral' },
       { key: 'diff', label: 'DP', index: diffCol, tone: 'diff' },
-      { key: 'ad', label: 'A/D', index: adCol, tone: 'diff' },
+      { key: 'ad', label: adLabel, index: adCol, tone: 'diff' },
+      { key: 'pfpc', label: 'PF/PC', index: pfpcCol, tone: 'diff' },
     ];
 
-    return columns.filter((column) => column.index >= 0);
-  }, [adCol, againstCol, diffCol, drawCol, favorCol, g2Col, g3Col, lostCol, p0Col, p1Col, pjCol, ptsCol, setsAgainstCol, setsDiffCol, setsFavorCol, wonCol]);
+    const filtered = columns.filter((column) => {
+      if (column.index < 0) return false;
+      if (column.key === 'ad' && !hasAdData) return false;
+      return true;
+    });
+
+    if ((adCol < 0 || !hasAdData) && setsFavorCol >= 0 && setsAgainstCol >= 0) {
+      filtered.push({ key: 'ad', label: adLabel, index: setsFavorCol, tone: 'diff', computed: 'fc' });
+    }
+    if (pfpcCol < 0 && favorCol >= 0 && againstCol >= 0) {
+      filtered.push({ key: 'pfpc', label: 'PF/PC', index: favorCol, tone: 'diff', computed: 'pfpc' });
+    }
+
+    return filtered.sort((a, b) => {
+      const order = ['points', 'played', 'won', 'draw', 'lost', 'g3', 'g2', 'p1', 'p0', 'setsFavor', 'setsAgainst', 'setsDiff', 'favor', 'against', 'diff', 'ad', 'pfpc'];
+      return order.indexOf(a.key) - order.indexOf(b.key);
+    });
+  }, [adCol, adLabel, againstCol, diffCol, drawCol, favorCol, g2Col, g3Col, lostCol, p0Col, p1Col, pfpcCol, pjCol, ptsCol, setsAgainstCol, setsDiffCol, setsFavorCol, wonCol, hasAdData]);
 
   const compactMode = statColumns.length >= 10;
   const statColumnWidth = compactMode ? 44 : 58;
@@ -205,19 +263,30 @@ export default function RankingTableScreen({ route, navigation }) {
       position: getCell(row, posCol, String(index + 1)),
       teamName: getCell(row, teamCol, row[1] || row[0] || 'Equipo'),
       values: statColumns.reduce((acc, column) => {
-        const rawValue = getCell(row, column.index, '-');
-        acc[column.key] = column.key === 'diff' || column.key === 'setsDiff' || column.key === 'ad'
-          ? formatDiff(rawValue)
-          : rawValue;
+        if (column.computed === 'fc') {
+          const num = parseInt(getCell(row, setsFavorCol, '0'), 10) || 0;
+          const den = parseInt(getCell(row, setsAgainstCol, '0'), 10) || 0;
+          acc[column.key] = den ? (num / den).toFixed(3) : '-';
+        } else if (column.computed === 'pfpc') {
+          const num = parseInt(getCell(row, favorCol, '0'), 10) || 0;
+          const den = parseInt(getCell(row, againstCol, '0'), 10) || 0;
+          acc[column.key] = den ? (num / den).toFixed(3) : '-';
+        } else {
+          const rawValue = getCell(row, column.index, '-');
+          acc[column.key] = column.key === 'diff' || column.key === 'setsDiff' || column.key === 'ad' || column.key === 'pfpc'
+            ? formatDiff(rawValue)
+            : rawValue;
+        }
         return acc;
       }, {}),
       logo: rowLogos[index] || null,
     })),
-    [posCol, rowLogos, rows, statColumns, teamCol]
+    [posCol, rowLogos, rows, statColumns, setsFavorCol, setsAgainstCol, favorCol, againstCol, teamCol]
   );
 
   const handlePressTeam = (row) => {
-    // Intentar sacar del caché para tener la URL exacta de navegación
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+
     const cached = getTeamFromCache(route.params?.rankingUrl || route.params?.calendarUrl, row.teamName);
     
     navigation.navigate('TeamDetail', {
@@ -289,6 +358,7 @@ export default function RankingTableScreen({ route, navigation }) {
       borderColor: Colors.border,
       backgroundColor: isDark ? 'rgba(30, 41, 59, 0.5)' : Colors.surface,
       overflow: 'hidden',
+      position: 'relative',
       ...Shadow.lg,
     },
     tableScroller: { flexGrow: 0 },
@@ -359,6 +429,25 @@ export default function RankingTableScreen({ route, navigation }) {
     legendText: { color: Colors.textMuted, fontSize: Typography.size.sm },
     footerRight: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
     footerUpdate: { color: Colors.textMuted, fontSize: Typography.size.sm, fontStyle: 'italic' },
+    tooltipWrap: {
+      position: 'absolute',
+      top: 0, left: 0, right: 0,
+      alignItems: 'center',
+      zIndex: 100,
+      paddingTop: Spacing.sm,
+    },
+    tooltipBubble: {
+      backgroundColor: isDark ? '#334155' : '#1e293b',
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: Radius.md,
+      elevation: 8,
+    },
+    tooltipText: {
+      color: '#ffffff',
+      fontSize: 12,
+      fontWeight: Typography.weight.semiBold,
+    },
     emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xxl, gap: Spacing.md },
     emptyText: { color: Colors.textMuted, fontSize: Typography.size.md },
   }), [Colors, compactMode, posColumnWidth, statColumnWidth, tableWidth, teamColumnWidth]);
@@ -399,15 +488,26 @@ export default function RankingTableScreen({ route, navigation }) {
         </View>
 
         <View style={styles.tableCard}>
+          {tooltipKey ? (
+            <View style={styles.tooltipWrap}>
+              <View style={styles.tooltipBubble}>
+                <Text style={styles.tooltipText}>{COLUMN_FULL_NAMES[tooltipKey] || tooltipKey}</Text>
+              </View>
+            </View>
+          ) : null}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tableScroller} contentContainerStyle={styles.tableInner}>
             <View style={styles.tableInner}>
               <View style={styles.tableHeaderRow}>
                 <View style={styles.cellPos}><Text style={styles.headerLabel}>POS</Text></View>
-                <View style={styles.cellTeam}><Text style={styles.headerLabel}>TEAM</Text></View>
+                <View style={styles.cellTeam}><Text style={styles.headerLabel}>EQUIPO</Text></View>
                 {statColumns.map((column) => (
-                  <View key={column.key} style={styles.cellStat}>
+                  <TouchableOpacity key={column.key} style={styles.cellStat} onPress={() => {
+                    if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
+                    setTooltipKey(column.key);
+                    tooltipTimer.current = setTimeout(() => setTooltipKey(null), 2000);
+                  }}>
                     <Text style={[styles.headerLabel, column.tone === 'primary' && styles.headerLabelPrimary]}>{column.label}</Text>
-                  </View>
+                  </TouchableOpacity>
                 ))}
               </View>
 
