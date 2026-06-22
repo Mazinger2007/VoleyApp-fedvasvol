@@ -136,6 +136,8 @@ export default function BeachListScreen({ route, navigation }) {
   const positionAnim = useRef(new Animated.Value(0)).current;
   const offsetAnim = useRef(new Animated.Value(0)).current;
 
+  const pagerScrollNative = useMemo(() => Animated.add(positionAnim, offsetAnim), [positionAnim, offsetAnim]);
+
   const pagerScrollJS = useRef(new Animated.Value(0)).current;
 
   const onPageScrollHandler = useMemo(() => Animated.event(
@@ -154,7 +156,7 @@ export default function BeachListScreen({ route, navigation }) {
     StatusBar.setBackgroundColor(Colors.background);
   }, [isDark, Colors.background]);
 
-  const tabIndicatorX = Animated.add(positionAnim, offsetAnim).interpolate({
+  const tabIndicatorX = pagerScrollNative.interpolate({
     inputRange: [0, 1],
     outputRange: [0, tabWidth],
   });
