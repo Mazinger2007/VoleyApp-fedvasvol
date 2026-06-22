@@ -25,17 +25,18 @@ function SkeletonBlock({ height, style }) {
 }
 
 
-function MedalCard({ posicion, pareja, gold, silver, bronze }) {
+function MedalCard({ posicion, pareja, gold, silver, bronze, onPress }) {
   const medal = gold ? { color: '#f59e0b', bg: '#fef3c7', icon: 'emoji_events', label: 'Oro', size: 64, circleSize: 64 } :
     silver ? { color: '#94a3b8', bg: '#f1f5f9', icon: 'emoji_events', label: 'Plata', size: 56, circleSize: 56 } :
     { color: '#d97706', bg: '#fff7ed', icon: 'emoji_events', label: 'Bronce', size: 48, circleSize: 48 };
 
   return (
-    <View style={{
-      backgroundColor: medal.bg,
-      borderWidth: 2, borderColor: medal.color, borderRadius: 16, padding: 16,
-      flexDirection: 'row', alignItems: 'center', gap: 16, overflow: 'hidden',
-    }}>
+    <TouchableOpacity onPress={() => onPress?.(posicion, pareja)} activeOpacity={0.7}
+      style={{
+        backgroundColor: medal.bg,
+        borderWidth: 2, borderColor: medal.color, borderRadius: 16, padding: 16,
+        flexDirection: 'row', alignItems: 'center', gap: 16, overflow: 'hidden',
+      }}>
       <View style={{
         width: medal.circleSize, height: medal.circleSize, borderRadius: medal.circleSize / 2,
         backgroundColor: medal.color, justifyContent: 'center', alignItems: 'center',
@@ -48,30 +49,32 @@ function MedalCard({ posicion, pareja, gold, silver, bronze }) {
         </Text>
         <Text style={{ fontSize: 16, fontWeight: '900', color: '#1e293b', marginTop: 2 }}>{pareja}</Text>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
 
-function RankingRow({ posicion, pareja, isLast, highlighted }) {
+function RankingRow({ posicion, pareja, isLast, highlighted, onPress }) {
   const { colors: Colors } = useTheme();
   return (
-    <View style={{
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingVertical: 12, paddingHorizontal: 16,
-      borderBottomWidth: isLast ? 0 : 0.5, borderBottomColor: Colors.border,
-      backgroundColor: highlighted ? Colors.primary + '12' : 'transparent',
-    }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+    <TouchableOpacity onPress={() => onPress?.(posicion, pareja)} activeOpacity={0.6}
+      style={{
+        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        paddingVertical: 12, paddingHorizontal: 16,
+        borderBottomWidth: isLast ? 0 : 0.5, borderBottomColor: Colors.border,
+        backgroundColor: highlighted ? Colors.primary + '12' : 'transparent',
+      }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
         <Text style={{ width: 28, fontWeight: '900', color: Colors.textMuted, fontSize: 15 }}>{posicion}</Text>
-        <Text style={{ fontWeight: highlighted ? '900' : '700', color: Colors.textPrimary, fontSize: 14 }}>{pareja}</Text>
+        <Text style={{ fontWeight: highlighted ? '900' : '700', color: Colors.textPrimary, fontSize: 14, flex: 1 }}>{pareja}</Text>
       </View>
-    </View>
+      <MaterialIcons name="chevron-right" size={18} color={Colors.textMuted} />
+    </TouchableOpacity>
   );
 }
 
 
-function MatchCard({ match, highlighted }) {
+function MatchCard({ match, highlighted, onPress }) {
   const { colors: Colors } = useTheme();
   const allSets = [match.set1, match.set2, match.set3].filter(Boolean);
   const maxSets = Math.max(allSets.length, 3);
@@ -79,12 +82,13 @@ function MatchCard({ match, highlighted }) {
   const bWon = match.setsB > match.setsA;
 
   return (
-    <View style={{
-      backgroundColor: highlighted ? Colors.primary + '08' : Colors.surface,
-      borderRadius: 12, borderWidth: 1,
-      borderColor: highlighted ? Colors.primary + '40' : Colors.border,
-      padding: 16,
-    }}>
+    <TouchableOpacity onPress={() => onPress?.(match)} activeOpacity={0.7}
+      style={{
+        backgroundColor: highlighted ? Colors.primary + '08' : Colors.surface,
+        borderRadius: 12, borderWidth: 1,
+        borderColor: highlighted ? Colors.primary + '40' : Colors.border,
+        padding: 16,
+      }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <View style={{ flexDirection: 'row', gap: 6 }}>
           <Text style={{ fontSize: 10, fontWeight: '900', backgroundColor: Colors.primary, color: '#fff', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' }}>
@@ -148,7 +152,7 @@ function MatchCard({ match, highlighted }) {
           </View>
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -162,7 +166,7 @@ export default function BeachResultScreen({ route, navigation }) {
   const [lastDebug, setLastDebug] = useState(null);
   const loadStartRef = useRef(Date.now());
 
-  // Safety timeout: 180s for OCR-heavy PDFs
+  // Safety timeout for PDF extraction
   useEffect(() => {
     if (!loading) return;
     const timer = setTimeout(() => {
@@ -173,11 +177,11 @@ export default function BeachResultScreen({ route, navigation }) {
   }, [loading]);
   const [showAllRanking, setShowAllRanking] = useState(false);
   const [showAllMatches, setShowAllMatches] = useState(false);
+  const [hideUnplayed, setHideUnplayed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [pdfBase64, setPdfBase64] = useState(null);
   const [extractKey, setExtractKey] = useState(0);
-  const [ocrProgress, setOcrProgress] = useState(null);
   const searchRef = useRef(null);
 
   useEffect(() => {
@@ -194,15 +198,12 @@ export default function BeachResultScreen({ route, navigation }) {
     return () => { cancelled = true; };
   }, [pdfUrl]);
 
-  const handleDataExtracted = useCallback((pages, ocrText) => {
+  const handleDataExtracted = useCallback((pages) => {
     try {
-      const parsed = parseBeachResults(pages, ocrText);
+      const parsed = parseBeachResults(pages);
       setLastDebug(parsed._debug || null);
       if (parsed.partidos.length === 0 && parsed.ranking.length === 0) {
-        const isImage = parsed._debug?.totalItems === 0 || parsed._debug?.ocr;
-        setError(isImage
-          ? 'Este PDF parece ser un documento escaneado (imagen). No contiene texto seleccionable.'
-          : 'No se pudieron extraer datos estructurados de este PDF');
+        setError('No se pudieron extraer datos estructurados de este PDF');
       } else {
         setData(parsed);
         setError(null);
@@ -218,13 +219,8 @@ export default function BeachResultScreen({ route, navigation }) {
     }
   }, []);
 
-  const handleOcrProgress = useCallback((msg) => {
-    setOcrProgress(msg);
-  }, []);
-
   const handleExtractError = useCallback((msg) => {
     try {
-      setOcrProgress(null);
       setError(msg || 'Error al extraer texto del PDF');
     } catch (e) {
       setError('Error desconocido');
@@ -254,6 +250,14 @@ export default function BeachResultScreen({ route, navigation }) {
     setTimeout(() => searchRef.current?.focus(), 300);
   }, []);
 
+  const handleRankingPress = useCallback((posicion, pareja) => {
+    navigation.navigate('BeachPair', { pareja, posicion, partidos: data?.partidos, ranking: data?.ranking, torneo: data?.torneo, pdfName });
+  }, [navigation, data, pdfName]);
+
+  const handleMatchPress = useCallback((match) => {
+    navigation.navigate('BeachMatchDetail', { match, torneo: data?.torneo, pdfName });
+  }, [navigation, data, pdfName]);
+
   const searchLower = searchQuery.toLowerCase().trim();
 
   const filteredRanking = useMemo(() => {
@@ -275,9 +279,10 @@ export default function BeachResultScreen({ route, navigation }) {
   }, [data, searchLower, filteredRanking, showAllRanking]);
 
   const visibleMatches = useMemo(() => {
-    const source = searchLower ? filteredMatches : (data?.partidos || []);
+    let source = searchLower ? filteredMatches : (data?.partidos || []);
+    if (hideUnplayed) source = source.filter(m => m.set1 != null);
     return showAllMatches ? source : source.slice(0, INITIAL_MATCHES_SHOW);
-  }, [data, searchLower, filteredMatches, showAllMatches]);
+  }, [data, searchLower, filteredMatches, showAllMatches, hideUnplayed]);
 
   const hasRanking = (data?.ranking?.length || 0) > 0;
   const hasMatches = (data?.partidos?.length || 0) > 0;
@@ -288,9 +293,9 @@ export default function BeachResultScreen({ route, navigation }) {
     setData(null);
     setShowAllRanking(false);
     setShowAllMatches(false);
+    setHideUnplayed(false);
     setSearchQuery('');
     setShowSearchModal(false);
-    setOcrProgress(null);
     loadStartRef.current = Date.now();
     setExtractKey(k => k + 1);
   }, []);
@@ -378,11 +383,6 @@ export default function BeachResultScreen({ route, navigation }) {
         <View style={styles.section}>
           <SkeletonBlock height={48} />
         </View>
-        {ocrProgress ? (
-          <View style={[{ marginHorizontal: Spacing.lg, padding: 12, backgroundColor: Colors.surface, borderRadius: 8, borderWidth: 1, borderColor: Colors.primary + '40' }]}>
-            <Text style={{ fontSize: 13, color: Colors.primary, fontWeight: '600', textAlign: 'center' }}>{ocrProgress}</Text>
-          </View>
-        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -395,7 +395,6 @@ export default function BeachResultScreen({ route, navigation }) {
           pdfBase64={pdfBase64}
           onData={handleDataExtracted}
           onError={handleExtractError}
-          onProgress={handleOcrProgress}
         />
       ) : null}
       {loading ? renderSkeleton() : (
@@ -418,7 +417,7 @@ export default function BeachResultScreen({ route, navigation }) {
           <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
 
             <View style={styles.section}>
-              <Text style={styles.heroTitle}>{data?.torneo?.categoria || 'Torneo Voley Playa'}</Text>
+              <Text style={styles.heroTitle}>{data?.torneo?.titulo || data?.torneo?.categoria || 'Torneo Voley Playa'}</Text>
               {(data?.torneo?.fecha || data?.torneo?.lugar) ? (
                 <View style={styles.badgesWrap}>
                   {data.torneo.fecha ? <View style={styles.badge}><Text style={styles.badgeText}>{data.torneo.fecha}</Text></View> : null}
@@ -446,7 +445,7 @@ export default function BeachResultScreen({ route, navigation }) {
                 <View style={styles.podium}>
                   {(searchLower ? filteredRanking : data.ranking.filter(r => r.posicion <= 3)).map(r => (
                     <MedalCard key={r.posicion} posicion={r.posicion} pareja={r.pareja}
-                      gold={r.posicion === 1} silver={r.posicion === 2} bronze={r.posicion === 3} />
+                      gold={r.posicion === 1} silver={r.posicion === 2} bronze={r.posicion === 3} onPress={handleRankingPress} />
                   ))}
                 </View>
                 )}
@@ -456,12 +455,12 @@ export default function BeachResultScreen({ route, navigation }) {
                       <Text style={styles.rankingListHeaderText}>Resto de Clasificación</Text>
                     </View>
                     {visibleRanking.filter(r => r.posicion > 3).map((r, i, arr) => (
-                      <RankingRow key={r.posicion} posicion={r.posicion} pareja={r.pareja} isLast={i === arr.length - 1} />
+                      <RankingRow key={r.posicion} posicion={r.posicion} pareja={r.pareja} isLast={i === arr.length - 1} onPress={handleRankingPress} />
                     ))}
                     {data.ranking.length > INITIAL_RANKING_SHOW && !showAllRanking ? (
                       <TouchableOpacity
                         style={{ padding: 12, backgroundColor: Colors.background, alignItems: 'center' }}
-                        onPress={() => setShowAllRanking(true)}
+                        onPress={() => navigation.navigate('BeachList', { data, pdfName })}
                         activeOpacity={0.7}
                       >
                         <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textMuted, fontStyle: 'italic' }}>
@@ -477,14 +476,14 @@ export default function BeachResultScreen({ route, navigation }) {
                       <Text style={styles.rankingListHeaderText}>Coincidencias</Text>
                     </View>
                     {visibleRanking.map((r, i, arr) => (
-                      <RankingRow key={r.posicion} posicion={r.posicion} pareja={r.pareja} isLast={i === arr.length - 1} highlighted />
+                      <RankingRow key={r.posicion} posicion={r.posicion} pareja={r.pareja} isLast={i === arr.length - 1} highlighted onPress={handleRankingPress} />
                     ))}
                   </View>
                 )}
                 {!searchLower && hasRanking && data.ranking.length > INITIAL_RANKING_SHOW ? (
-                  <TouchableOpacity style={styles.showMoreBtn} onPress={() => setShowAllRanking(!showAllRanking)} activeOpacity={0.7}>
-                    <MaterialIcons name={showAllRanking ? 'expand-less' : 'expand-more'} size={20} color={Colors.primary} />
-                    <Text style={styles.showMoreText}>{showAllRanking ? 'Ver menos' : 'Ver clasificación completa'}</Text>
+                  <TouchableOpacity style={styles.showMoreBtn} onPress={() => navigation.navigate('BeachList', { data, pdfName })} activeOpacity={0.7}>
+                    <MaterialIcons name="open-in-new" size={20} color={Colors.primary} />
+                    <Text style={styles.showMoreText}>Ver clasificación completa</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>
@@ -515,8 +514,6 @@ export default function BeachResultScreen({ route, navigation }) {
                       'matchRows: ' + (d.matchRows ?? '?'),
                       'rankingRows: ' + (d.rankingRows ?? '?'),
                       'fallback: ' + (d.fallbackFound ?? '?'),
-                      d.ocrLines !== undefined ? 'OCR: ' + d.ocrLines + ' lineas' : null,
-                      d.ocrTextPreview ? 'OCR preview: ' + d.ocrTextPreview : null,
                       d.rowSamples ? '\n--- Filas crudas (3 primeras) ---\n' + d.rowSamples.join('\n\n') : null,
                     ].filter(Boolean).join('\n');
                   })()}
@@ -531,17 +528,35 @@ export default function BeachResultScreen({ route, navigation }) {
                   <Text style={styles.sectionTitle}>Partidos</Text>
                   <View style={styles.sectionDivider} />
                 </View>
+                {data?.partidos.some(m => m.set1 == null) ? (
+                  <TouchableOpacity
+                    onPress={() => setHideUnplayed(o => !o)}
+                    activeOpacity={0.7}
+                    style={{
+                      flexDirection: 'row', alignSelf: 'flex-start', alignItems: 'center', gap: 6,
+                      paddingVertical: 6, paddingHorizontal: 12, borderRadius: 20,
+                      backgroundColor: hideUnplayed ? Colors.primary + '20' : Colors.surface,
+                      borderWidth: 1, borderColor: hideUnplayed ? Colors.primary : Colors.border,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <MaterialIcons name={hideUnplayed ? 'visibility-off' : 'visibility'} size={16} color={hideUnplayed ? Colors.primary : Colors.textMuted} />
+                    <Text style={{ fontSize: 12, fontWeight: '700', color: hideUnplayed ? Colors.primary : Colors.textMuted }}>
+                      Ocultar no jugados
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
                 <View style={styles.matchesGrid}>
                   {visibleMatches.length > 0 ? visibleMatches.map((m, i) => (
-                    <MatchCard key={i} match={m} highlighted={searchLower && (m.parejaA.toLowerCase().includes(searchLower) || m.parejaB.toLowerCase().includes(searchLower))} />
+                    <MatchCard key={i} match={m} onPress={handleMatchPress} highlighted={searchLower && (m.parejaA.toLowerCase().includes(searchLower) || m.parejaB.toLowerCase().includes(searchLower))} />
                   )) : searchLower ? (
                     <View style={styles.emptySection}><Text style={styles.emptySectionText}>No hay partidos que coincidan</Text></View>
                   ) : null}
                 </View>
                 {!searchLower && data.partidos.length > INITIAL_MATCHES_SHOW ? (
-                  <TouchableOpacity style={styles.showMoreBtn} onPress={() => setShowAllMatches(!showAllMatches)} activeOpacity={0.7}>
-                    <MaterialIcons name={showAllMatches ? 'expand-less' : 'expand-more'} size={20} color={Colors.primary} />
-                    <Text style={styles.showMoreText}>{showAllMatches ? 'Ver menos' : `Ver todos los partidos (${data.partidos.length})`}</Text>
+                  <TouchableOpacity style={styles.showMoreBtn} onPress={() => navigation.navigate('BeachList', { data, pdfName })} activeOpacity={0.7}>
+                    <MaterialIcons name="open-in-new" size={20} color={Colors.primary} />
+                    <Text style={styles.showMoreText}>Ver todos los partidos ({data.partidos.length})</Text>
                   </TouchableOpacity>
                 ) : null}
               </View>

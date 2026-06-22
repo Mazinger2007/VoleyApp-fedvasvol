@@ -47,7 +47,8 @@
         }
       ],
       "expo-image",
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-build-properties"
     ],
     "extra": {
       "eas": {

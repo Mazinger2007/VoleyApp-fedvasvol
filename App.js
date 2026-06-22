@@ -28,6 +28,9 @@ import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
 import MatchDetailScreen from './src/screens/MatchDetailScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
 import BeachResultScreen from './src/screens/BeachResultScreen';
+import BeachListScreen from './src/screens/BeachListScreen';
+import BeachMatchDetailScreen from './src/screens/BeachMatchDetailScreen';
+import BeachPairScreen from './src/screens/BeachPairScreen';
 import InfoScreen from './src/screens/InfoScreen';
 import LoadingView from './src/components/LoadingView';
 
@@ -243,6 +246,9 @@ function AppContent({ fontsLoaded }) {
               <Stack.Screen name="Info" component={InfoScreen} />
               <Stack.Screen name="PostDetail" component={PostDetailScreen} />
               <Stack.Screen name="BeachResult" component={BeachResultScreen} />
+              <Stack.Screen name="BeachList" component={BeachListScreen} />
+              <Stack.Screen name="BeachMatchDetail" component={BeachMatchDetailScreen} />
+              <Stack.Screen name="BeachPair" component={BeachPairScreen} />
             </Stack.Navigator>
           </Animated.View>
         </NavigationContainer>

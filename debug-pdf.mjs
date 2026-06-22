@@ -1,3 +1,12 @@
+#!/usr/bin/env node
+import * as fs from 'fs';
+import * as path from 'path';
+import * as url from 'url';
+
+const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+const SRC = path.resolve(__dirname, 'src');
+
+// ── Replicas of internal functions from parseBeachResults.js ──
 const Y_TOLERANCE = 4;
 const X_CELL_GAP = 15;
 
@@ -17,9 +26,8 @@ function groupIntoRows(items) {
     const merged = [];
     let cell = null;
     for (const it of row.items) {
-      const gapFromEnd = cell ? it.x - cell.x : Infinity;
       const shouldMerge = cell && (
-        gapFromEnd <= X_CELL_GAP ||
+        (it.x - cell.x <= X_CELL_GAP) ||
         (cell.text.endsWith('/') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text)) ||
         (cell.text.endsWith('/ ') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text))
       );
@@ -36,15 +44,13 @@ function groupIntoRows(items) {
   return rows;
 }
 
-
 function mergeItems(arr) {
   const sorted = [...arr].sort((a, b) => a.x - b.x);
   const m = [];
   let c = null;
   for (const it of sorted) {
-    const gapFromEnd = c ? it.x - c.x : Infinity;
     const shouldMerge = c && (
-      gapFromEnd <= X_CELL_GAP ||
+      (it.x - c.x <= X_CELL_GAP) ||
       (c.text.endsWith('/') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text))
     );
     if (!c || !shouldMerge) {
@@ -81,13 +87,11 @@ function splitRankingFromItem(item) {
 
 function findRankingInItems(items) {
   if (items.length < 2) return null;
-  // Strategy A: Last item for merged "N NAME" (e.g., "24 DEL RIO/LEKUE")
   const last = items[items.length - 1];
   if (last && last.text.trim()) {
     const merged = splitRankingFromItem(last);
     if (merged) return { idx: items.length - 1, pos: merged.pos, pareja: merged.pareja };
   }
-  // Strategy A (part 2): Second-to-last + last as adjacent number + name
   const n = items.length - 2;
   const first = items[n];
   if (first && first.text.trim()) {
@@ -99,7 +103,6 @@ function findRankingInItems(items) {
       }
     }
   }
-  // Strategy B: Scan last 5 items for adjacent pairs
   const minIdx = items.length >= 5 ? items.length - 5 : 0;
   for (let i = minIdx; i < items.length - 1; i++) {
     const a = items[i];
@@ -114,7 +117,6 @@ function findRankingInItems(items) {
       return { idx: i, pos, pareja: b.text.trim() };
     }
   }
-  // Strategy C: Scan ALL items for adjacent pairs (most lenient)
   for (let i = 0; i < items.length - 1; i++) {
     const a = items[i];
     if (!a || !a.text.trim()) continue;
@@ -137,14 +139,10 @@ function splitRankingRows(rows) {
   for (const row of rows) {
     const items = row.items;
     let splitIdx = -1;
-
-    // Scan items for ranking pattern (number 1-32 followed by text) at any position
     const ranking = findRankingInItems(items);
     if (ranking) {
       splitIdx = ranking.idx;
     }
-
-    // Gap fallback: only if scan didn't find ranking
     if (splitIdx < 0) {
       for (let i = 1; i < items.length; i++) {
         const gap = items[i].x - items[i - 1].x - items[i - 1].w;
@@ -159,13 +157,9 @@ function splitRankingRows(rows) {
         }
       }
     }
-
-    // ALWAYS add to matchRows — every row is a match candidate
     const matchItems = splitIdx > 0 ? items.slice(0, splitIdx) : items;
     const matchTexts = mergeItems(matchItems);
     matchRows.push({ ...row, items: matchItems, cells: matchTexts, cellTexts: matchTexts });
-
-    // If ranking detected at end of match row, add to rankingRows (NOT re-merged)
     if (splitIdx > 0) {
       const rankingItems = items.slice(splitIdx);
       const rankingTexts = rankingItems
@@ -175,8 +169,6 @@ function splitRankingRows(rows) {
       rankingRows.push({ ...row, cells: rankingTexts, cellTexts: rankingTexts });
     }
   }
-
-  // Second pass: detect ranking-only rows (exactly 2 items: position + name)
   for (const row of matchRows) {
     const items = row.items;
     if (items.length !== 2) continue;
@@ -195,59 +187,26 @@ function splitRankingRows(rows) {
   return { matchRows, rankingRows };
 }
 
-
-function normalizeCategory(cat) {
-  if (!cat) return '';
-  return cat.replace(/\bU-?(\d+)\b/gi, 'Sub $1').replace(/\bSub-(\d+)\b/gi, 'Sub $1');
-}
-
-function normalizePlace(place) {
-  return place ? place.replace(/\s+/g, '') : '';
-}
-
 function extractTournamentInfo(rows) {
-  let categoria = '', fecha = '', lugar = '', titulo = '';
+  let categoria = '', fecha = '', lugar = '';
   const CATEGORY_RE = /\b(Senior|Junior|Cadete|Kadete|Sub-\d+|U-\d+|U\d+|Absoluto|Absolutua|Infantil|Alevín|Benjamin|Alevin)\b/i;
-
   for (const row of rows) {
     const raw = row.cellTexts.join(' ') + ' ' + row.cells.map(c => c.text).join(' ');
-    const firstCell = row.cellTexts[0] || '';
-
-    if (!titulo) {
-      const titleMatch = firstCell.match(/^(.+?)\s+(\d{4}[-/]\d{1,2}[-/]\d{1,2})\s+([A-Za-zÁÉÍÓÚÑáéíóúñ\s]+)$/);
-      if (titleMatch) {
-        let titleText = titleMatch[1].trim();
-        titleText = titleText.replace(/\bU-?(\d+)\b/gi, 'Sub $1');
-        titleText = titleText.replace(/\bSub-(\d+)\b/gi, 'Sub $1');
-        titulo = titleText;
-        if (!fecha) fecha = titleMatch[2];
-        if (!lugar) lugar = normalizePlace(titleMatch[3]);
-        if (!categoria) {
-          const catMatch = raw.match(CATEGORY_RE);
-          if (catMatch) categoria = normalizeCategory(catMatch[1]);
-        }
-        continue;
-      }
-    }
-
     if (!fecha) {
       const m = raw.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}/);
       if (m) fecha = m[0];
     }
-
     if (!categoria) {
       const m = raw.match(CATEGORY_RE);
-      if (m) categoria = normalizeCategory(m[1]);
+      if (m) categoria = m[1];
     }
-
     if (!lugar && fecha) {
       const m = raw.match(/\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+([A-ZÁÉÍÓÚÑa-záéíóúñ]+)/);
-      if (m) lugar = normalizePlace(m[1]);
+      if (m) lugar = m[1].trim();
     }
   }
-  return { titulo, categoria, fecha, lugar };
+  return { categoria, fecha, lugar };
 }
-
 
 function extractByeMatch(texts) {
   if (!texts.some(t => /^BYE$/i.test(t.trim()))) return null;
@@ -293,7 +252,6 @@ function extractNoTimeMatch(texts) {
   }
   const fase = (h < texts.length && texts[h].includes('/')) ? texts[h++] : '';
   const referencia = (h < texts.length && texts[h].includes('-')) ? texts[h++] : '';
-
   let scoreStart = -1;
   let setsA = 0, setsB = 0;
   for (let i = h; i < texts.length; i++) {
@@ -314,10 +272,8 @@ function extractNoTimeMatch(texts) {
     }
   }
   if (scoreStart < 0) return null;
-
   const pairTexts = texts.slice(h, scoreStart);
   let parejaA = '', parejaB = '';
-
   if (pairTexts.length === 2) {
     parejaA = pairTexts[0]; parejaB = pairTexts[1];
   } else if (pairTexts.length === 1) {
@@ -338,8 +294,6 @@ function extractNoTimeMatch(texts) {
     if (cur) merged.push(cur);
     parejaA = merged[0] || ''; parejaB = merged.slice(1).join(' ') || '';
   }
-
-  // Collect set scores: expand dash-merged numbers (e.g., "21-19" -> 21, 19)
   const setNumbers = [];
   for (const t of texts.slice(scoreStart + (/\d-\d/.test(texts[scoreStart]) ? 1 : 2))) {
     const dash = t.match(/^(\d+)-(\d+)$/);
@@ -353,7 +307,6 @@ function extractNoTimeMatch(texts) {
   for (let si = 0; si + 1 < setNumbers.length && si < 6; si += 2) {
     setData.push({ A: setNumbers[si], B: setNumbers[si + 1] });
   }
-
   return {
     partido, hora: null, pista, fase, referencia,
     parejaA: parejaA.replace(/\s*\/\s*/g, '/').trim(),
@@ -364,18 +317,13 @@ function extractNoTimeMatch(texts) {
 }
 
 function extractMatchFromRow(row) {
-  // Use raw items (unmerged) for reliable column detection
   const items = (row.items || []).filter(i => i.text.trim().length > 0);
   items.sort((a, b) => a.x - b.x);
   const texts = items.map(i => i.text.trim());
-
-  // Pattern: [matchNum,] hora, pista, fase, referencia, parejaA, parejaB, setsA, setsB, set1A, set1B, set2A, set2B, [set3A, set3B]
-  // Find hora: standalone "19:00" or merged "80 19:00"
   const horaIdx = texts.findIndex(t => /\b\d{1,2}:\d{2}\b/.test(t));
   if (horaIdx >= 0) {
     const horaMatch = texts[horaIdx].match(/(\d{1,2}:\d{2})/);
     const hora = horaMatch[1];
-
     let partido = 0;
     const numBefore = horaIdx > 0 ? texts[horaIdx - 1].match(/^(\d+)$/) : null;
     if (numBefore) {
@@ -384,7 +332,6 @@ function extractMatchFromRow(row) {
       const mergedPrefix = texts[horaIdx].match(/^(\d+)\s+\d{1,2}:\d{2}/);
       if (mergedPrefix) partido = parseInt(mergedPrefix[1], 10);
     }
-
     let h = horaIdx + 1;
     let pista = '';
     if (h < texts.length) {
@@ -394,7 +341,6 @@ function extractMatchFromRow(row) {
     }
     const fase = h < texts.length && texts[h].includes('/') ? texts[h++] : '';
     const referencia = h < texts.length && texts[h].includes('-') ? texts[h++] : '';
-
     let scoreStart = -1;
     let setsA = 0, setsB = 0;
     for (let i = h; i < texts.length; i++) {
@@ -414,7 +360,6 @@ function extractMatchFromRow(row) {
         }
       }
     }
-
     if (scoreStart < 0) {
       const byeIdx = texts.findIndex(t => /^BYE$/i.test(t));
       if (byeIdx >= 0) {
@@ -431,10 +376,8 @@ function extractMatchFromRow(row) {
       }
       return null;
     }
-
     const pairTexts = texts.slice(h, scoreStart);
     let parejaA = '', parejaB = '';
-
     if (pairTexts.length === 2) {
       parejaA = pairTexts[0]; parejaB = pairTexts[1];
     } else if (pairTexts.length === 1) {
@@ -455,8 +398,6 @@ function extractMatchFromRow(row) {
       if (cur) merged.push(cur);
       parejaA = merged[0] || ''; parejaB = merged.slice(1).join(' ') || '';
     }
-
-    // Collect set scores: expand dash-merged numbers
     const setNumbers = [];
     const scoreEndOffset = /\d-\d/.test(texts[scoreStart]) ? 1 : 2;
     for (const t of texts.slice(scoreStart + scoreEndOffset)) {
@@ -471,7 +412,6 @@ function extractMatchFromRow(row) {
     for (let si = 0; si + 1 < setNumbers.length && si < 6; si += 2) {
       setData.push({ A: setNumbers[si], B: setNumbers[si + 1] });
     }
-
     return {
       partido, hora, pista, fase, referencia,
       parejaA: parejaA.replace(/\s*\/\s*/g, '/').trim(),
@@ -480,12 +420,10 @@ function extractMatchFromRow(row) {
       set1: setData[0] || null, set2: setData[1] || null, set3: setData[2] || null,
     };
   }
-
   const byeMatch = extractByeMatch(texts);
   if (byeMatch) return byeMatch;
   return extractNoTimeMatch(texts);
 }
-
 
 function extractRanking(rows) {
   const seen = new Set();
@@ -493,7 +431,6 @@ function extractRanking(rows) {
   for (const row of rows) {
     const texts = row.cellTexts;
     if (texts.length === 0) continue;
-    // Try merged "N NAME" pattern in first cell first
     const merged = texts[0].trim().match(/^(\d{1,2})\s+(.+)$/);
     if (merged) {
       const pos = parseInt(merged[1], 10);
@@ -513,7 +450,6 @@ function extractRanking(rows) {
   return ranking;
 }
 
-
 function bruteForceRanking(pages) {
   const allItems = [];
   for (const page of pages) {
@@ -522,7 +458,6 @@ function bruteForceRanking(pages) {
     }
   }
   allItems.sort((a, b) => b.y - a.y || a.x - b.x);
-
   const rows = [];
   let cur = null;
   for (const it of allItems) {
@@ -533,16 +468,12 @@ function bruteForceRanking(pages) {
     cur.items.push(it);
   }
   for (const r of rows) r.items.sort((a, b) => a.x - b.x);
-
   const seen = new Set();
   const ranking = [];
-
   for (const row of rows) {
     if (row.items.length < 2) continue;
     const items = row.items;
     let found = null;
-
-    // Strategy A: merged "N NAME" in last item
     const last = items[items.length - 1];
     if (last && last.text.trim()) {
       const merged = splitRankingFromItem(last);
@@ -550,8 +481,6 @@ function bruteForceRanking(pages) {
         found = { posicion: merged.pos, pareja: merged.pareja };
       }
     }
-
-    // Strategy A (part 2): adjacent pair at end
     if (!found) {
       const n = items.length - 2;
       const first = items[n];
@@ -565,8 +494,6 @@ function bruteForceRanking(pages) {
         }
       }
     }
-
-    // Strategy B: scan last 5 items for adjacent pairs
     if (!found) {
       const minIdx = items.length >= 5 ? items.length - 5 : 0;
       for (let i = minIdx; i < items.length - 1; i++) {
@@ -584,8 +511,6 @@ function bruteForceRanking(pages) {
         }
       }
     }
-
-    // Strategy C: scan ALL items for adjacent pairs
     if (!found) {
       for (let i = 0; i < items.length - 1; i++) {
         const a = items[i];
@@ -602,7 +527,6 @@ function bruteForceRanking(pages) {
         }
       }
     }
-
     if (found) {
       seen.add(found.posicion);
       ranking.push(found);
@@ -610,100 +534,6 @@ function bruteForceRanking(pages) {
   }
   ranking.sort((a, b) => a.posicion - b.posicion);
   return ranking;
-}
-
-
-// === COLUMNAR PARSER (for multi-column table layouts) ===
-// Some PDFs arrange matches as vertical columns rather than horizontal rows.
-// Each y-layer contains one data field for ALL matches (e.g., all match numbers,
-// all times, all courts, etc.) at different x-positions.
-
-function columnarParse(pages) {
-  const allMatches = [];
-  const allRanking = [];
-
-  for (const page of pages) {
-    const items = (page.items || []).map(item => ({ x: item.x, y: item.y, text: item.text, w: item.w || 0 }));
-    if (items.length === 0) continue;
-
-    // 1) Cluster items by x-position (column boundaries).
-    const xSorted = [...items].sort((a, b) => a.x - b.x);
-    const xClusters = [];
-    let curCluster = null;
-    for (const it of xSorted) {
-      if (!curCluster || it.x - curCluster.x > 6) {
-        curCluster = { x: it.x, items: [] };
-        xClusters.push(curCluster);
-      }
-      curCluster.items.push(it);
-    }
-
-    // 2) For each x-cluster (column), sort items by y descending,
-    //    group into y-layers, merge text within each y-layer.
-    const columns = [];
-    for (const cluster of xClusters) {
-      cluster.items.sort((a, b) => {
-        if (Math.abs(a.y - b.y) > Y_TOLERANCE) return b.y - a.y;
-        return a.x - b.x;
-      });
-
-      const yLayers = [];
-      let curLayer = null;
-      for (const it of cluster.items) {
-        if (!curLayer || Math.abs(it.y - curLayer.y) > Y_TOLERANCE) {
-          curLayer = { y: it.y, texts: [] };
-          yLayers.push(curLayer);
-        }
-        if (curLayer.texts.length > 0) {
-          const last = curLayer.texts[curLayer.texts.length - 1];
-          if (last.endsWith('/') || it.text.startsWith('/') || it.x - (curLayer.lastX || it.x) <= X_CELL_GAP) {
-            curLayer.texts[curLayer.texts.length - 1] += ' ' + it.text;
-            curLayer.lastX = it.x + (it.w || 0);
-            continue;
-          }
-        }
-        curLayer.texts.push(it.text);
-        curLayer.lastX = it.x + (it.w || 0);
-      }
-
-      const texts = yLayers.map(l => l.texts.join(' ')).filter(t => t.length > 0);
-      const hasHora = texts.some(t => /\d{1,2}:\d{2}/.test(t));
-      if (hasHora && texts.length >= 6) {
-        columns.push({ x: cluster.x, texts });
-      }
-    }
-
-    // 3) Parse each column's texts: detect ranking at end, then extract match
-    for (const col of columns) {
-      let rankingEntry = null;
-      const t = col.texts;
-      if (t.length >= 2) {
-        const lastNum = t[t.length - 2].trim();
-        const lastName = t[t.length - 1].trim();
-        const posMatch = lastNum.match(/^(\d{1,2})$/);
-        if (posMatch && isNameText(lastName)) {
-          const pos = parseInt(posMatch[1], 10);
-          if (pos >= 1 && pos <= 32) {
-            rankingEntry = { posicion: pos, pareja: lastName.replace(/\s*\/\s*/g, '/').trim() };
-            col.texts = t.slice(0, -2);
-          }
-        }
-      }
-
-      const fakeRow = { items: col.texts.map((txt, i) => ({ x: i, text: txt, w: 0 })) };
-      const match = extractMatchFromRow(fakeRow);
-      if (match) {
-        if (!match.partido) match.partido = allMatches.length + 1;
-        allMatches.push(match);
-      }
-      if (rankingEntry) {
-        allRanking.push(rankingEntry);
-      }
-    }
-  }
-
-  if (allMatches.length === 0) return null;
-  return { partidos: allMatches, ranking: allRanking };
 }
 
 function detectColumnarLayout(layers, maxRows = 10) {
@@ -716,100 +546,274 @@ function detectColumnarLayout(layers, maxRows = 10) {
   }
   return wideCount >= 3;
 }
-// === MAIN ENTRY POINT ===
 
-export function parseBeachResults(pages) {
-  if (!pages || pages.length === 0) {
-    return { torneo: { categoria: '', fecha: '', lugar: '', titulo: '' }, partidos: [], ranking: [] };
+function columnarParse(pages) {
+  const allItems = [];
+  for (const page of pages) {
+    for (const item of page.items || []) {
+      allItems.push({ x: item.x, y: item.y, text: item.text, w: item.w || 0 });
+    }
   }
+  if (allItems.length === 0) return null;
+  const xSorted = [...allItems].sort((a, b) => a.x - b.x);
+  const xClusters = [];
+  let curCluster = null;
+  for (const it of xSorted) {
+    if (!curCluster || it.x - curCluster.x > 6) {
+      curCluster = { x: it.x, items: [] };
+      xClusters.push(curCluster);
+    }
+    curCluster.items.push(it);
+  }
+  const columns = [];
+  for (const cluster of xClusters) {
+    cluster.items.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > Y_TOLERANCE) return b.y - a.y;
+      return a.x - b.x;
+    });
+    const yLayers = [];
+    let curLayer = null;
+    for (const it of cluster.items) {
+      if (!curLayer || Math.abs(it.y - curLayer.y) > Y_TOLERANCE) {
+        curLayer = { y: it.y, texts: [] };
+        yLayers.push(curLayer);
+      }
+      if (curLayer.texts.length > 0) {
+        const last = curLayer.texts[curLayer.texts.length - 1];
+        if (last.endsWith('/') || it.text.startsWith('/') || it.x - (curLayer.lastX || it.x) <= X_CELL_GAP) {
+          curLayer.texts[curLayer.texts.length - 1] += ' ' + it.text;
+          curLayer.lastX = it.x + (it.w || 0);
+          continue;
+        }
+      }
+      curLayer.texts.push(it.text);
+      curLayer.lastX = it.x + (it.w || 0);
+    }
+    const texts = yLayers.map(l => l.texts.join(' ')).filter(t => t.length > 0);
+    const hasHora = texts.some(t => /\d{1,2}:\d{2}/.test(t));
+    if (hasHora && texts.length >= 6) {
+      columns.push({ x: cluster.x, texts });
+    }
+  }
+  if (columns.length === 0) return null;
+  const matches = [];
+  for (const col of columns) {
+    const fakeRow = { items: col.texts.map((t, i) => ({ x: i, text: t, w: 0 })) };
+    const match = extractMatchFromRow(fakeRow);
+    if (match) {
+      if (!match.partido) match.partido = matches.length + 1;
+      matches.push(match);
+    }
+  }
+  return matches;
+}
+// ── End of replicas ──
+
+async function loadPdf(source) {
+  if (/^https?:\/\//i.test(source)) {
+    const resp = await fetch(source);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const buf = await resp.arrayBuffer();
+    return new Uint8Array(buf);
+  }
+  return new Uint8Array(fs.readFileSync(source));
+}
+
+async function extractPages(pdfBytes) {
+  const pdfjsLib = await import('pdfjs-dist');
+  const doc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+  const pages = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const viewport = page.getViewport({ scale: 1 });
+    const content = await page.getTextContent();
+    const items = [];
+    for (const item of content.items) {
+      if (!item.str || item.str.trim().length === 0) continue;
+      items.push({
+        text: item.str,
+        x: Math.round(item.transform[4] * 10) / 10,
+        y: Math.round((viewport.height - item.transform[5]) * 10) / 10,
+        w: Math.round(item.width * 10) / 10,
+      });
+    }
+    pages.push({ page: p, items, width: viewport.width, height: viewport.height });
+  }
+  return pages;
+}
+
+function getStats(pages) {
+  const allItems = [];
+  for (const page of pages) {
+    for (const item of page.items) {
+      allItems.push({ x: item.x, y: item.y, text: item.text, w: item.w });
+    }
+  }
+  return { count: allItems.length };
+}
+
+async function main() {
+  const args = process.argv.slice(2);
+  if (args.length === 0) {
+    console.error('Uso: node debug-pdf.mjs <pdf-url|pdf-file>');
+    console.error('Ej:  node debug-pdf.mjs https://cdn.leverade.com/files/uR6PpK2L57.pdf');
+    process.exit(1);
+  }
+  const source = args[0];
+
+  console.log('='.repeat(70));
+  console.log(' DEBUG PDF EXTRACTOR');
+  console.log('='.repeat(70));
+  console.log();
+  console.log(`Source: ${source}`);
+  console.log();
+
+  // 1) Load PDF
+  console.log('---[ 1. LOAD PDF ]---');
+  const pdfBytes = await loadPdf(source);
+  console.log(`  Size: ${(pdfBytes.length / 1024).toFixed(1)} KB`);
+  console.log();
+
+  // 2) Extract pages
+  console.log('---[ 2. EXTRACT PAGES ]---');
+  const pages = await extractPages(pdfBytes);
+  console.log(`  Pages: ${pages.length}`);
+  const totalItems = pages.reduce((s, p) => s + p.items.length, 0);
+  console.log(`  Total text items: ${totalItems}`);
+  console.log();
+
+  // 3) Per-page item dump grouped by y (like row grouping)
+  console.log('---[ 3. PER-PAGE ITEMS GROUPED BY y ]---');
+  for (const page of pages) {
+    console.log(`  === PAGE ${page.page} (${page.items.length} items, ${page.width}x${page.height}) ===`);
+    const byY = {};
+    for (const it of page.items) {
+      const key = Math.round(it.y);
+      if (!byY[key]) byY[key] = [];
+      byY[key].push(it);
+    }
+    const yKeys = Object.keys(byY).map(Number).sort((a, b) => b - a);
+    for (const y of yKeys) {
+      const its = byY[y].sort((a, b) => a.x - b.x);
+      const texts = its.map(it => `${it.text}[x=${it.x},w=${it.w}]`).join(', ');
+    console.log(`    y=${String(y).padStart(6)} (${its.length}): ${texts}`);
+    }
+    console.log();
+  }
+
+  // Stats
+  const stats = getStats(pages);
+  console.log(`  Total items across all pages: ${stats.count}`);
+  console.log();
+
+  // 4) groupIntoRows (same function as parsed)
+  console.log('---[ 4. GROUP INTO ROWS (groupIntoRows) ]---');
   let allRows = [];
   for (const page of pages) {
     allRows = allRows.concat(groupIntoRows(page.items || []));
   }
   allRows.sort((a, b) => b.y - a.y);
-  const torneo = extractTournamentInfo(allRows);
+  console.log(`  Total rows: ${allRows.length}`);
+  console.log();
+  for (let i = 0; i < allRows.length; i++) {
+    const row = allRows[i];
+    const raw = row.items.map(it => it.text.trim()).filter(Boolean).join(' | ');
+    const merged = row.cellTexts.join(' | ');
+    console.log(`  Row ${String(i).padStart(2)} (y=${String(row.y).padStart(6)}): [raw] ${raw.substring(0, 120)}`);
+    console.log(`              [merged] ${merged.substring(0, 120)}`);
+  }
+  console.log();
+
+  // 5) splitRankingRows
+  console.log('---[ 5. SPLIT RANKING ROWS ]---');
   const { matchRows, rankingRows } = splitRankingRows(allRows);
+  console.log(`  Match rows: ${matchRows.length}`);
+  console.log(`  Ranking rows: ${rankingRows.length}`);
+  console.log();
 
-  let partidos = [];
-  let ranking = [];
-  const fallbackRanking = [];
-  let usedColumnar = false;
-
-  // Detect columnar layout: if the first rows have many items (10+)
-  const isColumnar = detectColumnarLayout(allRows);
-
-  let columnarRanking = [];
-  if (isColumnar) {
-    const colResult = columnarParse(pages);
-    if (colResult && colResult.partidos.length > 3) {
-      partidos = colResult.partidos;
-      columnarRanking = colResult.ranking || [];
-      usedColumnar = true;
+  if (rankingRows.length > 0) {
+    console.log('  -- Ranking-only rows --');
+    for (let i = 0; i < rankingRows.length; i++) {
+      const row = rankingRows[i];
+      const texts = row.cellTexts.join(' | ');
+      console.log(`    RankingRow ${String(i).padStart(2)}: ${texts.substring(0, 120)}`);
     }
+    console.log();
   }
 
-  if (!usedColumnar) {
-    // Parse each match row
-    for (const row of matchRows) {
-      const match = extractMatchFromRow(row);
-      if (match) {
-        if (!match.partido) match.partido = partidos.length + 1;
-        partidos.push(match);
-      }
+  // 6) extractMatchFromRow for each match row
+  console.log('---[ 6. EXTRACT MATCH FROM ROW ]---');
+  let matchedCount = 0;
+  let nullCount = 0;
+  for (let i = 0; i < matchRows.length; i++) {
+    const row = matchRows[i];
+    const items = (row.items || []).filter(it => it.text.trim().length > 0);
+    items.sort((a, b) => a.x - b.x);
+    const texts = items.map(it => it.text.trim());
+    const rawLine = texts.join(' | ');
 
-      // Fallback: extract ranking from original items
-      const rankingInfo = findRankingInItems(row.items);
-      if (rankingInfo) {
-        fallbackRanking.push({ posicion: rankingInfo.pos, pareja: rankingInfo.pareja.replace(/\s*\/\s*/g, '/') });
-      }
-    }
+    const rankingInfo = findRankingInItems(items);
+    const rankingNote = rankingInfo ? ` [RANKING DETECTED: pos=${rankingInfo.pos}, pareja="${rankingInfo.pareja}"]` : '';
 
-    // Parse ranking rows (right side after split)
-    ranking = extractRanking(rankingRows);
-
-    // Merge: deduplicate by position
-    const seen = new Set(ranking.map(r => r.posicion));
-    for (const r of fallbackRanking) {
-      if (!seen.has(r.posicion)) {
-        ranking.push(r);
-        seen.add(r.posicion);
-      }
-    }
-
-    // Last resort: brute force scan
-    if (ranking.length === 0) {
-      const brute = bruteForceRanking(pages);
-      for (const r of brute) {
-        if (!seen.has(r.posicion)) {
-          ranking.push(r);
-          seen.add(r.posicion);
-        }
-      }
+    const match = extractMatchFromRow(row);
+    console.log(`  Row ${String(i).padStart(2)} (y=${String(row.y).padStart(6)}): ${rawLine.substring(0, 150)}${rankingNote}`);
+    if (match) {
+      matchedCount++;
+      const sets = [match.set1, match.set2, match.set3].filter(Boolean)
+        .map(s => `${s.A}-${s.B}`)
+        .join(', ');
+      console.log(`    => #${match.partido} ${match.hora || '--:--'} P${match.pista || '?'} ${match.fase || ''} ${match.referencia || ''}`);
+      console.log(`       ${match.parejaA || '?'} vs ${match.parejaB || '?'} | ${match.setsA}-${match.setsB} | Sets: [${sets}]`);
+    } else {
+      nullCount++;
+      console.log(`    => NULL (no match)`);
     }
   }
+  console.log(`  Matched: ${matchedCount}, Null: ${nullCount}`);
+  console.log();
 
-  if (usedColumnar && columnarRanking.length > 0) {
-    const seen = new Set(ranking.map(r => r.posicion));
-    for (const r of columnarRanking) {
-      if (!seen.has(r.posicion)) {
-        ranking.push(r);
-        seen.add(r.posicion);
-      }
-    }
+  // 7) Full ranking from actual source
+  console.log('---[ 7. FULL RESULT RANKING ]---');
+  const { parseBeachResults } = await import(url.pathToFileURL(path.join(SRC, 'utils', 'parseBeachResults.js')).href);
+  const fullResult = parseBeachResults(pages, null);
+  console.log(`  Torneo: titulo="${fullResult.torneo.titulo}" categoria="${fullResult.torneo.categoria}" fecha="${fullResult.torneo.fecha}" lugar="${fullResult.torneo.lugar}"`);
+  console.log(`  Ranking (${fullResult.ranking.length}):`);
+  for (const r of fullResult.ranking) {
+    console.log(`    ${String(r.posicion).padStart(2)}. ${r.pareja}`);
   }
+  console.log();
+  console.log(`  Partidos: ${fullResult.partidos.length}`);
+  console.log(`  Columnar usado: ${fullResult._debug.columnar}`);
+  console.log();
 
-  ranking.sort((a, b) => a.posicion - b.posicion);
-  partidos.sort((a, b) => a.partido - b.partido);
+  // 9) Full parseBeachResults output
+  console.log('---[ 9. FULL PARSE RESULT ]---');
+  console.log('  Debug:', JSON.stringify(fullResult._debug, null, 4));
+  console.log();
+  console.log();
+  console.log(`  Partidos (${fullResult.partidos.length}):`);
+  for (const m of fullResult.partidos) {
+    const sets = [m.set1, m.set2, m.set3].filter(Boolean)
+      .map(s => `${String(s.A).padStart(2)}-${String(s.B).padStart(2)}`)
+      .join(', ');
+    console.log(`    #${String(m.partido).padStart(2)} ${m.hora || '--:--'} P${m.pista || '?'} ${m.fase || ''} ${m.referencia || ''}`);
+    console.log(`        ${(m.parejaA || '?').padEnd(28)} ${String(m.setsA).padStart(1)}-${String(m.setsB).padEnd(1)} ${(m.parejaB || '?').padEnd(28)} [${sets}]`);
+  }
+  console.log();
 
-  // Diagnostics
-  const totalItems = pages.reduce((s, p) => s + (p.items || []).length, 0);
-  const totalRows = allRows.length;
-  const rowSamples = (usedColumnar ? [] : matchRows).slice(0, 3).map(r => {
-    const raw = (r.items || []).map(i => i.text.trim()).filter(Boolean).join(' | ');
-    const merged = (r.cells || []).map(c => c.text || c).join(' | ');
-    return raw + '  =>  ' + merged;
-  });
-  const _debug = { pages: pages.length, totalItems, totalRows, matchRows: matchRows.length, rankingRows: rankingRows.length, fallbackFound: fallbackRanking.length, columnar: usedColumnar, detectedColumnar: isColumnar, rowSamples };
+  // 10) Raw text dump
+  console.log('---[ 10. RAW TEXT DUMP ]---');
+  const allText = pages.map(p => p.items.map(i => i.text).join(' ')).join('\n');
+  console.log(allText.substring(0, 4000));
+  if (allText.length > 4000) console.log(`  ... (${allText.length - 4000} more chars)`);
+  console.log();
 
-  return { torneo, partidos, ranking, _debug };
+  console.log('='.repeat(70));
+  console.log(' END DEBUG');
+  console.log('='.repeat(70));
 }
+
+main().catch(e => {
+  console.error('\nFATAL:', e);
+  process.exit(1);
+});
