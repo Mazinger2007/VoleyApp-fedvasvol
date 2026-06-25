@@ -19,14 +19,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
 
-import CompetitionList from '../components/CompetitionList';
-import LoadingView from '../components/LoadingView';
-import ErrorView from '../components/ErrorView';
-import { useFetch } from '../hooks/useFetch';
-import { URLS } from '../utils/htmlParser';
-import { openTournamentDetail } from '../utils/navigationHelper';
-import { Spacing, Typography, Radius } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
+import CompetitionList from '../../components/CompetitionList';
+import LoadingView from '../../components/LoadingView';
+import ErrorView from '../../components/ErrorView';
+import { useFetch } from '../../hooks/useFetch';
+import { URLS } from '../../utils/htmlParser';
+import { openTournamentDetail } from '../../utils/navigationHelper';
+import { Spacing, Typography, Radius } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 
 // Orden preferido para las categorías
 const CATEGORY_ORDER = ['infantil', 'junior', 'juvenil', 'cadete', 'senior', 'voley playa', 'playa'];

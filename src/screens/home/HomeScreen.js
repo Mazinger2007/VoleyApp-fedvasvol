@@ -191,11 +191,13 @@ export default function HomeScreen({ navigation }) {
   const fetchedRef = useRef(new Set());
 
   const favLeagues = useMemo(
-    () => favorites.filter(f => f.entityType === 'league' || f.entityType === 'competition'),
+    () => favorites.filter(f => f.entityType === 'league' || f.entityType === 'competition')
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     [favorites],
   );
   const favTeams = useMemo(
-    () => favorites.filter(f => f.entityType === 'team'),
+    () => favorites.filter(f => f.entityType === 'team')
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     [favorites],
   );
 
@@ -400,7 +402,7 @@ export default function HomeScreen({ navigation }) {
           <Text style={[styles.greeting, { color: colors.textSecondary }]}>{getGreeting()}</Text>
           <Text style={[styles.userName, { color: colors.textPrimary }]}>{displayName}</Text>
         </View>
-        <ScrollView contentContainerStyle={styles.scrollContent}>
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingHorizontal: 16 }]}>
           <SkeletonCard count={3} />
         </ScrollView>
       </SafeAreaView>

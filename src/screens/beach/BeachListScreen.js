@@ -2,11 +2,11 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, TextInput, Animated, Dimensions, ActivityIndicator } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import PagerView from '../components/PagerViewWrapper';
-import { downloadPdfBase64 } from '../utils/pdfExtractor';
-import PDFExtractorWebView from '../components/PDFExtractorWebView';
-import { parseBeachResults } from '../utils/parseBeachResults';
+import { useTheme } from '../../contexts/ThemeContext';
+import PagerView from '../../components/PagerViewWrapper';
+import { downloadPdfBase64 } from '../../utils/pdfExtractor';
+import PDFExtractorWebView from '../../components/PDFExtractorWebView';
+import { parseBeachResults } from '../../utils/parseBeachResults';
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 
@@ -46,77 +46,188 @@ function MatchCard({ match, onPress }) {
   const { colors: Colors } = useTheme();
   const allSets = [match.set1, match.set2, match.set3].filter(Boolean);
   const maxSets = Math.max(allSets.length, 3);
-  const aWon = match.setsA > match.setsB;
-  const bWon = match.setsB > match.setsA;
+  const isPlayed = match.set1 != null;
+  const aWon = isPlayed && (match.setsA > match.setsB);
+  const bWon = isPlayed && (match.setsB > match.setsA);
+
+  const getSetPoints = (set) => {
+    if (!set) return { a: 0, b: 0 };
+    const a = Number(set.A != null ? set.A : set.a) || 0;
+    const b = Number(set.B != null ? set.B : set.b) || 0;
+    return { a, b };
+  };
+
+  const getInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.split('/');
+    if (parts.length >= 2) {
+      const p1 = parts[0].trim()[0] || '';
+      const p2 = parts[1].trim()[0] || '';
+      return (p1 + p2).toUpperCase();
+    }
+    return name.trim().slice(0, 2).toUpperCase();
+  };
 
   return (
     <TouchableOpacity onPress={() => onPress?.(match)} activeOpacity={0.7}
       style={{
         backgroundColor: Colors.surface,
-        borderRadius: 12, borderWidth: 1,
+        borderRadius: 14,
+        borderWidth: 1,
         borderColor: Colors.border,
         padding: 16,
+        marginBottom: 12,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.03,
+        shadowRadius: 4,
+        elevation: 2,
       }}
     >
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+      {/* CARD HEADER */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
         <View style={{ flexDirection: 'row', gap: 6 }}>
-          <Text style={{ fontSize: 10, fontWeight: '900', backgroundColor: Colors.primary, color: '#fff', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' }}>
-            Partido {match.partido}
-          </Text>
-          {match.fase ? (
-            <Text style={{ fontSize: 10, fontWeight: '900', backgroundColor: Colors.background, color: Colors.textMuted, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' }}>
-              {match.fase}
+          <View style={{ backgroundColor: Colors.primary + '18', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 }}>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: Colors.primary, letterSpacing: 0.5 }}>
+              PARTIDO {match.partido}
             </Text>
+          </View>
+          {match.fase ? (
+            <View style={{ backgroundColor: Colors.surfaceAlt, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: Colors.border }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: Colors.textMuted, letterSpacing: 0.5 }}>
+                {match.fase.toUpperCase()}
+              </Text>
+            </View>
           ) : null}
         </View>
-        <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.textMuted }}>
+        <Text style={{ fontSize: 11, fontWeight: '700', color: Colors.textMuted }}>
           {match.hora ? match.hora + ' • ' : ''}{match.pista ? `Pista ${match.pista}` : ''}
         </Text>
       </View>
+
+      {/* CARD BODY */}
       <View style={{ gap: 12 }}>
+        
+        {/* ROW PAREJA A */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsA} {aWon ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: aWon ? '900' : '400', color: aWon ? Colors.primary : Colors.textPrimary, fontSize: 14, flex: 1 }} numberOfLines={1}>{match.parejaA}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+            <View style={{
+              width: 26, height: 26, borderRadius: 13,
+              backgroundColor: aWon ? Colors.primary + '15' : Colors.surfaceAlt,
+              borderColor: aWon ? Colors.primary : Colors.border,
+              borderWidth: 1,
+              justifyContent: 'center', alignItems: 'center'
+            }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: aWon ? Colors.primary : Colors.textSecondary }}>
+                {getInitials(match.parejaA)}
+              </Text>
+            </View>
+            <Text style={{
+              fontSize: 15,
+              fontWeight: aWon ? '800' : '600',
+              color: aWon ? Colors.primary : Colors.textPrimary,
+              flex: 1
+            }} numberOfLines={1}>
+              {match.parejaA}
+            </Text>
+            <View style={{ width: 30, alignItems: 'center' }}>
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '900',
+                color: aWon ? Colors.primary : Colors.textSecondary,
+              }}>
+                {isPlayed ? match.setsA : '-'}
+              </Text>
+            </View>
           </View>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
+          
+          <View style={{ flexDirection: 'row', gap: 6, marginLeft: 16 }}>
             {Array.from({ length: maxSets }).map((_, idx) => {
               const set = [match.set1, match.set2, match.set3][idx];
               if (set) {
+                const { a, b } = getSetPoints(set);
+                const wonSet = a > b;
                 return (
-                  <Text key={idx} style={{
-                    width: 24, textAlign: 'center', fontSize: 12,
-                    fontWeight: set.A > set.B ? '900' : '600',
-                    color: set.A > set.B ? Colors.textPrimary : Colors.textMuted,
+                  <View key={idx} style={{
+                    width: 26, height: 26, borderRadius: 6,
+                    backgroundColor: wonSet ? Colors.primary + '10' : Colors.surfaceAlt,
+                    justifyContent: 'center', alignItems: 'center',
+                    borderWidth: 1, borderColor: wonSet ? Colors.primary + '30' : 'transparent',
                   }}>
-                    {String(set.A).padStart(2, '0')}
-                  </Text>
+                    <Text style={{
+                      fontSize: 12,
+                      fontWeight: wonSet ? '800' : '600',
+                      color: wonSet ? Colors.primary : Colors.textMuted
+                    }}>
+                      {a}
+                    </Text>
+                  </View>
                 );
               }
-              return <Text key={idx} style={{ width: 24, textAlign: 'center', fontSize: 12, color: Colors.textMuted, opacity: 0.3 }}>-</Text>;
+              return (
+                <View key={idx} style={{ width: 26, height: 26, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 12, color: Colors.border }}>-</Text>
+                </View>
+              );
             })}
           </View>
         </View>
+
+        {/* ROW PAREJA B */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsB} {bWon ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: bWon ? '900' : '400', color: bWon ? Colors.primary : Colors.textPrimary, fontSize: 14, flex: 1 }} numberOfLines={1}>{match.parejaB}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 }}>
+            <View style={{
+              width: 26, height: 26, borderRadius: 13,
+              backgroundColor: bWon ? Colors.primary + '15' : Colors.surfaceAlt,
+              borderColor: bWon ? Colors.primary : Colors.border,
+              borderWidth: 1,
+              justifyContent: 'center', alignItems: 'center'
+            }}>
+              <Text style={{ fontSize: 10, fontWeight: '800', color: bWon ? Colors.primary : Colors.textSecondary }}>
+                {getInitials(match.parejaB)}
+              </Text>
+            </View>
+            <Text style={{
+              fontSize: 15,
+              fontWeight: bWon ? '800' : '600',
+              color: bWon ? Colors.primary : Colors.textPrimary,
+              flex: 1
+            }} numberOfLines={1}>
+              {match.parejaB}
+            </Text>
+            <View style={{ width: 30, alignItems: 'center' }}>
+              <Text style={{
+                fontSize: 16,
+                fontWeight: '900',
+                color: bWon ? Colors.primary : Colors.textSecondary,
+              }}>
+                {isPlayed ? match.setsB : '-'}
+              </Text>
+            </View>
           </View>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
+          
+          <View style={{ flexDirection: 'row', gap: 6, marginLeft: 16 }}>
             {Array.from({ length: maxSets }).map((_, idx) => {
               const set = [match.set1, match.set2, match.set3][idx];
               if (set) {
+                const { a, b } = getSetPoints(set);
+                const wonSet = b > a;
                 return (
-                  <Text key={idx} style={{
-                    width: 24, textAlign: 'center', fontSize: 12,
-                    fontWeight: set.B > set.A ? '900' : '600',
-                    color: set.B > set.A ? Colors.textPrimary : Colors.textMuted,
+                  <View key={idx} style={{
+                    width: 26, height: 26, borderRadius: 6,
+                    backgroundColor: wonSet ? Colors.primary + '10' : Colors.surfaceAlt,
+                    justifyContent: 'center', alignItems: 'center',
+                    borderWidth: 1, borderColor: wonSet ? Colors.primary + '30' : 'transparent',
                   }}>
-                    {String(set.B).padStart(2, '0')}
-                  </Text>
+                    <Text style={{ fontSize: 12, fontWeight: wonSet ? '700' : '500', color: wonSet ? Colors.primary : Colors.textMuted }}>{b}</Text>
+                  </View>
                 );
               }
-              return <Text key={idx} style={{ width: 24, textAlign: 'center', fontSize: 12, color: Colors.textMuted, opacity: 0.3 }}>-</Text>;
+              return (
+                <View key={idx} style={{ width: 26, height: 26, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 12, color: Colors.border }}>-</Text>
+                </View>
+              );
             })}
           </View>
         </View>

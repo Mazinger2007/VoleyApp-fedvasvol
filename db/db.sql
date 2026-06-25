@@ -54,9 +54,12 @@ CREATE TABLE IF NOT EXISTS favorites (
     entity_type VARCHAR(20) NOT NULL
         CHECK (entity_type IN ('team', 'competition', 'league', 'tournament', 'match')),
     entity_id VARCHAR(100) NOT NULL,
+    sort_order INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, entity_type, entity_id)
 );
+CREATE INDEX IF NOT EXISTS idx_favorites_user_order
+    ON favorites (user_id, sort_order);
 
 CREATE INDEX IF NOT EXISTS idx_favorites_user ON favorites(user_id);
 CREATE INDEX IF NOT EXISTS idx_favorites_entity ON favorites(entity_type, entity_id);

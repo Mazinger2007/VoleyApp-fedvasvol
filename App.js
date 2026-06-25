@@ -16,7 +16,7 @@ import { FavoritesProvider } from './src/contexts/FavoritesContext';
 
 import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
 import { initTeamsData } from './src/constants/teamColors';
-import { hydrateTeamLogos } from './src/utils/teamCache';
+
 import { checkForNewNews } from './src/services/newsNotificationService';
 import NotificationBanner from './src/components/NotificationBanner';
 
@@ -24,23 +24,23 @@ import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
 import BlockedScreen from './src/screens/auth/BlockedScreen';
 import HomeScreen from './src/screens/home/HomeScreen';
-import MatchesScreen from './src/screens/MatchesScreen';
-import OldNewsScreen from './src/screens/NewsScreen';
+import MatchesScreen from './src/screens/matches/MatchesScreen';
+import OldNewsScreen from './src/screens/news/NewsScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 
-import LeagueScreen from './src/screens/LeagueScreen';
-import TournamentScreen from './src/screens/TournamentScreen';
-import TeamDetailScreen from './src/screens/TeamDetailScreen';
-import RankingTableScreen from './src/screens/RankingTableScreen';
-import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
-import MatchDetailScreen from './src/screens/MatchDetailScreen';
-import PostDetailScreen from './src/screens/PostDetailScreen';
-import BeachResultScreen from './src/screens/BeachResultScreen';
-import BeachScreen from './src/screens/BeachScreen';
-import BeachListScreen from './src/screens/BeachListScreen';
-import BeachMatchDetailScreen from './src/screens/BeachMatchDetailScreen';
-import BeachPairScreen from './src/screens/BeachPairScreen';
-import InfoScreen from './src/screens/InfoScreen';
+import LeagueScreen from './src/screens/leagues/LeagueScreen';
+import TournamentScreen from './src/screens/leagues/TournamentScreen';
+import TeamDetailScreen from './src/screens/leagues/TeamDetailScreen';
+import RankingTableScreen from './src/screens/leagues/RankingTableScreen';
+import JornadaDetailScreen from './src/screens/matches/JornadaDetailScreen';
+import MatchDetailScreen from './src/screens/matches/MatchDetailScreen';
+import PostDetailScreen from './src/screens/news/PostDetailScreen';
+import BeachResultScreen from './src/screens/beach/BeachResultScreen';
+import BeachScreen from './src/screens/beach/BeachScreen';
+import BeachListScreen from './src/screens/beach/BeachListScreen';
+import BeachMatchDetailScreen from './src/screens/beach/BeachMatchDetailScreen';
+import BeachPairScreen from './src/screens/beach/BeachPairScreen';
+import InfoScreen from './src/screens/leagues/InfoScreen';
 import AppInfoScreen from './src/screens/profile/AppInfoScreen';
 import LoadingView from './src/components/LoadingView';
 
@@ -268,7 +268,6 @@ export default function App() {
     async function prepare() {
       try {
         hydrateLogoColors();
-        hydrateTeamLogos();
         initTeamsData();
         if (ScreenOrientation?.lockAsync) {
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);

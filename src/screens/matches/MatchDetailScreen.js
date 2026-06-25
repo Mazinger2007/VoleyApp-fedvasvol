@@ -20,19 +20,20 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { MaterialIcons } from '@expo/vector-icons';
-import { Radius, Spacing, Typography, Shadow } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
-import StatusModal from '../components/StatusModal';
-import { getMatchSummary, parseMatchDateTime } from '../components/MatchList';
-import { getCachedLogoColorSync } from '../utils/logoColorCache';
-import { OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../constants/teamColors';
-import { fetchAndParse } from '../utils/htmlParser';
-import VenueMap from '../components/VenueMap';
-import { getTeamFromCache } from '../utils/teamCache';
-import PagerView from '../components/PagerViewWrapper';
+import { Radius, Spacing, Typography, Shadow } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import StatusModal from '../../components/StatusModal';
+import { getMatchSummary, parseMatchDateTime } from '../../components/MatchList';
+import { getCachedLogoColorSync } from '../../utils/logoColorCache';
+import { OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../../constants/teamColors';
+import { fetchAndParse } from '../../utils/htmlParser';
+import LoadingView from '../../components/LoadingView';
+import VenueMap from '../../components/VenueMap';
+import { getTeamFromCache } from '../../utils/teamCache';
+import PagerView from '../../components/PagerViewWrapper';
 import * as Calendar from 'expo-calendar';
 import axios from 'axios';
-import { supabase } from '../utils/supabase';
+import { supabase } from '../../utils/supabase';
 
 const { width: SCREEN_WIDTH_PROB } = Dimensions.get('window');
 const SCREEN_WIDTH = SCREEN_WIDTH_PROB || 375;
@@ -1118,8 +1119,26 @@ export default function MatchDetailScreen({ route, navigation }) {
               </View>
               <View style={[styles.totalRow, { backgroundColor: Colors.primaryAlpha10 }]}>
                 <Text style={[styles.totalLabel, { color: Colors.textPrimary }]}>SETS</Text>
-                <Text style={[styles.totalValue, { color: Colors.primary }]}>{summary.homeScore}</Text>
-                <Text style={[styles.totalValue, { color: Colors.textMuted }]}>{summary.awayScore}</Text>
+                <Text style={[
+                  styles.totalValue,
+                  {
+                    color: summary.homeScore > summary.awayScore
+                      ? Colors.primary
+                      : (summary.awayScore > summary.homeScore ? Colors.textMuted : Colors.textPrimary)
+                  }
+                ]}>
+                  {summary.homeScore}
+                </Text>
+                <Text style={[
+                  styles.totalValue,
+                  {
+                    color: summary.awayScore > summary.homeScore
+                      ? Colors.primary
+                      : (summary.homeScore > summary.awayScore ? Colors.textMuted : Colors.textPrimary)
+                  }
+                ]}>
+                  {summary.awayScore}
+                </Text>
                 <Text style={[styles.finalLabel, { color: Colors.primary }]}>Final</Text>
               </View>
             </View>
@@ -1293,6 +1312,8 @@ export default function MatchDetailScreen({ route, navigation }) {
       });
     }
   }, [calendarUrl, navigation, route.params]);
+
+  if (matchBlocksLoading) return <LoadingView variant="clean" message="Cargando detalles del partido…" />;
 
   return (
     <SafeAreaView style={[styles.safe, { backgroundColor: Colors.background }]} edges={['top']}>

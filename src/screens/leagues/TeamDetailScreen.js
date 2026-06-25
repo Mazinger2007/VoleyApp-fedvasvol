@@ -3,8 +3,8 @@
 // Muestra: hero con escudo, stats, próximos y partidos jugados.
 
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { getTeamColor, getClubBaseName, subscribeColors, CLUB_BASE_COLORS } from '../constants/teamColors';
-import { supabase } from '../utils/supabase';
+import { getTeamColor, getClubBaseName, subscribeColors, CLUB_BASE_COLORS } from '../../constants/teamColors';
+import { supabase } from '../../utils/supabase';
 import {
   View,
   Text,
@@ -19,15 +19,15 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons } from '@expo/vector-icons';
-import LoadingView from '../components/LoadingView';
-import { useFetch } from '../hooks/useFetch';
-import { toAbsoluteUrl } from '../utils/htmlParser';
-import { getDominantBorderColor } from '../utils/imageColor';
-import { Spacing, Typography, Radius } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
-import { useFavorites } from '../contexts/FavoritesContext';
-import { getMatchSummary, parseMatchDateTime, MatchCard, rowToMatch } from '../components/MatchList';
-import { loadTeamDetailsCache, saveTeamDetailsCache } from '../utils/teamCache';
+import LoadingView from '../../components/LoadingView';
+import { useFetch } from '../../hooks/useFetch';
+import { toAbsoluteUrl } from '../../utils/htmlParser';
+import { getDominantBorderColor } from '../../utils/imageColor';
+import { Spacing, Typography, Radius } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useFavorites } from '../../contexts/FavoritesContext';
+import { getMatchSummary, parseMatchDateTime, MatchCard, rowToMatch } from '../../components/MatchList';
+import { loadTeamDetailsCache, saveTeamDetailsCache } from '../../utils/teamCache';
 
 // Componente para items de competición reutilizable
 const CompItem = ({ comp, navigation, teamName, isDark, Colors, Radius, heroAccent }) => (
@@ -66,7 +66,7 @@ const CompItem = ({ comp, navigation, teamName, isDark, Colors, Radius, heroAcce
         )}
       </View>
     </View>
-    <MaterialIcons name="chevron-right" size={20} color={Colors.textMuted} />
+    <MaterialIcons name="chevron-right" size={20} color={Colors.textMuted} style={{ alignSelf: 'flex-start', marginTop: 8 }} />
   </TouchableOpacity>
 );
 
@@ -306,6 +306,12 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   const loading = (!rankingBlocks && teamFetch.loading) || (!skipCalendarFetch && calendarFetch.loading);
   const error = teamFetch.error || calendarFetch.error;
+
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setReady(true), 700);
+    return () => clearTimeout(t);
+  }, []);
   
   const refresh = useCallback(() => {
     if (teamUrl) teamFetch.refresh();
@@ -367,6 +373,7 @@ export default function TeamDetailScreen({ route, navigation }) {
   const [dbColor, setDbColor] = useState(null);
   const [logoError, setLogoError] = useState(false);
   const [showAllLastMatches, setShowAllLastMatches] = useState(false);
+  const [showAllComps, setShowAllComps] = useState(false);
 
   const initials = useMemo(() => getInitials(teamName), [teamName]);
   const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogoResolved), [teamLogoResolved]);
@@ -543,12 +550,11 @@ export default function TeamDetailScreen({ route, navigation }) {
   }, [teamContext, matchTables, calendarBlocks, teamName, teamCache]);
 
   const { upcomingMatches, playedMatches } = useMemo(() => {
-    const withSummary = teamMatches.map(m => {
+    const withSummary = teamMatches.map((m, idx) => {
       const summary = getMatchSummary(m);
       const dateObj = parseMatchDateTime(summary.rawDate);
       const ts = dateObj ? dateObj.getTime() : 0;
-      // UNIFICAR: Asegurar que el objeto match tenga los campos de summary
-      return { match: { ...m, ...summary }, ts, state: summary.state };
+      return { match: { ...m, ...summary }, ts, state: summary.state, idx };
     });
 
     const upcoming = withSummary
@@ -558,7 +564,7 @@ export default function TeamDetailScreen({ route, navigation }) {
 
     const played = withSummary
       .filter(m => m.state === 'finished')
-      .sort((a, b) => b.ts - a.ts)
+      .sort((a, b) => a.idx - b.idx)
       .map(m => m.match);
 
     return { upcomingMatches: upcoming, playedMatches: played };
@@ -590,25 +596,32 @@ export default function TeamDetailScreen({ route, navigation }) {
     }
     const source = competitions.length > 0 ? competitions : (teamCache?.competitions || []);
     const kept = new Set();
+    const seasonMaxYear = (s) => {
+      const nums = (String(s || '').match(/\d+/g) || []).map(Number);
+      const years = nums.map(n => n < 100 ? n + 2000 : n);
+      return years.length > 0 ? Math.max(...years) : NaN;
+    };
     source.forEach(comp => {
       const season = String(comp.season || '');
       if (kept.has(comp.title)) return;
-      if (season && !season.includes('2025') && !season.includes('2026')) return;
+      if (tournamentTitle && comp.title === tournamentTitle) return;
+      const maxYear = seasonMaxYear(season);
+      if (season && !season.includes('2025') && !season.includes('2026') && maxYear < 2025) return;
       kept.add(comp.title);
       items.push(comp);
     });
     items.sort((a, b) => {
-      const sA = parseInt(String(a.season || ''), 10);
-      const sB = parseInt(String(b.season || ''), 10);
+      const sA = seasonMaxYear(a.season);
+      const sB = seasonMaxYear(b.season);
       if (isNaN(sA) && isNaN(sB)) return 0;
-      if (isNaN(sA)) return 1;
-      if (isNaN(sB)) return -1;
+      if (isNaN(sA)) return -1;
+      if (isNaN(sB)) return 1;
       return sB - sA;
     });
     return items;
   }, [tournamentTitle, competitions, teamCache]);
 
-  if (loading) return <LoadingView variant="clean" message={`Cargando ${teamName}…`} />;
+  if (!ready || loading) return <LoadingView variant="clean" message={`Cargando ${teamName}…`} />;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f8' }} edges={['top']}>
@@ -772,10 +785,22 @@ export default function TeamDetailScreen({ route, navigation }) {
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
             <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
             <View style={{ gap: 10 }}>
-              {mergedCompetitions.map((comp, idx) => (
+              {(showAllComps ? mergedCompetitions : mergedCompetitions.slice(0, 5)).map((comp, idx) => (
                 <CompItem key={`comp-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
               ))}
             </View>
+            {mergedCompetitions.length > 5 && (
+              <TouchableOpacity
+                onPress={() => setShowAllComps(!showAllComps)}
+                activeOpacity={0.7}
+                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, marginTop: 4, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg }}
+              >
+                <Text style={{ color: heroAccent, fontWeight: '800', fontSize: 12, textTransform: 'uppercase' }}>
+                  {showAllComps ? 'Ocultar' : `Ver más (${mergedCompetitions.length})`}
+                </Text>
+                <MaterialIcons name={showAllComps ? 'expand-less' : 'expand-more'} size={20} color={heroAccent} />
+              </TouchableOpacity>
+            )}
           </View>
         )}
 

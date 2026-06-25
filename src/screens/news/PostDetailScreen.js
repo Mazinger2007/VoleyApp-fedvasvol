@@ -1,10 +1,11 @@
-import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Linking, Dimensions, Modal, Platform, Animated, PanResponder } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { fetchAndParse } from '../utils/htmlParser';
-import { Spacing } from '../styles/theme';
+import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Linking, Dimensions } from 'react-native';
+import GalleryViewer from '../../components/GalleryViewer';
+import { useTheme } from '../../contexts/ThemeContext';
+import { fetchAndParse } from '../../utils/htmlParser';
+import { Spacing } from '../../styles/theme';
 
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -57,59 +58,8 @@ export default function PostDetailScreen({ route, navigation }) {
   const [post, setPost] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fullScreenIdx, setFullScreenIdx] = useState(null);
-  const [zoomActive, setZoomActive] = useState(false);
-  const panY = useRef(new Animated.Value(0)).current;
-  const zoomScale = useRef(new Animated.Value(1)).current;
-  const panXY = useRef(new Animated.ValueXY()).current;
-  const scaleRef = useRef(1);
-  const panRef = useRef({ x: 0, y: 0 });
-  const panBaseRef = useRef({ x: 0, y: 0 });
-  const lastTapRef = useRef(0);
-  const lastPinchRef = useRef({ dist: 0, scale: 1 });
-  const pinchTrackingRef = useRef(false);
-  const activeTouchesRef = useRef(0);
-  const perImageZoom = useRef({});
-  const PAN_SENSITIVITY = 1.8;
 
-  const currentImageUrl = useMemo(() => {
-    if (fullScreenIdx === -1) return post?.image || null;
-    if (fullScreenIdx >= 0 && post?.gallery?.length > 0) return post.gallery[fullScreenIdx] || null;
-    return null;
-  }, [fullScreenIdx, post]);
-
-  const closeFullScreen = useCallback(() => {
-    scaleRef.current = 1;
-    panRef.current = { x: 0, y: 0 };
-    panBaseRef.current = { x: 0, y: 0 };
-    setZoomActive(false);
-    zoomScale.setValue(1);
-    panXY.setValue({ x: 0, y: 0 });
-    Animated.timing(panY, { toValue: 0, duration: 150, useNativeDriver: false }).start(() => setFullScreenIdx(null));
-  }, [panY, zoomScale, panXY]);
-
-  const panResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_, g) => g.dy > 15 && Math.abs(g.dx) < Math.abs(g.dy) * 1.5,
-    onMoveShouldSetPanResponderCapture: (e, g) => {
-      if (!zoomActive && scaleRef.current <= 1 && (e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2)) {
-        setZoomActive(true);
-      }
-      return false;
-    },
-    onPanResponderMove: (_, g) => {
-      panY.setValue(Math.max(0, g.dy * 0.4));
-    },
-    onPanResponderRelease: (_, g) => {
-      if (g.dy > 100) {
-        closeFullScreen();
-      } else {
-        Animated.spring(panY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
-      }
-    },
-    onPanResponderTerminate: () => {
-      Animated.spring(panY, { toValue: 0, useNativeDriver: false, bounciness: 6 }).start();
-    },
-  })).current;
+  const closeFullScreen = useCallback(() => { setFullScreenIdx(null); }, []);
 
   useEffect(() => {
     if (!postUrl) {
@@ -132,100 +82,6 @@ export default function PostDetailScreen({ route, navigation }) {
     })();
     return () => { cancelled = true; };
   }, [postUrl]);
-
-  const getDistance = useCallback((touches) => {
-    if (!touches || touches.length < 2) return 0;
-    const dx = touches[0].pageX - touches[1].pageX;
-    const dy = touches[0].pageY - touches[1].pageY;
-    return Math.sqrt(dx * dx + dy * dy);
-  }, []);
-
-  const zoomPanResponder = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (e, g) => {
-      return scaleRef.current > 1 || e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2;
-    },
-    onStartShouldSetPanResponderCapture: () => false,
-    onMoveShouldSetPanResponderCapture: (e, g) => {
-      return scaleRef.current > 1 || e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2;
-    },
-    onPanResponderGrant: (e, _g) => {
-      panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
-      pinchTrackingRef.current = false;
-    },
-    onPanResponderMove: (e, gestureState) => {
-      const touches = e.nativeEvent.touches;
-      const multi = (touches?.length >= 2) || gestureState.numberActiveTouches >= 2;
-      if (multi) {
-        let dist = 0;
-        if (touches?.length >= 2) dist = getDistance(touches);
-        if (dist > 0) {
-          if (!pinchTrackingRef.current) {
-            pinchTrackingRef.current = true;
-            lastPinchRef.current = { dist, scale: scaleRef.current };
-          } else {
-            const ratio = dist / lastPinchRef.current.dist;
-            const damped = 1 + (ratio - 1) * 0.5;
-            const newScale = Math.max(1, Math.min(4, lastPinchRef.current.scale * damped));
-            scaleRef.current = newScale;
-            zoomScale.setValue(newScale);
-            lastPinchRef.current = { dist, scale: newScale };
-            if (!zoomActive) setZoomActive(true);
-          }
-        }
-      } else {
-        pinchTrackingRef.current = false;
-        if (scaleRef.current > 1) {
-          const s = scaleRef.current;
-          const maxPx = (SCREEN_WIDTH * (s - 1)) / 2;
-          const maxPy = Math.max(0, (SCREEN_HEIGHT * 0.8 * s - SCREEN_HEIGHT) / 2);
-          let tx = Math.max(-maxPx, Math.min(maxPx, panBaseRef.current.x + PAN_SENSITIVITY * gestureState.dx / s));
-          let ty = Math.max(-maxPy, Math.min(maxPy, panBaseRef.current.y + PAN_SENSITIVITY * gestureState.dy / s));
-          panRef.current = { x: tx, y: ty };
-          panXY.x.setValue(tx);
-          panXY.y.setValue(ty);
-        }
-      }
-    },
-    onPanResponderRelease: () => {
-      pinchTrackingRef.current = false;
-      const s = scaleRef.current;
-      if (s < 1) {
-        scaleRef.current = 1;
-        panRef.current = { x: 0, y: 0 };
-        panBaseRef.current = { x: 0, y: 0 };
-        setZoomActive(false);
-        Animated.parallel([
-          Animated.spring(zoomScale, { toValue: 1, useNativeDriver: true }),
-          Animated.spring(panXY, { toValue: { x: 0, y: 0 }, useNativeDriver: true }),
-        ]).start();
-      } else if (s > 4) {
-        scaleRef.current = 4;
-        Animated.spring(zoomScale, { toValue: 4, useNativeDriver: true }).start();
-      }
-    },
-  })).current;
-
-  const handleImageDoubleTap = useCallback(() => {
-    const now = Date.now();
-    if (now - lastTapRef.current < 300) {
-      if (scaleRef.current > 1.5) {
-        scaleRef.current = 1;
-        panRef.current = { x: 0, y: 0 };
-        panBaseRef.current = { x: 0, y: 0 };
-        setZoomActive(false);
-        Animated.parallel([
-          Animated.spring(zoomScale, { toValue: 1, useNativeDriver: true }),
-          Animated.spring(panXY, { toValue: { x: 0, y: 0 }, useNativeDriver: true }),
-        ]).start();
-      } else {
-        scaleRef.current = 2.5;
-        setZoomActive(true);
-        Animated.spring(zoomScale, { toValue: 2.5, useNativeDriver: true }).start();
-      }
-    }
-    lastTapRef.current = now;
-  }, []);
 
   const BEACH_PDF_PATTERN = /(sub[_-]?\d+|u[_-]?\d+)/i;
 
@@ -323,13 +179,6 @@ export default function PostDetailScreen({ route, navigation }) {
     emptyWrap: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
     emptyText: { color: Colors.textMuted, fontSize: 16, fontWeight: '500', textAlign: 'center' },
     emptyIcon: { opacity: 0.3, marginBottom: Spacing.md },
-    modalOverlay: { flex: 1, backgroundColor: '#000' },
-    modalClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
-    modalScroll: { flex: 1 },
-    modalPage: { width: SCREEN_WIDTH, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    modalImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
-    modalCounter: { position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20 },
-    modalCounterText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   }), [Colors]);
 
   if (loading) {
@@ -447,91 +296,12 @@ export default function PostDetailScreen({ route, navigation }) {
           ) : null}
         </View>
       </ScrollView>
-      <Modal visible={fullScreenIdx !== null} transparent animationType="fade" statusBarTranslucent onRequestClose={closeFullScreen}>
-        <View style={styles.modalOverlay} {...panResponder.panHandlers}
-          onTouchStart={() => { activeTouchesRef.current++; if (activeTouchesRef.current >= 2) setZoomActive(true); }}
-          onTouchEnd={() => { activeTouchesRef.current = Math.max(0, activeTouchesRef.current - 1); }}
-        >
-          <TouchableOpacity style={styles.modalClose} onPress={closeFullScreen} activeOpacity={0.7}>
-            <MaterialIcons name="close" size={28} color="#fff" />
-          </TouchableOpacity>
-          <Animated.View style={[StyleSheet.absoluteFill, { transform: [{ translateY: panY }] }]}>
-          {fullScreenIdx === -1 && post?.image ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap}>
-                <Image source={{ uri: post.image }} style={styles.modalImage} resizeMode="contain" />
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          {fullScreenIdx !== null && fullScreenIdx >= 0 && post?.gallery?.length > 1 ? (
-            <ScrollView
-              horizontal
-              pagingEnabled
-              showsHorizontalScrollIndicator={false}
-              style={styles.modalScroll}
-              scrollEnabled={!zoomActive}
-              canCancelContentTouches={zoomActive}
-              delaysContentTouches={false}
-              contentOffset={{ x: fullScreenIdx * SCREEN_WIDTH, y: 0 }}
-              onMomentumScrollEnd={(e) => {
-                const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_WIDTH);
-                if (idx !== fullScreenIdx) {
-                  if (!perImageZoom.current[fullScreenIdx]) perImageZoom.current[fullScreenIdx] = { scale: 1, x: 0, y: 0 };
-                  perImageZoom.current[fullScreenIdx] = { scale: scaleRef.current, x: panRef.current.x, y: panRef.current.y };
-                  const z = perImageZoom.current[idx] || { scale: 1, x: 0, y: 0 };
-                  scaleRef.current = z.scale;
-                  panRef.current = { x: z.x, y: z.y };
-                  panBaseRef.current = { x: z.x, y: z.y };
-                  zoomScale.setValue(z.scale);
-                  panXY.setValue({ x: z.x, y: z.y });
-                  setZoomActive(z.scale > 1);
-                }
-                setFullScreenIdx(idx);
-              }}
-            >
-              {post.gallery.map((img, i) => (
-                <View key={i} style={styles.modalPage}>
-                  <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap}>
-                      <Image source={{ uri: img }} style={styles.modalImage} resizeMode="contain" />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </ScrollView>
-          ) : null}
-          {fullScreenIdx !== null && fullScreenIdx >= 0 && post?.gallery?.length === 1 ? (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-              <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap}>
-                <Image source={{ uri: post.gallery[0] }} style={styles.modalImage} resizeMode="contain" />
-              </TouchableOpacity>
-            </View>
-          ) : null}
-          {fullScreenIdx !== null ? (
-            <View style={styles.modalCounter}>
-              <Text style={styles.modalCounterText}>
-                {fullScreenIdx === -1 ? '1 / 1' : `${fullScreenIdx + 1} / ${post?.gallery?.length || 1}`}
-              </Text>
-            </View>
-          ) : null}
-          {zoomActive ? (
-            <View style={StyleSheet.absoluteFill} {...zoomPanResponder.panHandlers}>
-              <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap}>
-                  <Animated.View style={{ transform: [
-                    { translateX: panXY.x },
-                    { translateY: panXY.y },
-                    { scale: zoomScale },
-                  ]}}>
-                    <Image source={{ uri: currentImageUrl }} style={styles.modalImage} resizeMode="contain" />
-                  </Animated.View>
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : null}
-          </Animated.View>
-        </View>
-      </Modal>
+      <GalleryViewer
+        visible={fullScreenIdx !== null}
+        images={fullScreenIdx === -1 ? (post?.image ? [post.image] : []) : (post?.gallery || [])}
+        initialIndex={fullScreenIdx === -1 ? 0 : (fullScreenIdx >= 0 ? fullScreenIdx : 0)}
+        onClose={closeFullScreen}
+      />
     </SafeAreaView>
   );
 }

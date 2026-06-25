@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Image, Animated,
@@ -10,6 +10,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTheme, ACCENT_COLORS } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useFavorites } from '../../contexts/FavoritesContext';
+import DragReorderSection from '../../components/DragReorderSection';
 import AuthModal from '../../components/AuthModal';
 import ContactModal from '../../components/ContactModal';
 import StatusModal from '../../components/StatusModal';
@@ -78,7 +79,7 @@ const NOTIFY_KEY = '@notifications_enabled';
 export default function ProfileScreen({ navigation }) {
   const { colors, isDark, toggleTheme, accentKey, changeAccent } = useTheme();
   const { userProfile, isGuest, signOut } = useAuth();
-  const { favorites, removeFavorite } = useFavorites();
+  const { favorites, removeFavorite, reorderFavorites } = useFavorites();
 
   const [avatarUri, setAvatarUri] = useState(null);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -135,6 +136,41 @@ export default function ProfileScreen({ navigation }) {
     await AsyncStorage.setItem(NOTIFY_KEY, String(val));
   }, []);
 
+  const [scrollEnabled, setScrollEnabled] = useState(true);
+
+  const favLeagues = useMemo(() => favorites.filter(f => f.entityType === 'league' || f.entityType === 'competition'), [favorites]);
+  const favTeams = useMemo(() => favorites.filter(f => f.entityType === 'team'), [favorites]);
+
+  const renderFavRow = useCallback((fav, i, listLen, isDragging) => {
+    const isTeam = fav.entityType === 'team';
+    const iconName = isTeam ? 'shield' : 'sports-volleyball';
+    return (
+      <View style={[styles.favRow, i < listLen - 1 && { borderBottomWidth: 1, borderBottomColor: colors.divider }]}>
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <View style={[styles.favIconWrap, { backgroundColor: isTeam ? colors.primaryAlpha15 : colors.primaryAlpha10 }]}>
+            <MaterialIcons name={iconName} size={16} color={colors.primary} />
+          </View>
+          <View style={styles.favInfo}>
+            <Text style={[styles.favName, { color: colors.textPrimary }]} numberOfLines={1}>
+              {fav.entityName}
+            </Text>
+            <Text style={[styles.favType, { color: colors.textMuted }]}>
+              {isTeam ? 'Equipo' : fav.entityType === 'league' ? 'Liga' : fav.entityType}
+            </Text>
+          </View>
+        </View>
+        <View
+          onStartShouldSetResponderCapture={() => true}
+          onStartShouldSetResponder={() => true}
+          onResponderRelease={() => removeFavorite(fav.entityType, fav.entityId)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <MaterialIcons name="favorite" size={18} color={colors.error} />
+        </View>
+      </View>
+    );
+  }, [colors, removeFavorite]);
+
   const displayName = userProfile?.username || (isGuest ? 'Invitado' : userProfile?.email || 'Usuario');
   const emailText = userProfile?.email || '';
   const favCount = favorites.length;
@@ -143,7 +179,7 @@ export default function ProfileScreen({ navigation }) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView scrollEnabled={scrollEnabled} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
 
         {/* Hero Section */}
         <View style={[styles.hero, { backgroundColor: colors.primary }]}>
@@ -258,51 +294,68 @@ export default function ProfileScreen({ navigation }) {
         {favorites.length > 0 && (
           <>
             <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Favoritos</Text>
-            <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              {favorites.slice(0, 6).map((fav, i) => {
-                const isTeam = fav.entityType === 'team';
-                const iconName = isTeam ? 'shield' : 'sports-volleyball';
-                return (
-                  <TouchableOpacity
-                    key={`${fav.entityType}-${fav.entityId}-${i}`}
-                    style={[styles.favRow, i < Math.min(favorites.length, 6) - 1 && { borderBottomWidth: 1, borderBottomColor: colors.divider }]}
-                    onPress={() => {
-                      if (isTeam) {
+
+            {/* ── Ligas ── */}
+            {favLeagues.length > 0 && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>LIGAS ({favLeagues.length})</Text>
+                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <DragReorderSection
+                    items={favLeagues}
+                    renderItem={(fav, i, listLen, isDragging) => renderFavRow(fav, i, listLen, isDragging)}
+                    onReorder={(from, to) => {
+                      const fromFav = favLeagues[from];
+                      const toFav = favLeagues[to];
+                      if (fromFav && toFav) {
+                        const gFrom = favorites.indexOf(fromFav);
+                        const gTo = favorites.indexOf(toFav);
+                        if (gFrom >= 0 && gTo >= 0) reorderFavorites(gFrom, gTo);
+                      }
+                    }}
+                    keyExtractor={(fav) => `${fav.entityType}-${fav.entityId}`}
+                    onDragStateChange={(canScroll) => setScrollEnabled(canScroll)}
+                    onItemPress={(fav) => {
+                      if (fav.entityType === 'team') {
                         navigation.navigate('TeamDetail', { teamName: fav.entityName, teamUrl: fav.entityId });
                       } else if (fav.entityType === 'league' || fav.entityType === 'competition') {
                         navigation.navigate('League', { url: fav.entityId, title: fav.entityName });
                       }
                     }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.favIconWrap, { backgroundColor: isTeam ? colors.primaryAlpha15 : colors.primaryAlpha10 }]}>
-                      <MaterialIcons name={iconName} size={16} color={colors.primary} />
-                    </View>
-                    <View style={styles.favInfo}>
-                      <Text style={[styles.favName, { color: colors.textPrimary }]} numberOfLines={1}>
-                        {fav.entityName}
-                      </Text>
-                      <Text style={[styles.favType, { color: colors.textMuted }]}>
-                        {isTeam ? 'Equipo' : fav.entityType === 'league' ? 'Liga' : fav.entityType}
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      onPress={() => removeFavorite(fav.entityType, fav.entityId)}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      <MaterialIcons name="favorite" size={18} color={colors.error} />
-                    </TouchableOpacity>
-                  </TouchableOpacity>
-                );
-              })}
-              {favorites.length > 6 && (
-                <View style={styles.favMore}>
-                  <Text style={[styles.favMoreText, { color: colors.textMuted }]}>
-                    +{favorites.length - 6} más
-                  </Text>
+                  />
                 </View>
-              )}
-            </View>
+              </View>
+            )}
+
+            {/* ── Equipos ── */}
+            {favTeams.length > 0 && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={[styles.sectionHeader, { color: colors.textMuted }]}>EQUIPOS ({favTeams.length})</Text>
+                <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <DragReorderSection
+                    items={favTeams}
+                    renderItem={(fav, i, listLen, isDragging) => renderFavRow(fav, i, listLen, isDragging)}
+                    onReorder={(from, to) => {
+                      const fromFav = favTeams[from];
+                      const toFav = favTeams[to];
+                      if (fromFav && toFav) {
+                        const gFrom = favorites.indexOf(fromFav);
+                        const gTo = favorites.indexOf(toFav);
+                        if (gFrom >= 0 && gTo >= 0) reorderFavorites(gFrom, gTo);
+                      }
+                    }}
+                    keyExtractor={(fav) => `${fav.entityType}-${fav.entityId}`}
+                    onDragStateChange={(canScroll) => setScrollEnabled(canScroll)}
+                    onItemPress={(fav) => {
+                      if (fav.entityType === 'team') {
+                        navigation.navigate('TeamDetail', { teamName: fav.entityName, teamUrl: fav.entityId });
+                      } else if (fav.entityType === 'league' || fav.entityType === 'competition') {
+                        navigation.navigate('League', { url: fav.entityId, title: fav.entityName });
+                      }
+                    }}
+                  />
+                </View>
+              </View>
+            )}
           </>
         )}
 
@@ -490,6 +543,12 @@ const styles = StyleSheet.create({
   },
 
   divider: { height: 1 },
+
+  sectionHeader: {
+    fontSize: 10, fontWeight: '700', textTransform: 'uppercase',
+    letterSpacing: 1, marginBottom: 6, paddingHorizontal: 4,
+    textAlign: 'center',
+  },
 
   favRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,

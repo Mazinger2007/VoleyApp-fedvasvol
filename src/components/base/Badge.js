@@ -35,15 +35,6 @@ export default function Badge({ label, variant = 'info', size = 'sm', style }) {
   );
 }
 
-export function LiveIndicator({ text }) {
-  return (
-    <View style={styles.liveContainer}>
-      <View style={styles.liveDot} />
-      <Text style={styles.liveText}>{text || 'EN VIVO'}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   badge: {
     flexDirection: 'row',
@@ -78,24 +69,5 @@ const styles = StyleSheet.create({
   },
   iconSm: {
     fontSize: 8,
-  },
-  liveContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    alignSelf: 'flex-start',
-  },
-  liveDot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: '#DC2626',
-  },
-  liveText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: '#DC2626',
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
   },
 });

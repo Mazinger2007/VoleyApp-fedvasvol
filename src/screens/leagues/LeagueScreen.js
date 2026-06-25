@@ -1,21 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, RefreshControl, StyleSheet, StatusBar, Image,
-  Linking, Alert, Platform, PanResponder, Animated, Easing, useWindowDimensions, Modal, TextInput
+  Linking, Alert, Platform, useWindowDimensions, Modal, TextInput
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import PagerView from '../components/PagerViewWrapper';
-const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
+
 import { MaterialIcons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
-import CompetitionTable from '../components/CompetitionTable';
-import MatchList, { parseMatchDateTime, getMatchSummary, formatMatchDisplayDate } from '../components/MatchList';
-import Bracket from '../components/Bracket';
-import LoadingView from '../components/LoadingView';
-import ErrorView from '../components/ErrorView';
-import { useFetch } from '../hooks/useFetch';
-import { useLivePolling } from '../hooks/useLivePolling';
+import CompetitionTable from '../../components/CompetitionTable';
+import MatchList, { parseMatchDateTime, getMatchSummary, formatMatchDisplayDate } from '../../components/MatchList';
+import Bracket from '../../components/Bracket';
+import LoadingView from '../../components/LoadingView';
+import ErrorView from '../../components/ErrorView';
+import { useFetch } from '../../hooks/useFetch';
+import { useLivePolling } from '../../hooks/useLivePolling';
 import {
   discoverCalendarUrlFromRanking,
   discoverSeasonLabel,
@@ -23,15 +22,15 @@ import {
   extractPhaseLinks,
   discoverAllPhases,
   fetchChampionshipData,
-} from '../utils/htmlParser';
-import { isTournament } from '../utils/navigationHelper';
-import { getDominantBorderColor } from '../utils/imageColor';
-import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
-import { Radius, Spacing, Typography } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
-import { useFavorites } from '../contexts/FavoritesContext';
-import StatusModal from '../components/StatusModal';
-import { cacheTeamsFromRanking, getTeamFromCache, clearTeamCache } from '../utils/teamCache';
+} from '../../utils/htmlParser';
+import { isTournament } from '../../utils/navigationHelper';
+import { getDominantBorderColor } from '../../utils/imageColor';
+import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../../utils/logoColorCache';
+import { Radius, Spacing, Typography } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { useFavorites } from '../../contexts/FavoritesContext';
+import StatusModal from '../../components/StatusModal';
+import { cacheTeamsFromRanking, getTeamFromCache, clearTeamCache } from '../../utils/teamCache';
 
 function ensureCalendarAllUrl(value = '') {
   if (!value) return value;
@@ -259,7 +258,6 @@ export default function LeagueScreen({ route, navigation }) {
   };
 
   const [activeTab, setActiveTab] = useState(defaultTab || 'ranking');
-  const pagerRef = useRef(null);
   const [expandedCalendar, setExpandedCalendar] = useState({});
   // Track the last selected jornada index
   const [selectedJornadaIndex, setSelectedJornadaIndex] = useState(null);
@@ -280,64 +278,9 @@ export default function LeagueScreen({ route, navigation }) {
 
   const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDate;
 
-  // ── Animación sincronizada con Scroll (PagerView) ──
-  // Usamos position + offset para saber la posición exacta decimal (ej: 0.5 es mitad de camino)
-  const positionAnim = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
-  const offsetAnim = useRef(new Animated.Value(0)).current;
-  // `pagerScrollNative` se actualiza en el hilo de UI (nativo) y se usa para transformaciones (translate, scale).
-  const pagerScrollNative = useMemo(() => Animated.add(positionAnim, offsetAnim), [positionAnim, offsetAnim]);
-
-  // `pagerScrollJS` se actualiza en el hilo de JS a través de un listener. Se usa para animar props no-nativas (color).
-  const pagerScrollJS = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
-
-  // Handler de scroll definido a nivel superior para evitar error de hooks
-  const onPageScrollHandler = useMemo(() => Animated.event(
-    [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
-    {
-      useNativeDriver: true,
-      listener: (e) => {
-        const { position, offset } = e.nativeEvent;
-        pagerScrollJS.setValue(position + offset);
-      }
-    }
-  ), [positionAnim, offsetAnim, pagerScrollJS]);
-
-
-
-  // Colores para interpolación
-  const activeTextColor = isDark ? Colors.textOnPrimary : Colors.primary;
-  const inactiveTextColor = Colors.textMuted;
-
-  // Dimensiones
-  const tabPadding = Spacing.md;
-  const tabWidth = (screenWidth - tabPadding * 2) / 2;
-
-  // Interpolaciones
-  const tabIndicatorTranslateX = pagerScrollNative.interpolate({
-    inputRange: [0, 1],
-    outputRange: [tabPadding, tabPadding + tabWidth],
-    extrapolate: 'clamp',
-  });
-
-  const rankingTextColor = pagerScrollJS.interpolate({
-    inputRange: [0, 1],
-    outputRange: [activeTextColor, inactiveTextColor],
-    extrapolate: 'clamp',
-  });
-
-  const calendarTextColor = pagerScrollJS.interpolate({
-    inputRange: [0, 1],
-    outputRange: [inactiveTextColor, activeTextColor],
-    extrapolate: 'clamp',
-  });
-
   const switchTab = useCallback((nextTab) => {
     if (!nextTab || nextTab === activeTab) return;
-    // Optimizacion: No actualizamos estado aquí para evitar bloquear la UI durante cargas pesadas.
-    // El PagerView actualizará el activeTab vía onPageSelected cuando la animación nativa progrese.
-    if (pagerRef.current) {
-      pagerRef.current.setPage(nextTab === 'ranking' ? 0 : 1);
-    }
+    setActiveTab(nextTab);
   }, [activeTab]);
 
   const initialRankingUrl = useMemo(() => getUrlWithSeason(toRankingUrl(url)), [url, season]);
@@ -386,6 +329,13 @@ export default function LeagueScreen({ route, navigation }) {
   const phaseHashMatch = currentRankingUrl?.match(/#phase-(\d+)/);
   const phaseIndex = phaseHashMatch ? parseInt(phaseHashMatch[1], 10) : -1;
   const fetchRankingUrl = phaseIndex >= 0 ? currentRankingUrl.split('#')[0] : currentRankingUrl;
+
+  const [urlResolved, setUrlResolved] = useState(!!fetchRankingUrl);
+  const urlIsPending = !urlResolved && isFetchingSubgroups;
+
+  useEffect(() => {
+    if (fetchRankingUrl) setUrlResolved(true);
+  }, [fetchRankingUrl]);
 
   const {
     blocks: rawRankingBlocks,
@@ -841,18 +791,22 @@ export default function LeagueScreen({ route, navigation }) {
       const currentRoute = navState.routes[navState.index];
       if (currentRoute && currentRoute.name === 'JornadaDetail') {
         const table = calendarTables[selectedJornadaIndex];
-        const rawTitle = table.title || `Jornada ${calendarTables.length - selectedJornadaIndex}`;
-        // FIX: Limpiar fecha del título igual que en el render (ej: "Jornada 1 - 12/10..." -> "Jornada 1")
-        const displayTitle = rawTitle.replace(/\s*[-–—(]\s*\d{1,2}[\/\-]\d{1,2}.*$/, '').trim();
+        // Evitar doble transición de slide si el bloque de datos no ha cambiado realmente
+        if (currentRoute.params?.tableBlock !== table) {
+          const rawTitle = table.title || `Jornada ${calendarTables.length - selectedJornadaIndex}`;
+          // FIX: Limpiar fecha del título igual que en el render (ej: "Jornada 1 - 12/10..." -> "Jornada 1")
+          const displayTitle = rawTitle.replace(/\s*[-–—(]\s*\d{1,2}[\/\-]\d{1,2}.*$/, '').trim();
 
-        // Navegar a la jornada seleccionada con el bloque actualizado
-        navigation.replace('JornadaDetail', {
-          tableBlock: table,
-          title: displayTitle,
-          subtitle: seasonLabel,
-          calendarUrl: activeCalendarUrl,
-          jornadaIndex: selectedJornadaIndex
-        });
+          // Navegar a la jornada seleccionada con el bloque actualizado
+          navigation.replace('JornadaDetail', {
+            tableBlock: table,
+            title: displayTitle,
+            subtitle: seasonLabel,
+            calendarUrl: activeCalendarUrl,
+            jornadaIndex: selectedJornadaIndex,
+            rankingBlocks: currentRoute.params?.rankingBlocks
+          });
+        }
       }
     }
   }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, activeCalendarUrl]);
@@ -1502,7 +1456,8 @@ export default function LeagueScreen({ route, navigation }) {
 
   if (rankingError && !isConfiguring) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
 
-  const isGlobalLoading = (rankingLoading || (fetchCalendarUrl && calendarLoading)) && !isConfiguring;
+  const isCalendarPending = !fetchCalendarUrl && !selectedSubgroupIsBracket && !isFlatLeague && !isChampionship && rankingBlocks !== null && !rankingLoading && !championshipLoading;
+  const isGlobalLoading = (urlIsPending || rankingLoading || isCalendarPending || (fetchCalendarUrl && calendarLoading)) && !isConfiguring;
   const loadingHeaderTopFix = Platform.OS === 'android' && isGlobalLoading && (insets.top || 0) === 0
     ? (StatusBar.currentHeight || 0)
     : 0;
@@ -1601,27 +1556,11 @@ export default function LeagueScreen({ route, navigation }) {
         >
           {!isGlobalLoading && (
             <View style={{ width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
-              <Animated.View style={{
-                position: 'absolute',
-                opacity: pagerScrollNative.interpolate({ inputRange: [0, 0.4, 0.6, 1], outputRange: [1, 0, 0, 0], extrapolate: 'clamp' }),
-                transform: [
-                  { rotate: pagerScrollNative.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'], extrapolate: 'clamp' }) },
-                  { scale: pagerScrollNative.interpolate({ inputRange: [0, 0.5], outputRange: [1, 0.3], extrapolate: 'clamp' }) }
-                ]
-              }}>
+              {activeTab === 'ranking' ? (
                 <MaterialIcons name="info-outline" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-              </Animated.View>
-
-              <Animated.View style={{
-                position: 'absolute',
-                opacity: pagerScrollNative.interpolate({ inputRange: [0, 0.4, 0.6, 1], outputRange: [0, 0, 0, 1], extrapolate: 'clamp' }),
-                transform: [
-                  { rotate: pagerScrollNative.interpolate({ inputRange: [0, 1], outputRange: ['-90deg', '0deg'], extrapolate: 'clamp' }) },
-                  { scale: pagerScrollNative.interpolate({ inputRange: [0.5, 1], outputRange: [0.3, 1], extrapolate: 'clamp' }) }
-                ]
-              }}>
+              ) : (
                 <MaterialIcons name="search" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-              </Animated.View>
+              )}
             </View>
           )}
         </TouchableOpacity>
@@ -1650,15 +1589,14 @@ export default function LeagueScreen({ route, navigation }) {
                 onPress={() => switchTab(tab.key)}
                 activeOpacity={0.8}
               >
-                <Animated.Text style={[styles.tabLabel, { color: tab.key === 'ranking' ? rankingTextColor : calendarTextColor }]}>
+                <Text style={[styles.tabLabel, { color: activeTab === tab.key ? (isDark ? Colors.textOnPrimary : Colors.primary) : Colors.textMuted }]}>
                   {tab.label}
-                </Animated.Text>
+                </Text>
               </TouchableOpacity>
             ))}
-            {/* Indicador animado */}
-            <Animated.View style={[styles.tabIndicator, {
-              width: tabWidth,
-              transform: [{ translateX: tabIndicatorTranslateX }]
+            <View style={[styles.tabIndicator, {
+              width: (screenWidth - Spacing.md * 2) / 2,
+              transform: [{ translateX: activeTab === 'ranking' ? Spacing.md : Spacing.md + (screenWidth - Spacing.md * 2) / 2 }]
             }]} />
           </View>
 
@@ -2055,25 +1993,8 @@ export default function LeagueScreen({ route, navigation }) {
               </View>
             </View>
           </Modal>
-          <AnimatedPagerView
-            ref={pagerRef}
-            style={{ flex: 1 }}
-            initialPage={defaultTab === 'calendar' ? 1 : 0}
-            onPageSelected={(e) => {
-              const pos = e.nativeEvent.position;
-              setActiveTab(pos === 0 ? 'ranking' : 'calendar');
-
-              // Animación suave de corrección final si el gesto no terminó perfectamente
-              Animated.parallel([
-                Animated.timing(positionAnim, { toValue: pos, duration: 200, useNativeDriver: true }),
-                Animated.timing(offsetAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-                Animated.timing(pagerScrollJS, { toValue: pos, duration: 200, useNativeDriver: false }),
-              ]).start();
-            }}
-            // Sincronizar animaciones con el gesto de scroll
-            onPageScroll={onPageScrollHandler}
-          >
-            <View key="0" style={styles.mainPage}>
+          <View style={{ flex: 1 }}>
+            {activeTab === 'ranking' ? (
               <ScrollView
                 style={styles.scroll}
                 contentContainerStyle={{ flexGrow: 1 }}
@@ -2088,9 +2009,7 @@ export default function LeagueScreen({ route, navigation }) {
               >
                 {rankingContent}
               </ScrollView>
-            </View>
-
-            <View key="1" style={styles.mainPage}>
+            ) : (
               <ScrollView
                 style={styles.scroll}
                 contentContainerStyle={{ flexGrow: 1 }}
@@ -2112,14 +2031,14 @@ export default function LeagueScreen({ route, navigation }) {
                       <Text style={styles.retryText}>Reintentar</Text>
                     </TouchableOpacity>
                   </View>
-                ) : (activeTab === 'calendar' && hasActiveFilters) ? (
+                ) : hasActiveFilters ? (
                   renderSearchResults()
                 ) : (
                   calendarContent
                 )}
               </ScrollView>
-            </View>
-          </AnimatedPagerView>
+            )}
+          </View>
         </>
       )}
 

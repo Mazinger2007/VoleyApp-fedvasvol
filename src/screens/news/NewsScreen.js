@@ -2,11 +2,11 @@ import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Keyboard, Dimensions, Animated, PanResponder, KeyboardAvoidingView } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { fetchAndParse, URLS } from '../utils/htmlParser';
-import { Spacing, Radius } from '../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { fetchAndParse, URLS } from '../../utils/htmlParser';
+import { Spacing, Radius } from '../../styles/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { checkForNewNews } from '../services/newsNotificationService';
+import { checkForNewNews } from '../../services/newsNotificationService';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 

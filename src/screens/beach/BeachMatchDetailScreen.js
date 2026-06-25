@@ -2,222 +2,524 @@ import React, { useMemo } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { Spacing } from '../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { Spacing } from '../../styles/theme';
+
+function InitialsAvatar({ name, isWinner, Colors }) {
+  const parts = name ? name.split('/') : [];
+  let initials = '??';
+  if (parts.length >= 2) {
+    const p1 = parts[0].trim()[0] || '';
+    const p2 = parts[1].trim()[0] || '';
+    initials = (p1 + p2).toUpperCase();
+  } else if (name) {
+    initials = name.trim().slice(0, 2).toUpperCase();
+  }
+
+  return (
+    <View style={{
+      width: 52,
+      height: 52,
+      borderRadius: 26,
+      borderWidth: 2,
+      borderColor: isWinner ? Colors.primary : Colors.border,
+      backgroundColor: isWinner ? Colors.primary + '18' : Colors.surfaceAlt,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 8,
+    }}>
+      <Text style={{
+        fontSize: 14,
+        fontWeight: '800',
+        color: isWinner ? Colors.primary : Colors.textSecondary,
+      }}>
+        {initials}
+      </Text>
+    </View>
+  );
+}
 
 export default function BeachMatchDetailScreen({ route, navigation }) {
   const { match, torneo } = route.params || {};
   const { colors: Colors, isDark } = useTheme();
 
-  const allSets = [match?.set1, match?.set2, match?.set3].filter(Boolean);
-  const maxSets = Math.max(allSets.length, 3);
-  const aWon = match?.setsA > match?.setsB;
-  const bWon = match?.setsB > match?.setsA;
+  const isPlayed = match?.set1 != null;
+  const aWon = isPlayed && (match?.setsA > match?.setsB);
+  const bWon = isPlayed && (match?.setsB > match?.setsA);
+
+  const getSetPoints = (set) => {
+    if (!set) return { a: 0, b: 0 };
+    const a = Number(set.A != null ? set.A : set.a) || 0;
+    const b = Number(set.B != null ? set.B : set.b) || 0;
+    return { a, b };
+  };
 
   const styles = useMemo(() => StyleSheet.create({
     safe: { flex: 1, backgroundColor: Colors.background },
     header: {
-      height: 64, flexDirection: 'row', alignItems: 'center',
+      height: 64,
+      flexDirection: 'row',
+      alignItems: 'center',
       backgroundColor: Colors.surface,
-      borderBottomColor: Colors.border, borderBottomWidth: 1, paddingHorizontal: 8,
+      borderBottomColor: Colors.border,
+      borderBottomWidth: 1,
+      paddingHorizontal: 8,
     },
     backBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
-    headerTitle: { fontSize: 15, fontWeight: '900', letterSpacing: -0.5, color: Colors.primary, flex: 1, textAlign: 'center' },
+    headerTitle: {
+      fontSize: 15,
+      fontWeight: '900',
+      letterSpacing: -0.5,
+      color: Colors.primary,
+      flex: 1,
+      textAlign: 'center',
+      marginRight: 44,
+    },
     scroll: { flex: 1 },
-    section: { paddingHorizontal: Spacing.lg, marginBottom: 24 },
+    content: { paddingBottom: 40 },
+
+    // SCOREBOARD HERO
     heroCard: {
-      backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border,
-      padding: 20, marginHorizontal: Spacing.lg, marginTop: 16, marginBottom: 20,
+      backgroundColor: Colors.surface,
+      borderColor: Colors.border,
+      borderWidth: 1,
+      borderRadius: 14,
+      marginHorizontal: Spacing.lg,
+      marginTop: 16,
+      marginBottom: 12,
+      padding: 20,
     },
-    matchHeader: {
-      flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16,
+    heroTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
     },
-    matchNumBadge: {
-      fontSize: 11, fontWeight: '900', backgroundColor: Colors.primary, color: '#fff',
-      paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, overflow: 'hidden',
+    teamCol: {
+      flex: 1.2,
+      alignItems: 'center',
     },
-    phaseBadge: {
-      fontSize: 11, fontWeight: '900', backgroundColor: Colors.background, color: Colors.textMuted,
-      paddingHorizontal: 10, paddingVertical: 3, borderRadius: 6, overflow: 'hidden',
+    centerCol: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
-    matchMeta: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
-    teamRow: {
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-      paddingVertical: 14,
+    teamName: {
+      fontSize: 12,
+      fontWeight: '700',
+      color: Colors.textPrimary,
+      textAlign: 'center',
+      lineHeight: 16,
     },
-    teamName: { fontSize: 17, fontWeight: '700', color: Colors.textPrimary, flex: 1 },
-    teamSets: { fontSize: 14, fontWeight: '900', color: Colors.textMuted, width: 32, textAlign: 'center' },
-    setScores: { flexDirection: 'row', gap: 8 },
-    setScore: {
-      width: 32, textAlign: 'center', fontSize: 15, fontWeight: '700', paddingVertical: 4,
+    teamNameWinner: {
+      color: Colors.primary,
+      fontWeight: '800',
+    },
+    scoreRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+    },
+    scoreNum: {
+      fontSize: 34,
+      fontWeight: '900',
+    },
+    scoreSep: {
+      fontSize: 22,
+      fontWeight: '300',
+      color: Colors.textMuted,
+    },
+    statusBadge: {
+      marginTop: 8,
       borderRadius: 6,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      alignSelf: 'center',
     },
-    setScoreWon: { backgroundColor: Colors.primary + '20', color: Colors.primary },
-    setScoreLost: { backgroundColor: Colors.background, color: Colors.textMuted },
-    winnerBadge: {
-      fontSize: 10, fontWeight: '900', marginLeft: 8,
-      backgroundColor: Colors.primary, color: '#fff',
-      paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4, overflow: 'hidden',
+    statusBadgeText: {
+      fontSize: 9,
+      fontWeight: '800',
+      letterSpacing: 0.5,
     },
-    setsTable: {
-      backgroundColor: Colors.surface, borderRadius: 16, borderWidth: 1, borderColor: Colors.border,
-      marginHorizontal: Spacing.lg, marginBottom: 20, overflow: 'hidden',
+    vsBadge: {
+      backgroundColor: Colors.primary + '15',
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 6,
     },
-    setsTableHeader: {
-      flexDirection: 'row', backgroundColor: Colors.background,
-      paddingVertical: 10, paddingHorizontal: 16,
+    vsText: {
+      fontSize: 16,
+      fontWeight: '900',
+      color: Colors.primary,
     },
-    setsTableRow: {
-      flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 16,
-      borderTopWidth: 0.5, borderTopColor: Colors.border,
+    // Winner label under the score
+    winnerLabel: {
+      marginTop: 12,
+      flexDirection: 'row',
+      justifyContent: 'center',
+      alignItems: 'center',
+      gap: 4,
     },
-    cellTeam: { flex: 1, fontSize: 13, fontWeight: '700', color: Colors.textPrimary },
-    cellSet: {
-      width: 40, textAlign: 'center', fontSize: 13, fontWeight: '600',
+    winnerLabelText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: Colors.primary,
     },
-    cellSetWon: { color: Colors.primary, fontWeight: '900' },
-    cellSetLost: { color: Colors.textMuted },
-    sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 },
-    sectionTitle: { fontSize: 20, fontWeight: '900', color: Colors.textPrimary, letterSpacing: -0.5 },
-    sectionDivider: { height: 2, flex: 1, backgroundColor: Colors.border, borderRadius: 1 },
+
+    // META CHIPS ROW
+    metaRow: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      flexWrap: 'wrap',
+      gap: 6,
+      paddingHorizontal: Spacing.lg,
+      marginBottom: 20,
+    },
+    metaChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      backgroundColor: Colors.surface,
+      borderColor: Colors.border,
+      borderWidth: 1,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+    },
+    metaChipText: {
+      fontSize: 11,
+      fontWeight: '700',
+      color: Colors.textSecondary,
+    },
+
+    // SECTION
+    section: {
+      paddingHorizontal: Spacing.lg,
+      marginBottom: 24,
+    },
+    sectionDividerRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 12,
+    },
+    sectionDivider: {
+      height: 1,
+      flex: 1,
+      backgroundColor: Colors.border,
+    },
+    sectionTitle: {
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1,
+      color: Colors.textMuted,
+      textTransform: 'uppercase',
+    },
+
+    // SET BREAKDOWN
+    setCard: {
+      backgroundColor: Colors.surface,
+      borderColor: Colors.border,
+      borderWidth: 1,
+      borderRadius: 10,
+      padding: 14,
+      marginBottom: 8,
+    },
+    setHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 10,
+    },
+    setLabel: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: Colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    setWinnerBadge: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: Colors.primary,
+      letterSpacing: 0.5,
+    },
+    setScoreRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    setPts: {
+      fontSize: 16,
+      fontWeight: '800',
+      width: 28,
+      textAlign: 'center',
+    },
+    barWrapLeft: {
+      flex: 1,
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      height: 6,
+      backgroundColor: Colors.surfaceAlt,
+      borderRadius: 3,
+      overflow: 'hidden',
+    },
+    barWrapRight: {
+      flex: 1,
+      flexDirection: 'row',
+      justifyContent: 'flex-start',
+      height: 6,
+      backgroundColor: Colors.surfaceAlt,
+      borderRadius: 3,
+      overflow: 'hidden',
+    },
+    barFill: {
+      height: '100%',
+      borderRadius: 3,
+    },
+
+    // TORNEO INFO
+    infoCard: {
+      backgroundColor: Colors.surface,
+      borderColor: Colors.border,
+      borderWidth: 1,
+      borderRadius: 12,
+      overflow: 'hidden',
+    },
     infoRow: {
-      flexDirection: 'row', alignItems: 'center', gap: 12,
-      backgroundColor: Colors.surface, padding: 14, borderRadius: 12,
-      borderWidth: 1, borderColor: Colors.border, marginBottom: 8,
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      gap: 12,
     },
-    infoIcon: { width: 24 },
-    infoLabel: { fontSize: 13, color: Colors.textMuted, fontWeight: '600' },
-    infoValue: { fontSize: 14, color: Colors.textPrimary, fontWeight: '700' },
-    emptySection: { padding: 24, alignItems: 'center' },
-    emptySectionText: { color: Colors.textMuted, fontSize: 14, textAlign: 'center' },
+    infoRowBorder: {
+      borderTopWidth: 1,
+      borderTopColor: Colors.border,
+    },
+    infoIconWrap: {
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      backgroundColor: Colors.primary + '15',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    infoContent: {
+      flex: 1,
+    },
+    infoLabel: {
+      fontSize: 10,
+      fontWeight: '700',
+      color: Colors.textMuted,
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    infoValue: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: Colors.textPrimary,
+      marginTop: 2,
+    },
   }), [Colors]);
+
+  const winnersName = aWon ? match?.parejaA : bWon ? match?.parejaB : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.background} />
+
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
           <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Partido {match?.partido}</Text>
-        <View style={{ width: 44 }} />
+        <Text style={styles.headerTitle}>
+          {match?.fase ? `${match.fase} · Partido ${match?.partido}` : `Partido ${match?.partido}`}
+        </Text>
       </View>
 
-      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <ScrollView style={styles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.content}>
+
+        {/* SCOREBOARD HERO CARD */}
         <View style={styles.heroCard}>
-          <View style={styles.matchHeader}>
-            <View style={{ flexDirection: 'row', gap: 6 }}>
-              <Text style={styles.matchNumBadge}>Partido {match?.partido}</Text>
-              {match?.fase ? <Text style={styles.phaseBadge}>{match.fase}</Text> : null}
+          <View style={styles.heroTop}>
+            {/* Pareja A */}
+            <View style={styles.teamCol}>
+              <InitialsAvatar name={match?.parejaA} isWinner={aWon} Colors={Colors} />
+              <Text style={[styles.teamName, aWon && styles.teamNameWinner]} numberOfLines={2}>
+                {match?.parejaA}
+              </Text>
             </View>
-            <Text style={styles.matchMeta}>
-              {match?.hora ? match.hora : ''}{match?.hora && match?.pista ? ' • ' : ''}{match?.pista ? `Pista ${match.pista}` : ''}
-            </Text>
-          </View>
 
-          <View style={[styles.teamRow, { borderBottomWidth: 0.5, borderBottomColor: Colors.border }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-              <Text style={styles.teamName} numberOfLines={2}>{match?.parejaA}</Text>
-              {aWon ? <Text style={styles.winnerBadge}>GANADOR</Text> : null}
-            </View>
-            <View style={styles.setScores}>
-              {Array.from({ length: maxSets }).map((_, idx) => {
-                const set = [match?.set1, match?.set2, match?.set3][idx];
-                return (
-                  <Text key={idx} style={[styles.setScore, set ? (set.A > set.B ? styles.setScoreWon : styles.setScoreLost) : styles.setScoreLost]}>
-                    {set ? String(set.A).padStart(2, '0') : '-'}
+            {/* Score / VS */}
+            <View style={styles.centerCol}>
+              {isPlayed ? (
+                <View style={styles.scoreRow}>
+                  <Text style={[styles.scoreNum, { color: aWon ? Colors.primary : Colors.textPrimary }]}>
+                    {match?.setsA}
                   </Text>
-                );
-              })}
-              <Text style={styles.teamSets}>{match?.setsA}</Text>
-            </View>
-          </View>
-
-          <View style={styles.teamRow}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-              <Text style={styles.teamName} numberOfLines={2}>{match?.parejaB}</Text>
-              {bWon ? <Text style={styles.winnerBadge}>GANADOR</Text> : null}
-            </View>
-            <View style={styles.setScores}>
-              {Array.from({ length: maxSets }).map((_, idx) => {
-                const set = [match?.set1, match?.set2, match?.set3][idx];
-                return (
-                  <Text key={idx} style={[styles.setScore, set ? (set.B > set.A ? styles.setScoreWon : styles.setScoreLost) : styles.setScoreLost]}>
-                    {set ? String(set.B).padStart(2, '0') : '-'}
+                  <Text style={styles.scoreSep}>-</Text>
+                  <Text style={[styles.scoreNum, { color: bWon ? Colors.primary : Colors.textPrimary }]}>
+                    {match?.setsB}
                   </Text>
-                );
-              })}
-              <Text style={styles.teamSets}>{match?.setsB}</Text>
-            </View>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <MaterialIcons name="format-list-bulleted" size={20} color={Colors.primary} />
-            <Text style={styles.sectionTitle}>Detalle de sets</Text>
-            <View style={styles.sectionDivider} />
-          </View>
-        </View>
-
-        {[match?.set1, match?.set2, match?.set3].map((set, idx) => (
-          <View key={idx} style={styles.setsTable}>
-            <View style={styles.setsTableHeader}>
-              <Text style={[styles.cellTeam, { color: Colors.textMuted, fontWeight: '900', fontSize: 11 }]}>
-                SET {idx + 1}
-              </Text>
-              <Text style={[styles.cellSet, { color: Colors.textMuted, fontWeight: '900', fontSize: 11 }]}>
-                {match?.parejaA?.split('/')[0]?.trim() || 'A'}
-              </Text>
-              <Text style={[styles.cellSet, { color: Colors.textMuted, fontWeight: '900', fontSize: 11 }]}>
-                {match?.parejaB?.split('/')[0]?.trim() || 'B'}
-              </Text>
-            </View>
-            {set ? (
-              <View style={styles.setsTableRow}>
-                <Text style={styles.cellTeam}>Puntos</Text>
-                <Text style={[styles.cellSet, set.A > set.B ? styles.cellSetWon : styles.cellSetLost]}>
-                  {set.A}
-                </Text>
-                <Text style={[styles.cellSet, set.B > set.A ? styles.cellSetWon : styles.cellSetLost]}>
-                  {set.B}
+                </View>
+              ) : (
+                <View style={styles.vsBadge}>
+                  <Text style={styles.vsText}>VS</Text>
+                </View>
+              )}
+              <View style={[styles.statusBadge, {
+                backgroundColor: isPlayed ? Colors.primary + '15' : Colors.surfaceAlt,
+              }]}>
+                <Text style={[styles.statusBadgeText, {
+                  color: isPlayed ? Colors.primary : Colors.textMuted,
+                }]}>
+                  {isPlayed ? 'FINALIZADO' : 'PROGRAMADO'}
                 </Text>
               </View>
-            ) : (
-              <View style={[styles.setsTableRow, { justifyContent: 'center' }]}>
-                <Text style={{ color: Colors.textMuted, fontStyle: 'italic', fontSize: 13 }}>No jugado</Text>
-              </View>
-            )}
-          </View>
-        ))}
+            </View>
 
-        {torneo?.titulo || torneo?.fecha || torneo?.lugar ? (
+            {/* Pareja B */}
+            <View style={styles.teamCol}>
+              <InitialsAvatar name={match?.parejaB} isWinner={bWon} Colors={Colors} />
+              <Text style={[styles.teamName, bWon && styles.teamNameWinner]} numberOfLines={2}>
+                {match?.parejaB}
+              </Text>
+            </View>
+          </View>
+
+          {/* Winner row */}
+          {isPlayed && winnersName && (
+            <View style={styles.winnerLabel}>
+              <MaterialIcons name="emoji-events" size={14} color={Colors.primary} />
+              <Text style={styles.winnerLabelText}>{winnersName}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* METADATA CHIPS */}
+        <View style={styles.metaRow}>
+          {match?.fase ? (
+            <View style={styles.metaChip}>
+              <MaterialIcons name="emoji-events" size={12} color={Colors.primary} />
+              <Text style={[styles.metaChipText, { color: Colors.primary }]}>{match.fase}</Text>
+            </View>
+          ) : null}
+          {match?.hora ? (
+            <View style={styles.metaChip}>
+              <MaterialIcons name="schedule" size={12} color={Colors.textMuted} />
+              <Text style={styles.metaChipText}>{match.hora}</Text>
+            </View>
+          ) : null}
+          {match?.pista ? (
+            <View style={styles.metaChip}>
+              <MaterialIcons name="sports-volleyball" size={12} color={Colors.textMuted} />
+              <Text style={styles.metaChipText}>Pista {match.pista}</Text>
+            </View>
+          ) : null}
+          {match?.referencia ? (
+            <View style={styles.metaChip}>
+              <MaterialIcons name="tag" size={12} color={Colors.textMuted} />
+              <Text style={styles.metaChipText}>{match.referencia}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* SETS BREAKDOWN */}
+        {isPlayed && (
           <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <MaterialIcons name="info-outline" size={20} color={Colors.primary} />
-              <Text style={styles.sectionTitle}>Información del torneo</Text>
+            <View style={styles.sectionDividerRow}>
+              <Text style={styles.sectionTitle}>Distribución de Puntos</Text>
               <View style={styles.sectionDivider} />
             </View>
-            <View style={{ marginTop: 4 }}>
+
+            {[match?.set1, match?.set2, match?.set3].map((set, idx) => {
+              if (!set) return null;
+              const { a, b } = getSetPoints(set);
+              const total = a + b;
+              const pctA = total > 0 ? (a / total) * 100 : 0;
+              const pctB = total > 0 ? (b / total) * 100 : 0;
+              const aWinsSet = a > b;
+              const bWinsSet = b > a;
+
+              return (
+                <View key={idx} style={styles.setCard}>
+                  <View style={styles.setHeader}>
+                    <Text style={styles.setLabel}>Set {idx + 1}</Text>
+                    {(aWinsSet || bWinsSet) && (
+                      <Text style={styles.setWinnerBadge}>
+                        {aWinsSet ? match?.parejaA?.split('/')[0] : match?.parejaB?.split('/')[0]} gana
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.setScoreRow}>
+                    <Text style={[styles.setPts, { color: aWinsSet ? Colors.primary : Colors.textSecondary }]}>
+                      {a}
+                    </Text>
+
+                    <View style={styles.barWrapLeft}>
+                      <View style={[styles.barFill, {
+                        width: `${pctA}%`,
+                        backgroundColor: aWinsSet ? Colors.primary : Colors.border,
+                      }]} />
+                    </View>
+
+                    <View style={styles.barWrapRight}>
+                      <View style={[styles.barFill, {
+                        width: `${pctB}%`,
+                        backgroundColor: bWinsSet ? Colors.primary : Colors.border,
+                      }]} />
+                    </View>
+
+                    <Text style={[styles.setPts, { color: bWinsSet ? Colors.primary : Colors.textSecondary }]}>
+                      {b}
+                    </Text>
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {/* TOURNAMENT INFO */}
+        {(torneo?.titulo || torneo?.fecha || torneo?.lugar) ? (
+          <View style={styles.section}>
+            <View style={styles.sectionDividerRow}>
+              <Text style={styles.sectionTitle}>Información del Torneo</Text>
+              <View style={styles.sectionDivider} />
+            </View>
+
+            <View style={styles.infoCard}>
               {torneo?.titulo ? (
                 <View style={styles.infoRow}>
-                  <View style={styles.infoIcon}><MaterialIcons name="emoji-events" size={18} color={Colors.primary} /></View>
-                  <Text style={styles.infoLabel}>Torneo</Text>
-                  <Text style={styles.infoValue} numberOfLines={2}>{torneo.titulo}</Text>
+                  <View style={styles.infoIconWrap}>
+                    <MaterialIcons name="emoji-events" size={16} color={Colors.primary} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Torneo</Text>
+                    <Text style={styles.infoValue}>{torneo.titulo}</Text>
+                  </View>
                 </View>
               ) : null}
               {torneo?.fecha ? (
-                <View style={styles.infoRow}>
-                  <View style={styles.infoIcon}><MaterialIcons name="calendar-today" size={18} color={Colors.primary} /></View>
-                  <Text style={styles.infoLabel}>Fecha</Text>
-                  <Text style={styles.infoValue}>{torneo.fecha}</Text>
+                <View style={[styles.infoRow, styles.infoRowBorder]}>
+                  <View style={styles.infoIconWrap}>
+                    <MaterialIcons name="calendar-today" size={16} color={Colors.primary} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Fecha</Text>
+                    <Text style={styles.infoValue}>{torneo.fecha}</Text>
+                  </View>
                 </View>
               ) : null}
               {torneo?.lugar ? (
-                <View style={styles.infoRow}>
-                  <View style={styles.infoIcon}><MaterialIcons name="location-on" size={18} color={Colors.primary} /></View>
-                  <Text style={styles.infoLabel}>Lugar</Text>
-                  <Text style={styles.infoValue}>{torneo.lugar}</Text>
+                <View style={[styles.infoRow, styles.infoRowBorder]}>
+                  <View style={styles.infoIconWrap}>
+                    <MaterialIcons name="location-on" size={16} color={Colors.primary} />
+                  </View>
+                  <View style={styles.infoContent}>
+                    <Text style={styles.infoLabel}>Lugar</Text>
+                    <Text style={styles.infoValue}>{torneo.lugar}</Text>
+                  </View>
                 </View>
               ) : null}
             </View>

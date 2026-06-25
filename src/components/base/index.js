@@ -1,5 +1,5 @@
 export { default as Card, CardSection } from './Card';
-export { default as Badge, LiveIndicator } from './Badge';
+export { default as Badge } from './Badge';
 export { default as Chip } from './Chip';
 export { default as Button } from './Button';
 export { default as SearchBar } from './SearchBar';

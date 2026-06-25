@@ -2,11 +2,11 @@ import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react'
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Linking, TextInput, Keyboard, Modal, Platform } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { Spacing, Radius } from '../styles/theme';
-import { downloadPdfBase64 } from '../utils/pdfExtractor';
-import PDFExtractorWebView from '../components/PDFExtractorWebView';
-import { parseBeachResults } from '../utils/parseBeachResults';
+import { useTheme } from '../../contexts/ThemeContext';
+import { Spacing, Radius } from '../../styles/theme';
+import { downloadPdfBase64 } from '../../utils/pdfExtractor';
+import PDFExtractorWebView from '../../components/PDFExtractorWebView';
+import { parseBeachResults } from '../../utils/parseBeachResults';
 
 
 const INITIAL_RANKING_SHOW = 7;
@@ -76,10 +76,24 @@ function RankingRow({ posicion, pareja, isLast, highlighted, onPress }) {
 
 function MatchCard({ match, highlighted, onPress }) {
   const { colors: Colors } = useTheme();
-  const allSets = [match.set1, match.set2, match.set3].filter(Boolean);
-  const maxSets = Math.max(allSets.length, 3);
+  const sets = [match.set1, match.set2, match.set3].filter(Boolean);
+  const setCount = Math.max(sets.length, 3);
   const aWon = match.setsA > match.setsB;
-  const bWon = match.setsB > match.setsA;
+
+  const renderSetScore = (set, team) => {
+    if (!set) return <Text style={{ width: 28, textAlign: 'center', fontSize: 11, color: Colors.textMuted, opacity: 0.2 }}>-</Text>;
+    const score = team === 'A' ? set.A : set.B;
+    const opponent = team === 'A' ? set.B : set.A;
+    const won = set.A > set.B ? team === 'A' : team === 'B';
+    return (
+      <Text style={{
+        width: 28, textAlign: 'center', fontSize: 13, fontWeight: won ? '900' : '500',
+        color: won ? Colors.primary : Colors.textMuted,
+        backgroundColor: won ? Colors.primary + '12' : 'transparent',
+        borderRadius: 4, paddingVertical: 2,
+      }}>{score}</Text>
+    );
+  };
 
   return (
     <TouchableOpacity onPress={() => onPress?.(match)} activeOpacity={0.7}
@@ -104,53 +118,32 @@ function MatchCard({ match, highlighted, onPress }) {
           {match.hora ? match.hora + ' • ' : ''}{match.pista ? `Pista ${match.pista}` : ''}
         </Text>
       </View>
-      <View style={{ gap: 12 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsA} {aWon ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: aWon ? '900' : '400', color: aWon ? Colors.primary : Colors.textPrimary, fontSize: 14 }}>{match.parejaA}</Text>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            {Array.from({ length: maxSets }).map((_, idx) => {
-              const set = [match.set1, match.set2, match.set3][idx];
-              if (set) {
-                return (
-                  <Text key={idx} style={{
-                    width: 24, textAlign: 'center', fontSize: 12,
-                    fontWeight: set.A > set.B ? '900' : '600',
-                    color: set.A > set.B ? Colors.textPrimary : Colors.textMuted,
-                  }}>
-                    {String(set.A).padStart(2, '0')}
-                  </Text>
-                );
-              }
-              return <Text key={idx} style={{ width: 24, textAlign: 'center', fontSize: 12, color: Colors.textMuted, opacity: 0.3 }}>-</Text>;
-            })}
-          </View>
+
+      {/* Set column headers */}
+      <View style={{ flexDirection: 'row', marginBottom: 6, paddingLeft: 40 }}>
+        {Array.from({ length: setCount }).map((_, idx) => (
+          <Text key={idx} style={{ width: 28, textAlign: 'center', fontSize: 9, fontWeight: '700', color: Colors.textMuted, textTransform: 'uppercase' }}>
+            S{idx + 1}
+          </Text>
+        ))}
+      </View>
+
+      {/* Team A row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: Colors.border }}>
+        <View style={{ width: 40, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={{ fontSize: 13, fontWeight: '900', color: aWon ? Colors.primary : Colors.textMuted }}>{match.setsA}</Text>
+          <Text style={{ fontSize: 11, fontWeight: aWon ? '900' : '400', color: aWon ? Colors.primary : Colors.textPrimary, flexShrink: 1 }} numberOfLines={1}>{match.parejaA}</Text>
         </View>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ fontSize: 10, fontWeight: '900', color: Colors.textMuted, width: 28 }}>{match.setsB} {bWon ? '(W)' : ''}</Text>
-            <Text style={{ fontWeight: bWon ? '900' : '400', color: bWon ? Colors.primary : Colors.textPrimary, fontSize: 14 }}>{match.parejaB}</Text>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 6 }}>
-            {Array.from({ length: maxSets }).map((_, idx) => {
-              const set = [match.set1, match.set2, match.set3][idx];
-              if (set) {
-                return (
-                  <Text key={idx} style={{
-                    width: 24, textAlign: 'center', fontSize: 12,
-                    fontWeight: set.B > set.A ? '900' : '600',
-                    color: set.B > set.A ? Colors.textPrimary : Colors.textMuted,
-                  }}>
-                    {String(set.B).padStart(2, '0')}
-                  </Text>
-                );
-              }
-              return <Text key={idx} style={{ width: 24, textAlign: 'center', fontSize: 12, color: Colors.textMuted, opacity: 0.3 }}>-</Text>;
-            })}
-          </View>
+        {Array.from({ length: setCount }).map((_, idx) => renderSetScore([match.set1, match.set2, match.set3][idx], 'A'))}
+      </View>
+
+      {/* Team B row */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: 6 }}>
+        <View style={{ width: 40, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <Text style={{ fontSize: 13, fontWeight: '900', color: !aWon ? Colors.primary : Colors.textMuted }}>{match.setsB}</Text>
+          <Text style={{ fontSize: 11, fontWeight: !aWon ? '900' : '400', color: !aWon ? Colors.primary : Colors.textPrimary, flexShrink: 1 }} numberOfLines={1}>{match.parejaB}</Text>
         </View>
+        {Array.from({ length: setCount }).map((_, idx) => renderSetScore([match.set1, match.set2, match.set3][idx], 'B'))}
       </View>
     </TouchableOpacity>
   );

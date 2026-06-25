@@ -191,7 +191,7 @@ export function ThemeProvider({ children }) {
   // Static colors (instant, for logic / non-animated use)
   const colors = useMemo(() => {
     const base = isDark ? darkColors : lightColors;
-    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.blue;
+    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.emerald;
     return {
       ...base,
       primary: accent.primary,
@@ -205,7 +205,7 @@ export function ThemeProvider({ children }) {
   // Animated color strings — interpolated over themeProgress
   // These can be used directly as `backgroundColor`, `color`, etc. on Animated.View/Text
   const animColors = useMemo(() => {
-    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.blue;
+    const accent = ACCENT_COLORS[accentKey] || ACCENT_COLORS.emerald;
     const result = {};
 
     for (const key of INTERPOLATED_KEYS) {

@@ -16,16 +16,16 @@ import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
-import { Radius, Spacing, Typography } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
-import { getMatchSummary, formatMatchDisplayDate, rowToMatch } from '../components/MatchList';
-import { fetchAndParse } from '../utils/htmlParser';
+import { Radius, Spacing, Typography } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { getMatchSummary, formatMatchDisplayDate, rowToMatch } from '../../components/MatchList';
+import { fetchAndParse } from '../../utils/htmlParser';
 import {
   getCachedLogoColorSync,
   requestLogoColorExtraction,
   subscribeToLogoColor
-} from '../utils/logoColorCache';
-import { getDominantBorderColor } from '../utils/imageColor';
+} from '../../utils/logoColorCache';
+import { getDominantBorderColor } from '../../utils/imageColor';
 
 function TeamLogo({ uri, name, isDark, colors }) {
   const [bgColor, setBgColor] = useState(getCachedLogoColorSync(uri) || (isDark ? '#0f172a' : '#f8fafc'));

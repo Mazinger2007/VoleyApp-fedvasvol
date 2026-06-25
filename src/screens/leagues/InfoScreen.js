@@ -11,9 +11,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { useTheme } from '../contexts/ThemeContext';
-import { Spacing, Typography, Radius, Shadow } from '../styles/theme';
-import { fetchInfoData, toInfoUrl } from '../utils/htmlParser';
+import { useTheme } from '../../contexts/ThemeContext';
+import { Spacing, Typography, Radius, Shadow } from '../../styles/theme';
+import { fetchInfoData, toInfoUrl } from '../../utils/htmlParser';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { width } = Dimensions.get('window');

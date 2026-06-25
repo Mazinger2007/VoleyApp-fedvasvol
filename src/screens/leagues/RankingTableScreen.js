@@ -12,9 +12,9 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { Radius, Shadow, Spacing, Typography } from '../styles/theme';
-import { useTheme } from '../contexts/ThemeContext';
-import { cacheTeamsFromRanking, getTeamFromCache } from '../utils/teamCache';
+import { Radius, Shadow, Spacing, Typography } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { cacheTeamsFromRanking, getTeamFromCache } from '../../utils/teamCache';
 
 function findColIndex(headers, ...keywords) {
   for (const kw of keywords) {

@@ -16,12 +16,12 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { MaterialIcons } from '@expo/vector-icons';
-import { useTheme } from '../contexts/ThemeContext';
-import { fetchChampionshipData, discoverSeasonLabel, fetchInfoData, toInfoUrl } from '../utils/htmlParser';
-import { isTournament } from '../utils/navigationHelper';
-import { Radius, Spacing, Typography } from '../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { fetchChampionshipData, discoverSeasonLabel, fetchInfoData, toInfoUrl } from '../../utils/htmlParser';
+import { isTournament } from '../../utils/navigationHelper';
+import { Radius, Spacing, Typography } from '../../styles/theme';
 import { useMemo } from 'react';
-import { formatMatchDisplayDate, formatMatchTime, getMatchSummary } from '../components/MatchList';
+import { formatMatchDisplayDate, formatMatchTime, getMatchSummary } from '../../components/MatchList';
 
 
 // ─── Gap between cards in the same column ───────────────────────────────────

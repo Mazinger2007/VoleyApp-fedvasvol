@@ -2,9 +2,9 @@ import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { fetchAndParse, URLS } from '../utils/htmlParser';
-import { Spacing } from '../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
+import { fetchAndParse, URLS } from '../../utils/htmlParser';
+import { Spacing } from '../../styles/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const GENDER_STORAGE_KEY = '@beach_gender';
