@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Keyboard, Dimensions, Animated, PanResponder } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Image, Modal, TextInput, ScrollView, Platform, Keyboard, Dimensions, Animated, PanResponder, KeyboardAvoidingView } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { fetchAndParse, URLS } from '../utils/htmlParser';
 import { Spacing, Radius } from '../styles/theme';
@@ -433,6 +433,7 @@ export default function NewsScreen({ navigation }) {
       maxWidth: 400,
       borderRadius: Radius.xxl,
       padding: Spacing.lg,
+      overflow: 'hidden',
       elevation: 10,
       ...(Platform.OS === 'web'
         ? { boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }
@@ -449,6 +450,48 @@ export default function NewsScreen({ navigation }) {
     zoomClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
     zoomBody: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     zoomImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
+
+    searchOverlay: { flex: 1 },
+    searchOverlayBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
+    searchKav: { flex: 1, justifyContent: 'center' },
+    searchModalInner: { paddingHorizontal: 20, paddingBottom: 20 },
+    searchCard: {
+      borderRadius: 24, padding: 20,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.15, shadowRadius: 24, elevation: 12,
+    },
+    searchCardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 16 },
+    searchCardHeaderIcon: {
+      width: 36, height: 36, borderRadius: 12,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    searchCardTitle: { fontSize: 18, fontWeight: '800', flex: 1 },
+    searchCardClose: {
+      width: 32, height: 32, borderRadius: 10,
+      alignItems: 'center', justifyContent: 'center',
+    },
+    searchInputWrap: {
+      flexDirection: 'row', alignItems: 'center',
+      borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, height: 48,
+      marginBottom: 12,
+    },
+    searchTextInput: { flex: 1, fontSize: 15, fontWeight: '500' },
+    searchClearBtn: { padding: 4 },
+    searchRecentSection: { marginBottom: 14 },
+    searchRecentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+    searchRecentLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
+    searchClearAll: { fontSize: 12, fontWeight: '600' },
+    searchRecentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    searchChip: {
+      flexDirection: 'row', alignItems: 'center', gap: 4,
+      borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 7,
+    },
+    searchChipText: { fontSize: 13, fontWeight: '500' },
+    searchSubmitBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+      borderRadius: 14, height: 50, marginTop: 4,
+    },
+    searchSubmitText: { color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
   }), [Colors]);
 
   const renderPost = useCallback(({ item }) => (
@@ -550,132 +593,161 @@ export default function NewsScreen({ navigation }) {
         </View>
       )}
       <Modal visible={showFilters} transparent animationType="fade" onRequestClose={() => setShowFilters(false)}>
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowFilters(false)} activeOpacity={1} />
-        </View>
-        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
-            <View style={styles.searchModalHeader}>
-              <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Filtros</Text>
-              <TouchableOpacity onPress={() => setShowFilters(false)}>
-                <MaterialIcons name="close" size={24} color={Colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
-              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Desde)</Text>
-              <TextInput
-                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
-                placeholder="dd/mm/aaaa"
-                placeholderTextColor={Colors.textMuted}
-                value={filters.date_from}
-                onChangeText={(v) => setFilters(f => ({ ...f, date_from: v }))}
-                autoCapitalize="none"
-              />
-              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Hasta)</Text>
-              <TextInput
-                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
-                placeholder="dd/mm/aaaa"
-                placeholderTextColor={Colors.textMuted}
-                value={filters.date_to}
-                onChangeText={(v) => setFilters(f => ({ ...f, date_to: v }))}
-                autoCapitalize="none"
-              />
-              {renderFilterSelect('Disciplina', 'discipline', DISCIPLINE_OPTIONS, filters.discipline, (v) => setFilters(f => ({ ...f, discipline: v })))}
-              {renderFilterSelect('Destacada', 'featured', FEATURED_OPTIONS, filters.featured, (v) => setFilters(f => ({ ...f, featured: v })))}
-              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Etiqueta</Text>
-              <TextInput
-                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
-                placeholder="– Sin especificar –"
-                placeholderTextColor={Colors.textMuted}
-                value={filters.tag}
-                onChangeText={(v) => setFilters(f => ({ ...f, tag: v }))}
-                autoCapitalize="none"
-              />
-              <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Título</Text>
-              <TextInput
-                style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
-                placeholder="Buscar por título..."
-                placeholderTextColor={Colors.textMuted}
-                value={filters.title}
-                onChangeText={(v) => setFilters(f => ({ ...f, title: v }))}
-                autoCapitalize="none"
-              />
-              <View style={styles.filterActions}>
-                <TouchableOpacity style={styles.filterClearBtn} onPress={handleClearFilters} activeOpacity={0.7}>
-                  <Text style={styles.filterClearText}>Limpiar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.searchModalBtn, { backgroundColor: Colors.primary, flex: 1, marginTop: 0 }]} onPress={handleApplyFilters} activeOpacity={0.9}>
-                  <Text style={styles.searchModalBtnText}>FILTRAR</Text>
-                </TouchableOpacity>
+        <View style={styles.searchOverlay}>
+          <TouchableOpacity style={styles.searchOverlayBg} onPress={() => setShowFilters(false)} activeOpacity={1} />
+          <KeyboardAvoidingView
+            style={styles.searchKav}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+            <View style={styles.searchModalInner}>
+              <View style={[styles.searchCard, { backgroundColor: Colors.surface }]}>
+                <View style={styles.searchCardHeader}>
+                  <View style={[styles.searchCardHeaderIcon, { backgroundColor: Colors.primaryAlpha15 }]}>
+                    <MaterialIcons name="filter-list" size={20} color={Colors.primary} />
+                  </View>
+                  <Text style={[styles.searchCardTitle, { color: Colors.textPrimary }]}>Filtros</Text>
+                  <TouchableOpacity onPress={() => setShowFilters(false)} style={[styles.searchCardClose, { backgroundColor: Colors.surfaceAlt }]}>
+                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Desde)</Text>
+                  <TextInput
+                    style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                    placeholder="dd/mm/aaaa"
+                    placeholderTextColor={Colors.textMuted}
+                    value={filters.date_from}
+                    onChangeText={(v) => setFilters(f => ({ ...f, date_from: v }))}
+                    autoCapitalize="none"
+                  />
+                  <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Fecha (Hasta)</Text>
+                  <TextInput
+                    style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                    placeholder="dd/mm/aaaa"
+                    placeholderTextColor={Colors.textMuted}
+                    value={filters.date_to}
+                    onChangeText={(v) => setFilters(f => ({ ...f, date_to: v }))}
+                    autoCapitalize="none"
+                  />
+                  {renderFilterSelect('Disciplina', 'discipline', DISCIPLINE_OPTIONS, filters.discipline, (v) => setFilters(f => ({ ...f, discipline: v })))}
+                  {renderFilterSelect('Destacada', 'featured', FEATURED_OPTIONS, filters.featured, (v) => setFilters(f => ({ ...f, featured: v })))}
+                  <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Etiqueta</Text>
+                  <TextInput
+                    style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                    placeholder="– Sin especificar –"
+                    placeholderTextColor={Colors.textMuted}
+                    value={filters.tag}
+                    onChangeText={(v) => setFilters(f => ({ ...f, tag: v }))}
+                    autoCapitalize="none"
+                  />
+                  <Text style={[styles.filterLabel, { color: Colors.textSecondary }]}>Título</Text>
+                  <TextInput
+                    style={[styles.filterInput, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border, color: Colors.textPrimary }]}
+                    placeholder="Buscar por título..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={filters.title}
+                    onChangeText={(v) => setFilters(f => ({ ...f, title: v }))}
+                    autoCapitalize="none"
+                  />
+                </ScrollView>
+
+                <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
+                  <TouchableOpacity
+                    style={[styles.searchClearBtn, { backgroundColor: Colors.surfaceAlt, borderRadius: 12, height: 46, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 18 }]}
+                    onPress={handleClearFilters} activeOpacity={0.7}
+                  >
+                    <Text style={{ color: Colors.textMuted, fontWeight: '600', fontSize: 14 }}>Limpiar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.searchSubmitBtn, { flex: 1, marginTop: 0 }]}
+                    onPress={handleApplyFilters} activeOpacity={0.85}
+                  >
+                    <MaterialIcons name="check" size={18} color="#fff" />
+                    <Text style={styles.searchSubmitText}>FILTRAR</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </ScrollView>
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
       <Modal visible={showSearchModal} transparent animationType="fade" onRequestClose={() => setShowSearchModal(false)}>
-        <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowSearchModal(false)} activeOpacity={1} />
-        </View>
-        <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-          <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
-            <View style={styles.searchModalHeader}>
-              <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Buscar noticias</Text>
-              <TouchableOpacity onPress={() => setShowSearchModal(false)}>
-                <MaterialIcons name="close" size={24} color={Colors.textMuted} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
-              <View style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}>
-                <MaterialIcons name="search" size={20} color={Colors.primary} />
-                <TextInput
-                  ref={searchInputRef}
-                  style={{ flex: 1, fontSize: 14, color: Colors.textPrimary, marginLeft: 10 }}
-                  placeholder="Buscar por título..."
-                  placeholderTextColor={Colors.textMuted}
-                  value={searchQuery}
-                  onChangeText={handleSearchChange}
-                  onSubmitEditing={handleSearchSubmit}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                {searchQuery.length > 0 && (
-                  <TouchableOpacity onPress={handleClearSearch} style={{ padding: 4 }}>
-                    <MaterialIcons name="close" size={16} color={Colors.textMuted} />
+        <View style={styles.searchOverlay}>
+          <TouchableOpacity style={styles.searchOverlayBg} onPress={() => setShowSearchModal(false)} activeOpacity={1} />
+          <KeyboardAvoidingView
+            style={styles.searchKav}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={0}
+          >
+            <View style={styles.searchModalInner}>
+              <View style={[styles.searchCard, { backgroundColor: Colors.surface }]}>
+                <View style={styles.searchCardHeader}>
+                  <View style={[styles.searchCardHeaderIcon, { backgroundColor: Colors.primaryAlpha15 }]}>
+                    <MaterialIcons name="search" size={20} color={Colors.primary} />
+                  </View>
+                  <Text style={[styles.searchCardTitle, { color: Colors.textPrimary }]}>Buscar noticias</Text>
+                  <TouchableOpacity onPress={() => setShowSearchModal(false)} style={[styles.searchCardClose, { backgroundColor: Colors.surfaceAlt }]}>
+                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
                   </TouchableOpacity>
-                )}
-              </View>
-              {recentSearches.length > 0 && (
-                <View style={{ marginTop: Spacing.sm }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.sm }}>
-                    <Text style={{ fontSize: 12, fontWeight: '700', color: Colors.textMuted, letterSpacing: 0.5 }}>BÚSQUEDAS RECIENTES</Text>
-                    <TouchableOpacity onPress={() => { setRecentSearches([]); try { AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify([])); } catch {} }}>
-                      <Text style={{ fontSize: 12, fontWeight: '600', color: Colors.primary }}>Limpiar</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-                    {recentSearches.map((s, i) => (
-                      <TouchableOpacity
-                        key={i}
-                        style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.surfaceAlt, borderRadius: Radius.full, borderWidth: 1, borderColor: Colors.border, paddingHorizontal: 16, paddingVertical: 10 }}
-                        onPress={() => handleRecentPress(s)}
-                        activeOpacity={0.7}
-                      >
-                        <MaterialIcons name="history" size={16} color={Colors.textMuted} style={{ marginRight: 6 }} />
-                        <Text style={{ fontSize: 14, color: Colors.textPrimary }}>{s}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
                 </View>
-              )}
-              <TouchableOpacity
-                style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
-                activeOpacity={0.9}
-                onPress={handleSearchSubmit}
-              >
-                <Text style={styles.searchModalBtnText}>BUSCAR</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          </View>
+
+                <View style={[styles.searchInputWrap, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border }]}>
+                  <TextInput
+                    ref={searchInputRef}
+                    style={[styles.searchTextInput, { color: Colors.textPrimary }]}
+                    placeholder="Escribe para buscar..."
+                    placeholderTextColor={Colors.textMuted}
+                    value={searchQuery}
+                    onChangeText={handleSearchChange}
+                    onSubmitEditing={handleSearchSubmit}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    returnKeyType="search"
+                  />
+                  {searchQuery.length > 0 && (
+                    <TouchableOpacity onPress={handleClearSearch} style={styles.searchClearBtn}>
+                      <MaterialIcons name="close-circle" size={18} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {recentSearches.length > 0 && (
+                  <View style={styles.searchRecentSection}>
+                    <View style={styles.searchRecentHeader}>
+                      <Text style={[styles.searchRecentLabel, { color: Colors.textMuted }]}>Recientes</Text>
+                      <TouchableOpacity onPress={() => { setRecentSearches([]); try { AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify([])); } catch {} }}>
+                        <Text style={[styles.searchClearAll, { color: Colors.primary }]}>Limpiar</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.searchRecentChips}>
+                      {recentSearches.map((s, i) => (
+                        <TouchableOpacity
+                          key={i}
+                          style={[styles.searchChip, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border }]}
+                          onPress={() => handleRecentPress(s)}
+                          activeOpacity={0.7}
+                        >
+                          <MaterialIcons name="history" size={14} color={Colors.textMuted} />
+                          <Text style={[styles.searchChipText, { color: Colors.textSecondary }]}>{s}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+
+                <TouchableOpacity
+                  style={[styles.searchSubmitBtn, { backgroundColor: Colors.primary }]}
+                  activeOpacity={0.85}
+                  onPress={handleSearchSubmit}
+                >
+                  <MaterialIcons name="search" size={18} color="#fff" />
+                  <Text style={styles.searchSubmitText}>BUSCAR</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
       <Modal visible={zoomImageUrl !== null} transparent animationType="fade" statusBarTranslucent onRequestClose={closeZoom}>

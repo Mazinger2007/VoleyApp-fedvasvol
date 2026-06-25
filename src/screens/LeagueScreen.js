@@ -29,6 +29,7 @@ import { getDominantBorderColor } from '../utils/imageColor';
 import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
 import { Radius, Spacing, Typography } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { useFavorites } from '../contexts/FavoritesContext';
 import StatusModal from '../components/StatusModal';
 import { cacheTeamsFromRanking, getTeamFromCache, clearTeamCache } from '../utils/teamCache';
 
@@ -244,6 +245,7 @@ const getMonthDays = (year, month) => {
 
 export default function LeagueScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
+  const { isFavorite, toggleFavorite } = useFavorites();
   const insets = useSafeAreaInsets();
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const { url, title, defaultTab, season, openSubgroupModalOnMount } = route.params || {};
@@ -901,6 +903,12 @@ export default function LeagueScreen({ route, navigation }) {
       teamCount: rankingTeamCount,
     });
   };
+
+  const leagueFavId = url || rankingUrl || '';
+  const isLeagueFav = isFavorite('league', leagueFavId);
+  const handleToggleLeagueFav = useCallback(() => {
+    toggleFavorite('league', leagueFavId, title || 'Liga');
+  }, [leagueFavId, title, toggleFavorite]);
 
   const RT_LABELS = {
     ranking: 'Clasificación',
@@ -1570,6 +1578,19 @@ export default function LeagueScreen({ route, navigation }) {
           {!isGlobalLoading && (isFetchingSubgroups || availableSubgroups.length > 1) && (
             <MaterialIcons name="keyboard-arrow-down" size={22} color={isDark ? Colors.textPrimary : Colors.primary} />
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.backBtn, { padding: 10 }]}
+          onPress={handleToggleLeagueFav}
+          activeOpacity={0.7}
+          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
+        >
+          <MaterialIcons
+            name={isLeagueFav ? 'favorite' : 'favorite-border'}
+            size={22}
+            color={isLeagueFav ? Colors.error : (isDark ? Colors.textPrimary : Colors.primary)}
+          />
         </TouchableOpacity>
 
         <TouchableOpacity

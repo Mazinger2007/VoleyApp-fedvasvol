@@ -30,21 +30,22 @@ export function isTournament(title = '') {
 export function openTournamentDetail(navigation, tournament, extraParams = {}) {
   if (!tournament?.href) return;
 
-  const title = tournament.name || tournament.title || 'Competición';
-  const rankingUrl = toRankingUrl(tournament.href);
+  const title = tournament.name || tournament.title || 'Competicion';
 
   if (tournament.isTorneo || isTournament(title)) {
     navigation.navigate('Tournament', {
-      url: rankingUrl,
-      title: title,
-      ...extraParams
+      url: tournament.href,
+      title,
+      ...extraParams,
     });
-  } else {
-    navigation.navigate('League', {
-      url: rankingUrl,
-      title: title,
-      defaultTab: 'ranking',
-      ...extraParams
-    });
+    return;
   }
+
+  navigation.navigate('League', {
+    url: toRankingUrl(tournament.href),
+    title,
+    defaultTab: 'ranking',
+    ...extraParams,
+  });
 }
+

@@ -6,23 +6,23 @@ import { useTheme } from '../contexts/ThemeContext';
 import { Typography, Radius, Spacing } from '../styles/theme';
 import { setBannerShowFn } from '../services/newsNotificationService';
 
-const BANNER_HEIGHT = 72;
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export default function NotificationBanner() {
   const { colors: Colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
-  const translateY = useRef(new Animated.Value(-BANNER_HEIGHT)).current;
+  const HIDDEN_OFFSET = React.useMemo(() => -(insets.top + 100), [insets.top]);
+  const translateY = useRef(new Animated.Value(HIDDEN_OFFSET)).current;
   const dataRef = useRef({ title: '', body: '' });
   const timeoutRef = useRef(null);
 
   const hide = useCallback(() => {
     Animated.timing(translateY, {
-      toValue: -BANNER_HEIGHT,
+      toValue: HIDDEN_OFFSET,
       duration: 300,
       useNativeDriver: true,
     }).start();
-  }, [translateY]);
+  }, [translateY, HIDDEN_OFFSET]);
 
   const show = useCallback((title, body) => {
     dataRef.current = { title, body };

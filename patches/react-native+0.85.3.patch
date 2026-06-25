@@ -1,0 +1,59 @@
+diff --git a/node_modules/react-native/Libraries/Animated/nodes/AnimatedNode.js b/node_modules/react-native/Libraries/Animated/nodes/AnimatedNode.js
+index b10fe9d..881b664 100644
+--- a/node_modules/react-native/Libraries/Animated/nodes/AnimatedNode.js
++++ b/node_modules/react-native/Libraries/Animated/nodes/AnimatedNode.js
+@@ -185,3 +185,14 @@ export default class AnimatedNode {
+     return undefined;
+   }
+ }
++
++// Marker for deepFreezeAndThrowOnMutationInDev to skip animated nodes
++// (they are mutable by design — freezing breaks setValue, animate, etc.)
++if (__DEV__) {
++  Object.defineProperty(AnimatedNode.prototype, '__isAnimatedNode', {
++    value: true,
++    writable: false,
++    configurable: false,
++    enumerable: false,
++  });
++}
+diff --git a/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js b/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js
+index 2e0a031..a1d9f86 100644
+--- a/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js
++++ b/node_modules/react-native/Libraries/Animated/nodes/AnimatedWithChildren.js
+@@ -19,7 +19,20 @@ const {connectAnimatedNodes, disconnectAnimatedNodes} =
+   NativeAnimatedHelper.API;
+ 
+ export default class AnimatedWithChildren extends AnimatedNode {
+-  _children: Array<AnimatedNode> = [];
++  _children: Array<AnimatedNode>;
++
++  constructor(config?: ?Object) {
++    super(config);
++    // Use non-enumerable property so React Dev's deepFreezeAndThrowOnMutationInDev
++    // skips _children (not included in Object.keys), preventing the array from being
++    // frozen and allowing dynamic child additions to work.
++    Object.defineProperty(this, '_children', {
++      value: [],
++      writable: true,
++      configurable: true,
++      enumerable: false,
++    });
++  }
+ 
+   __makeNative(platformConfig: ?PlatformConfig) {
+     if (!this.__isNative) {
+diff --git a/node_modules/react-native/Libraries/Utilities/deepFreezeAndThrowOnMutationInDev.js b/node_modules/react-native/Libraries/Utilities/deepFreezeAndThrowOnMutationInDev.js
+index 44577bc..f8f253b 100644
+--- a/node_modules/react-native/Libraries/Utilities/deepFreezeAndThrowOnMutationInDev.js
++++ b/node_modules/react-native/Libraries/Utilities/deepFreezeAndThrowOnMutationInDev.js
+@@ -37,7 +37,8 @@ function deepFreezeAndThrowOnMutationInDev<T: {...} | Array<unknown>>(
+        * roll out. See https://fburl.com/workplace/5whu3i34. */
+       object === null ||
+       Object.isFrozen(object) ||
+-      Object.isSealed(object)
++      Object.isSealed(object) ||
++      object.__isAnimatedNode
+     ) {
+       return object;
+     }

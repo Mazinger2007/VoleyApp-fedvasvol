@@ -234,7 +234,7 @@ export default function PostDetailScreen({ route, navigation }) {
     if (!url) return;
 
     if (BEACH_PDF_PATTERN.test(file.name) || BEACH_PDF_PATTERN.test(url)) {
-      navigation.push('BeachResult', { pdfUrl: url, pdfName: file.name });
+      navigation.push('BeachList', { pdfUrl: url, pdfName: file.name });
       return;
     }
 

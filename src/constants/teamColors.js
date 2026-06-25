@@ -5,6 +5,12 @@ import { supabase } from '../utils/supabase';
 export let CLUB_BASE_COLORS = {};
 export let OFFICIAL_CHANNELS = [];
 export let CLUB_BASES = [];
+export let LAST_TEAMS_ERROR = null;
+const _colorListeners = new Set();
+export function subscribeColors(cb) {
+  _colorListeners.add(cb);
+  return () => _colorListeners.delete(cb);
+}
 // ------------------------------
 
 /**
@@ -15,21 +21,35 @@ export async function initTeamsData() {
   try {
     const cachedData = await AsyncStorage.getItem('teams_data_cache');
     if (cachedData) {
-      applyTeamsData(JSON.parse(cachedData));
+      const parsed = JSON.parse(cachedData);
+      if (parsed.length > 0) {
+        applyTeamsData(parsed);
+      }
     }
 
+    // Intentar con el nombre exacto de la tabla: teams_data
     const { data: teamsData, error } = await supabase
       .from('teams_data')
       .select('*');
 
-    if (!error && teamsData) {
+    if (error) {
+      LAST_TEAMS_ERROR = { code: error.code, message: error.message, details: error.details, hint: error.hint };
+      console.log('[TeamsData] ⚠️ Error:', JSON.stringify(LAST_TEAMS_ERROR));
+      // Si la tabla no se encontró, limpiar caché para reintentar
+      if (error.code === '42P01' || error.message?.includes('does not exist')) {
+        await AsyncStorage.removeItem('teams_data_cache');
+      }
+    } else if (teamsData && teamsData.length > 0) {
+      LAST_TEAMS_ERROR = null;
       applyTeamsData(teamsData);
       await AsyncStorage.setItem('teams_data_cache', JSON.stringify(teamsData));
-      console.log('[TeamsData] ✅ Datos de equipos actualizados desde Supabase');
-    } else if (error) {
-      console.log('[TeamsData] ⚠️ Error al obtener teams_data:', JSON.stringify({ code: error.code, message: error.message, details: error.details, hint: error.hint }));
+      console.log('[TeamsData] ✅ Datos actualizados (' + teamsData.length + ' equipos)');
+    } else {
+      LAST_TEAMS_ERROR = { message: 'Query returned 0 rows — posible RLS o nombre de tabla incorrecto' };
+      console.warn('[TeamsData] ⚠️', LAST_TEAMS_ERROR.message);
     }
   } catch (error) {
+    LAST_TEAMS_ERROR = { message: error.message };
     console.warn('[TeamsData] Error en initTeamsData:', error);
   }
 }
@@ -60,6 +80,7 @@ function applyTeamsData(teamsData) {
   CLUB_BASE_COLORS = newColors;
   OFFICIAL_CHANNELS = newChannels;
   CLUB_BASES = newBases;
+  _colorListeners.forEach(cb => cb());
 }
 
 /**
@@ -76,7 +97,7 @@ export function getClubBaseName(teamName) {
  * Obtiene el color de un equipo basándose en su nombre base (Club).
  * Realiza una búsqueda por subcadena (case-insensitive).
  */
-export function getTeamColor(teamName, fallback = "#000000ff") {
+export function getTeamColor(teamName, fallback = "#001f3d") {
   const baseName = getClubBaseName(teamName);
   const color = baseName ? CLUB_BASE_COLORS[baseName] : null;
   return color || fallback;

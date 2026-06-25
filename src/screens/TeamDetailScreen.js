@@ -3,7 +3,8 @@
 // Muestra: hero con escudo, stats, próximos y partidos jugados.
 
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { getTeamColor, getClubBaseName } from '../constants/teamColors';
+import { getTeamColor, getClubBaseName, subscribeColors, CLUB_BASE_COLORS } from '../constants/teamColors';
+import { supabase } from '../utils/supabase';
 import {
   View,
   Text,
@@ -13,7 +14,6 @@ import {
   StyleSheet,
   StatusBar,
   Platform,
-  Animated,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -25,13 +25,16 @@ import { toAbsoluteUrl } from '../utils/htmlParser';
 import { getDominantBorderColor } from '../utils/imageColor';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
+import { useFavorites } from '../contexts/FavoritesContext';
 import { getMatchSummary, parseMatchDateTime, MatchCard, rowToMatch } from '../components/MatchList';
+import { loadTeamDetailsCache, saveTeamDetailsCache } from '../utils/teamCache';
 
 // Componente para items de competición reutilizable
 const CompItem = ({ comp, navigation, teamName, isDark, Colors, Radius, heroAccent }) => (
   <TouchableOpacity
     activeOpacity={0.7}
     onPress={() => {
+      if (!comp.href) return;
       if (comp.href.includes('/team/')) {
         navigation.push('TeamDetail', {
           teamUrl: comp.href,
@@ -262,6 +265,7 @@ function SectionHeader({ title, count, Colors }) {
 
 export default function TeamDetailScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
+  const { isFavorite, toggleFavorite } = useFavorites();
   const {
     teamName = '',
     teamUrl,
@@ -275,24 +279,38 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   const teamBaseName = useMemo(() => getClubBaseName(teamName) || teamName, [teamName]);
 
-  // Si ya tenemos rankingBlocks/calendarBlocks (pasados por props), evitamos mostrar el cargando
-  const skipTeamFetch = !!rankingBlocks;
-  const skipCalendarFetch = !!calendarBlocksFromRoute;
+  const teamFavId = teamUrl || teamName || '';
+  const isTeamFav = isFavorite('team', teamFavId);
+  const handleToggleTeamFav = useCallback(() => {
+    toggleFavorite('team', teamFavId, teamName || 'Equipo');
+  }, [teamFavId, teamName, toggleFavorite]);
 
-  const teamFetch = useFetch(teamUrl || null, { lazy: skipTeamFetch });
+  // Siempre obtener datos del equipo (competiciones, equipaciones, estadísticas)
+  const teamFetch = useFetch(teamUrl || null);
+  // Calendario: si ya viene en params se omite fetch (optimización)
+  const skipCalendarFetch = !!calendarBlocksFromRoute;
   const calendarFetch = useFetch(calendarUrl || null, { lazy: skipCalendarFetch });
 
-  // Consolidar bloques
-  const blocks = rankingBlocks || teamFetch.blocks;
+  // Fusionar bloques: primero los del equipo (competiciones, equipaciones, stats),
+  // luego rankingBlocks si llegaron desde la pantalla anterior (estadísticas vía ranking)
+  const blocks = useMemo(() => {
+    const merged = [...(teamFetch.blocks || [])];
+    if (rankingBlocks) {
+      rankingBlocks.forEach(b => {
+        if (!merged.includes(b)) merged.push(b);
+      });
+    }
+    return merged;
+  }, [teamFetch.blocks, rankingBlocks]);
   const calendarBlocks = calendarBlocksFromRoute || calendarFetch.blocks;
 
-  const loading = (!skipTeamFetch && teamFetch.loading) || (!skipCalendarFetch && calendarFetch.loading);
+  const loading = (!rankingBlocks && teamFetch.loading) || (!skipCalendarFetch && calendarFetch.loading);
   const error = teamFetch.error || calendarFetch.error;
   
   const refresh = useCallback(() => {
-    if (!skipTeamFetch) teamFetch.refresh();
+    if (teamUrl) teamFetch.refresh();
     if (!skipCalendarFetch) calendarFetch.refresh();
-  }, [skipTeamFetch, teamFetch, skipCalendarFetch, calendarFetch]);
+  }, [teamUrl, teamFetch, skipCalendarFetch, calendarFetch]);
 
   const teamLogoResolved = useMemo(() => {
     if (blocks && blocks.length > 0) {
@@ -310,24 +328,45 @@ export default function TeamDetailScreen({ route, navigation }) {
     return teamLogoFromRoute;
   }, [blocks, teamName, teamBaseName, teamLogoFromRoute]);
 
-  // Extraer las nuevas secciones desde los bloques parseados
-  const competitions = useMemo(() => blocks.find(b => b.type === 'competitions')?.items || [], [blocks]);
-  const equipaciones = useMemo(() => blocks.find(b => b.type === 'equipaciones')?.items || [], [blocks]);
+  // Extraer datos estructurados del bloque teamContext
+  const teamContext = useMemo(() => blocks.find(b => b.type === 'teamContext') || null, [blocks]);
+
+  const competitions = useMemo(() => teamContext?.competitions || blocks.find(b => b.type === 'competitions')?.items || [], [teamContext, blocks]);
+  const equipaciones = useMemo(() => teamContext?.equipaciones || blocks.find(b => b.type === 'equipaciones')?.items || [], [teamContext, blocks]);
+
+  // Cache de equipo unificado
+  const teamId = teamContext?.teamId || teamFavId;
+  const [teamCache, setTeamCache] = useState(null);
+  const isCacheLoading = useRef(false);
+  useEffect(() => {
+    if (!teamId || teamCache) return;
+    let mounted = true;
+    isCacheLoading.current = true;
+    loadTeamDetailsCache(teamId).then(cached => {
+      if (mounted && cached) setTeamCache(cached);
+    }).catch(() => {}).finally(() => { isCacheLoading.current = false; });
+    return () => { mounted = false; };
+  }, [teamId]);
+
+  // Guardar caché cuando llegan datos del servidor
+  const hasFreshData = teamContext && (teamContext.upcomingMatches?.length > 0 || teamContext.competitions?.length > 0);
+  useEffect(() => {
+    if (hasFreshData && teamId && teamContext) {
+      saveTeamDetailsCache(teamId, {
+        teamInfo: teamContext.teamInfo,
+        competitions: teamContext.competitions,
+        equipaciones: teamContext.equipaciones,
+        upcomingMatches: teamContext.upcomingMatches,
+        lastResults: teamContext.lastResults,
+        fetchedAt: Date.now(),
+      }).catch(() => {});
+    }
+  }, [hasFreshData, teamId, teamContext]);
 
   const [accentColor, setAccentColor] = useState(null);
+  const [dbColor, setDbColor] = useState(null);
   const [logoError, setLogoError] = useState(false);
-  const [showAllCompetitions, setShowAllCompetitions] = useState(false);
-  const expansionAnim = useRef(new Animated.Value(0)).current;
-
-  // Animación para el desplegable de competiciones
-  useEffect(() => {
-    Animated.spring(expansionAnim, {
-      toValue: showAllCompetitions ? 1 : 0,
-      friction: 8,
-      tension: 40,
-      useNativeDriver: false, // height y opacity combinados necesitan false
-    }).start();
-  }, [showAllCompetitions]);
+  const [showAllLastMatches, setShowAllLastMatches] = useState(false);
 
   const initials = useMemo(() => getInitials(teamName), [teamName]);
   const teamLogoCandidates = useMemo(() => buildImageSizeCandidates(teamLogoResolved), [teamLogoResolved]);
@@ -345,8 +384,71 @@ export default function TeamDetailScreen({ route, navigation }) {
     return () => { mounted = false; };
   }, [teamLogoUri]);
 
-  const manualColor = useMemo(() => getTeamColor(teamName), [teamName]);
-  const heroAccent = manualColor !== '#001f3d' ? manualColor : (accentColor || Colors.primary);
+  // Subscribe to global color updates (from initTeamsData)
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    const unsub = subscribeColors(() => forceRender(n => n + 1));
+    return unsub;
+  }, []);
+
+  // Direct DB fetch: query Supabase for this team's color
+  // This guarantees we get the color regardless of global init timing
+  useEffect(() => {
+    let mounted = true;
+    async function fetchDbColor() {
+      try {
+        // First try the global state (may already be loaded)
+        const globalColor = getTeamColor(teamName);
+        if (globalColor && globalColor !== '#001f3d') {
+          if (mounted) setDbColor(globalColor);
+          return;
+        }
+
+        // Direct query to Supabase
+        const { data, error } = await supabase
+          .from('teams_data')
+          .select('base_name, color');
+
+        if (error || !data) return;
+
+        // Find matching team by checking if teamName contains any base_name
+        const upperName = teamName.toUpperCase();
+        const match = data.find(row =>
+          row.base_name && upperName.includes(row.base_name.toUpperCase())
+        );
+
+        if (mounted && match?.color) {
+          setDbColor(match.color);
+        }
+      } catch (_) {
+        // Silently fail — will fall back to logo color or theme primary
+      }
+    }
+    fetchDbColor();
+    return () => { mounted = false; };
+  }, [teamName]);
+
+  // Also update dbColor when global state changes (e.g. initTeamsData completes later)
+  const manualColor = getTeamColor(teamName);
+  useEffect(() => {
+    if (manualColor && manualColor !== '#001f3d') {
+      setDbColor(manualColor);
+    }
+  }, [manualColor]);
+
+  // Determine hero accent color with priority: DB color > logo dominant color > theme primary
+  // Filter out white/near-white colors that would make the hero invisible
+  const isUsableColor = useCallback((c) => {
+    if (!c || c === '#001f3d') return false;
+    const hex = c.replace('#', '');
+    if (hex.length < 6) return false;
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return luminance <= 210;
+  }, []);
+  const heroAccent = isUsableColor(dbColor) ? dbColor : (isUsableColor(accentColor) ? accentColor : Colors.primary);
 
   const pointsFromCalendar = useMemo(
     () => sumTeamPointsFromCalendarBlocks(calendarBlocks, teamName),
@@ -386,33 +488,50 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   const teamMatches = useMemo(() => {
     const list = [];
-    const norm = normalizeTeamName(teamName);
 
-    // De las tablas propias de la página de Resumen de equipo
+    // 1. Usar datos directos del teamContext (más completos)
+    const ctxUpcoming = teamContext?.upcomingMatches || [];
+    const ctxLast = teamContext?.lastResults || [];
+    ctxUpcoming.forEach(m => { if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam && ex.date === m.date)) list.push(m); });
+    ctxLast.forEach(m => { if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam && ex.matchScore?.home === m.matchScore?.home)) list.push(m); });
+
+    // 1b. Fallback a caché si no hay datos frescos del servidor
+    if (ctxUpcoming.length === 0 && ctxLast.length === 0 && teamCache) {
+      (teamCache.upcomingMatches || []).forEach(m => {
+        if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam)) list.push(m);
+      });
+      (teamCache.lastResults || []).forEach(m => {
+        if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam && ex.matchScore?.home === m.matchScore?.home)) list.push(m);
+      });
+    }
+
+    // 2. Fallback: de las tablas propias de la página de Resumen de equipo
+    const norm = normalizeTeamName(teamName);
     matchTables.forEach(b => {
       if (Array.isArray(b.matches) && b.matches.length > 0) {
-        list.push(...b.matches);
+        b.matches.forEach(m => {
+          if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam)) list.push(m);
+        });
       } else if (Array.isArray(b.rows) && Array.isArray(b.headers)) {
-        b.rows.forEach(r => list.push(rowToMatch(r, b.headers)));
+        b.rows.forEach(r => {
+          const m = rowToMatch(r, b.headers);
+          if (m && !list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam)) list.push(m);
+        });
       }
     });
 
-    // Del calendario de toda la liga (más seguro y siempre completo si navegamos desde Ranking)
+    // 3. Del calendario de toda la liga (si existe)
+    const teamBaseName = getClubBaseName(teamName) || teamName;
+    const normAlt = normalizeTeamName(teamName);
     (calendarBlocks || []).forEach(b => {
       if (b.type === 'table' && Array.isArray(b.matches)) {
         b.matches.forEach(m => {
           const hBase = getClubBaseName(m.homeTeam);
           const aBase = getClubBaseName(m.awayTeam);
-          const isHome = normalizeTeamName(m.homeTeam) === norm || (teamBaseName && hBase === teamBaseName);
-          const isAway = normalizeTeamName(m.awayTeam) === norm || (teamBaseName && aBase === teamBaseName);
-
+          const isHome = normalizeTeamName(m.homeTeam) === normAlt || (teamBaseName && hBase === teamBaseName);
+          const isAway = normalizeTeamName(m.awayTeam) === normAlt || (teamBaseName && aBase === teamBaseName);
           if (isHome || isAway) {
-            // Evitar duplicados
-            const alreadyAdded = list.some(existing =>
-              (existing.homeTeam === m.homeTeam && existing.awayTeam === m.awayTeam && existing.rawDate === m.rawDate) ||
-              (existing.matchScore?.home === m.matchScore?.home && existing.homeTeam === m.homeTeam)
-            );
-            if (!alreadyAdded) {
+            if (!list.some(ex => ex.homeTeam === m.homeTeam && ex.awayTeam === m.awayTeam && ex.date === m.date)) {
               list.push(m);
             }
           }
@@ -421,7 +540,7 @@ export default function TeamDetailScreen({ route, navigation }) {
     });
 
     return list.filter(Boolean);
-  }, [matchTables, calendarBlocks, teamName]);
+  }, [teamContext, matchTables, calendarBlocks, teamName, teamCache]);
 
   const { upcomingMatches, playedMatches } = useMemo(() => {
     const withSummary = teamMatches.map(m => {
@@ -447,32 +566,47 @@ export default function TeamDetailScreen({ route, navigation }) {
 
   const record = useMemo(() => calcRecord(playedMatches, teamName), [playedMatches, teamName]);
 
-  // -- NEW STATS EXTRACTION FROM AJAX TABS --
-  const officialStats = useMemo(() => {
-    let pts = null, played = null, wins = null, losses = null, setsFor = null, setsAgainst = null;
-    if (statsTable?.rows) {
-      statsTable.rows.forEach(r => {
-        const key = String(r[0] || '').toLowerCase();
-        const val = Number((r[1] || '').replace(/[^\d]/g, ''));
-        if (key.includes('puntos') && !key.includes('juego') && !key.includes('favor')) pts = val;
-        if (key.includes('jugados')) played = val;
-        if (key.includes('ganados')) wins = val;
-        if (key.includes('perdidos')) losses = val;
-        if (key.includes('favor') && key.includes('sets')) setsFor = val;
-        if (key.includes('contra') && key.includes('sets')) setsAgainst = val;
-      });
+  // -- RAW STATS from AJAX tab (all rows directly) --
+  const statsRows = useMemo(() => {
+    if (statsTable?.rows && statsTable.rows.length > 0) {
+      return statsTable.rows
+        .filter(r => {
+          const label = String(r[0] || '').trim().toLowerCase();
+          return label !== 'nombre' && label !== 'name' && label !== 'cantidad' && label !== 'quantity';
+        })
+        .map(r => ({
+          label: String(r[0] || '').trim(),
+          value: String(r[1] || '').trim(),
+        }));
     }
-    return { pts, played, wins, losses, setsFor, setsAgainst };
+    return [];
   }, [statsTable]);
 
-  // Prioritize official stats over computed ones
-  // Prioritize official stats (AJAX) over league table stats, then computed ones
-  const finalPoints = officialStats.pts ?? (leagueStats.points !== '—' ? leagueStats.points : '—');
-  const finalPlayed = officialStats.played ?? (leagueStats.played !== '—' ? leagueStats.played : '—');
-  const finalWins = officialStats.wins ?? (leagueStats.won !== '—' ? leagueStats.won : record.wins);
-  const finalLosses = officialStats.losses ?? (leagueStats.lost !== '—' ? leagueStats.lost : record.losses);
-  const finalSetsFor = officialStats.setsFor ?? (leagueStats.setsFor !== '—' ? leagueStats.setsFor : sumSetsFromMatches(playedMatches, teamName, 'for'));
-  const finalSetsAgainst = officialStats.setsAgainst ?? (leagueStats.setsAgainst !== '—' ? leagueStats.setsAgainst : sumSetsFromMatches(playedMatches, teamName, 'against'));
+  // Fusionar tournamentTitle (competencia actual) + competiciones desde la web + caché
+  const mergedCompetitions = useMemo(() => {
+    const items = [];
+    if (tournamentTitle) {
+      items.push({ title: tournamentTitle, season: 'Actual' });
+    }
+    const source = competitions.length > 0 ? competitions : (teamCache?.competitions || []);
+    const kept = new Set();
+    source.forEach(comp => {
+      const season = String(comp.season || '');
+      if (kept.has(comp.title)) return;
+      if (season && !season.includes('2025') && !season.includes('2026')) return;
+      kept.add(comp.title);
+      items.push(comp);
+    });
+    items.sort((a, b) => {
+      const sA = parseInt(String(a.season || ''), 10);
+      const sB = parseInt(String(b.season || ''), 10);
+      if (isNaN(sA) && isNaN(sB)) return 0;
+      if (isNaN(sA)) return 1;
+      if (isNaN(sB)) return -1;
+      return sB - sA;
+    });
+    return items;
+  }, [tournamentTitle, competitions, teamCache]);
 
   if (loading) return <LoadingView variant="clean" message={`Cargando ${teamName}…`} />;
 
@@ -494,9 +628,18 @@ export default function TeamDetailScreen({ route, navigation }) {
             {teamName}
           </Text>
         </View>
-        <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7} style={{ padding: 8, marginRight: -8, marginLeft: 8 }}>
-          <MaterialIcons name="close" size={24} color={isDark ? '#f1f5f9' : '#001f3d'} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <TouchableOpacity onPress={handleToggleTeamFav} activeOpacity={0.7} style={{ padding: 8 }}>
+            <MaterialIcons
+              name={isTeamFav ? 'favorite' : 'favorite-border'}
+              size={22}
+              color={isTeamFav ? Colors.error : (isDark ? '#f1f5f9' : '#001f3d')}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => navigation.goBack()} activeOpacity={0.7} style={{ padding: 8, marginRight: -8 }}>
+            <MaterialIcons name="close" size={24} color={isDark ? '#f1f5f9' : '#001f3d'} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -547,87 +690,56 @@ export default function TeamDetailScreen({ route, navigation }) {
               </View>
             </View>
 
-            {/* Season Stats Bento Row */}
-            <View style={{ flexDirection: 'row', width: '100%', gap: 12 }}>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
-                <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Puntos</Text>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalPoints}</Text>
-              </View>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
-                <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Ganados</Text>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalWins}</Text>
-              </View>
-              <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: Radius.lg, padding: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
-                <Text style={{ fontSize: 10, fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Sets +</Text>
-                <Text style={{ fontSize: 24, fontWeight: '900', color: '#ffffff' }}>{finalSetsFor}</Text>
-              </View>
-            </View>
           </View>
         </View>
 
-        {/* ── Next Match ── */}
+        {/* ── Próximos Partidos ── */}
         {upcomingMatches.length > 0 ? (
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
-            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximo Partido</Text>
-            <TouchableOpacity
-              activeOpacity={0.8}
-              onPress={() => {
-                if (upcomingMatches[0]) {
-                  navigation.push('MatchDetail', {
-                    match: upcomingMatches[0],
-                    calendarUrl: calendarUrl
-                  });
-                }
-              }}
-              style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 24, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderLeftWidth: 4, borderLeftColor: heroAccent, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 5 }}
-            >
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 16 }}>
-                {/* Home Team */}
-                <View style={{ flex: 1, alignItems: 'center' }}>
-                  <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: isDark ? '#1e293b' : '#f8fafc', marginBottom: 8, padding: 8 }}>
-                    {upcomingMatches[0].homeLogo ? (
-                      <Image source={{ uri: upcomingMatches[0].homeLogo }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
-                    ) : (
-                      <Text style={{ fontSize: 14, fontWeight: '900', color: heroAccent }}>{getInitials(upcomingMatches[0].homeTeam)}</Text>
-                    )}
-                  </View>
-                  <Text style={{ fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', textAlign: 'center', color: Colors.textPrimary }} numberOfLines={2}>{upcomingMatches[0].homeTeam}</Text>
-                </View>
-                {/* VS */}
-                <View style={{ alignItems: 'center', gap: 4 }}>
-                  <Text style={{ fontSize: 10, fontWeight: '900', color: heroAccent, backgroundColor: heroAccent + '15', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 }}>VS</Text>
-                  <View style={{ backgroundColor: heroAccent, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginTop: 4 }}>
-                    <Text style={{ fontSize: 10, fontWeight: 'bold', color: '#fff' }}>DETALLES</Text>
-                  </View>
-                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted }}>{upcomingMatches[0].time || 'TBD'}</Text>
-                </View>
-                {/* Away Team */}
-                <View style={{ flex: 1, alignItems: 'center' }}>
-                  <View style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: isDark ? '#1e293b' : '#f8fafc', marginBottom: 8, padding: 8 }}>
-                    {upcomingMatches[0].awayLogo ? (
-                      <Image source={{ uri: upcomingMatches[0].awayLogo }} style={{ width: '100%', height: '100%' }} contentFit="contain" />
-                    ) : (
-                      <Text style={{ fontSize: 14, fontWeight: '900', color: heroAccent }}>{getInitials(upcomingMatches[0].awayTeam)}</Text>
-                    )}
-                  </View>
-                  <Text style={{ fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', textAlign: 'center', color: Colors.textPrimary }} numberOfLines={2}>{upcomingMatches[0].awayTeam}</Text>
-                </View>
-              </View>
-              <View style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopColor: isDark ? '#2f3033' : '#f8fafc', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <MaterialIcons name="calendar-today" size={14} color={Colors.textMuted} />
-                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted, letterSpacing: 0.5 }}>{upcomingMatches[0].dateLabel || 'Fecha por confirmar'}</Text>
-                </View>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <MaterialIcons name="location-pin" size={16} color={Colors.textMuted} />
-                  <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted, letterSpacing: 0.5, flexShrink: 1 }} numberOfLines={1}>{upcomingMatches[0].venue || 'Por designar'}</Text>
-                </View>
-              </View>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, paddingHorizontal: 4 }}>
+              <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5 }}>Próximos Partidos</Text>
+              <Text style={{ fontSize: 11, fontWeight: '700', color: heroAccent }}>{upcomingMatches.length} partido(s)</Text>
+            </View>
+            <View style={{ gap: 8 }}>
+              {upcomingMatches.map((m, i) => {
+                const summary = getMatchSummary(m);
+                const isHome = normalizeTeamName(m.homeTeam) === normalizeTeamName(teamName) || (getClubBaseName(teamName) && getClubBaseName(m.homeTeam) === getClubBaseName(teamName));
+                const opponent = isHome ? m.awayTeam : m.homeTeam;
+                return (
+                  <TouchableOpacity
+                    key={`upcoming-${i}`}
+                    activeOpacity={0.7}
+                    onPress={() => navigation.push('MatchDetail', { match: m, calendarUrl })}
+                    style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', borderLeftWidth: 4, borderLeftColor: heroAccent, flexDirection: 'row', alignItems: 'center', gap: 12 }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textPrimary, textTransform: 'uppercase' }}>vs {opponent}</Text>
+                      <View style={{ flexDirection: 'row', gap: 12, marginTop: 4 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <MaterialIcons name="calendar-today" size={11} color={Colors.textMuted} />
+                          <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: '600' }}>{summary.dateLabel || m.date || 'TBD'}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <MaterialIcons name="access-time" size={11} color={Colors.textMuted} />
+                          <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: '600' }}>{summary.time || m.time || 'TBD'}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                          <MaterialIcons name={isHome ? 'home' : 'flight-takeoff'} size={11} color={Colors.textMuted} />
+                          <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: '600' }}>{isHome ? 'Local' : 'Visitante'}</Text>
+                        </View>
+                      </View>
+                    </View>
+                    <View style={{ backgroundColor: heroAccent + '20', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '900', color: heroAccent, textTransform: 'uppercase', letterSpacing: 0.5 }}>Detalles</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           </View>
         ) : (
           <View style={{ paddingHorizontal: 16, paddingTop: 24, }}>
-            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximo Partido</Text>
+            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Próximos Partidos</Text>
             <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, padding: 32, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed' }}>
               <MaterialIcons name="event-busy" size={32} color={Colors.textMuted} style={{ opacity: 0.5, marginBottom: 8 }} />
               <Text style={{ fontSize: 14, fontWeight: '700', color: Colors.textMuted, textAlign: 'center' }}>No hay partidos próximos programados</Text>
@@ -635,98 +747,37 @@ export default function TeamDetailScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* ── Detailed Stats Table ── */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
-          <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 }}>
-            <View style={{ paddingHorizontal: 24, paddingVertical: 16, backgroundColor: isDark ? '#1e293b' : '#f8fafc', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Text style={{ fontSize: 12, fontWeight: 'bold', letterSpacing: 1.5, color: heroAccent, textTransform: 'uppercase' }}>Estadísticas de Temporada</Text>
-              <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted }}>{tournamentTitle ? 'ACTUAL' : ''}</Text>
+        {/* ── Detailed Stats Table (raw from AJAX) ── */}
+        {statsRows.length > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
+            <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, overflow: 'hidden', borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 }}>
+              <View style={{ paddingHorizontal: 24, paddingVertical: 16, backgroundColor: isDark ? '#1e293b' : '#f8fafc', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontSize: 12, fontWeight: 'bold', letterSpacing: 1.5, color: heroAccent, textTransform: 'uppercase' }}>Estadísticas de Temporada</Text>
+                <Text style={{ fontSize: 10, fontWeight: 'bold', color: Colors.textMuted }}>{tournamentTitle ? 'ACTUAL' : ''}</Text>
+              </View>
+              <View style={{ padding: 20, gap: 12 }}>
+                {statsRows.map((s, i) => (
+                  <View key={`stat-${i}`} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: isDark ? '#2f3033' : '#f1f5f9', paddingBottom: 10 }}>
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.3 }}>{s.label}</Text>
+                    <Text style={{ fontSize: 20, fontWeight: '900', color: Colors.textPrimary }}>{s.value}</Text>
+                  </View>
+                ))}
+              </View>
             </View>
-            <View style={{ padding: 24, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 16 }}>
-              {[
-                { label: 'Jugados', value: finalPlayed, color: Colors.textPrimary },
-                { label: 'Ganados', value: finalWins, color: Colors.textPrimary },
-                { label: 'Perdidos', value: finalLosses, color: Colors.textPrimary },
-                { label: 'Puntos', value: finalPoints, color: Colors.textPrimary },
-                { label: 'A favor', value: finalSetsFor, color: '#22c55e' },
-                { label: 'En contra', value: finalSetsAgainst, color: '#ef4444' },
-              ].map((stat, i) => (
-                <View key={`stat-${i}`} style={{ width: '45%', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', borderBottomWidth: 1, borderBottomColor: isDark ? '#2f3033' : '#f8fafc', paddingBottom: 8 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '500', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: -0.5 }}>{stat.label}</Text>
-                  <Text style={{ fontSize: 18, fontWeight: '900', color: stat.color }}>{stat.value}</Text>
-                </View>
+          </View>
+        )}
+
+        {/* ── Competiciones ── */}
+        {mergedCompetitions.length > 0 && (
+          <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
+            <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
+            <View style={{ gap: 10 }}>
+              {mergedCompetitions.map((comp, idx) => (
+                <CompItem key={`comp-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
               ))}
             </View>
           </View>
-        </View>
-
-        {/* ── Competiciones ── */}
-        <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
-          <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Competiciones</Text>
-          <View style={{ gap: 10 }}>
-            {competitions && competitions.length > 0 ? (
-              <>
-                {competitions.slice(0, 2).map((comp, idx) => (
-                  <CompItem key={`comp-fixed-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
-                ))}
-
-                {competitions.length > 2 && (
-                  <>
-                    <Animated.View style={{
-                      opacity: expansionAnim,
-                      maxHeight: expansionAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [0, 800] // Suficiente para varias tarjetas
-                      }),
-                      transform: [{
-                        translateY: expansionAnim.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [-20, 0]
-                        })
-                      }],
-                      overflow: 'hidden',
-                      gap: 10
-                    }}>
-                      {competitions.slice(2).map((comp, idx) => (
-                        <CompItem key={`comp-anim-${idx}`} comp={comp} navigation={navigation} teamName={teamName} isDark={isDark} Colors={Colors} Radius={Radius} heroAccent={heroAccent} />
-                      ))}
-                    </Animated.View>
-
-                    <TouchableOpacity
-                      onPress={() => setShowAllCompetitions(!showAllCompetitions)}
-                      activeOpacity={0.7}
-                      style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        paddingVertical: 12,
-                        backgroundColor: Colors.primaryAlpha10,
-                        borderRadius: Radius.lg,
-                        marginTop: 4
-                      }}
-                    >
-                      <Text style={{ color: heroAccent, fontWeight: '800', fontSize: 12, textTransform: 'uppercase' }}>
-                        {showAllCompetitions ? 'Ocultar competiciones' : `Ver todas (${competitions.length})`}
-                      </Text>
-                      <MaterialIcons name={showAllCompetitions ? "expand-less" : "expand-more"} size={20} color={heroAccent} />
-                    </TouchableOpacity>
-                  </>
-                )}
-              </>
-            ) : tournamentTitle ? (
-              <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.lg, padding: 16, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', flexDirection: 'row', alignItems: 'center', gap: 16, elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
-                <View style={{ width: 40, height: 40, backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.lg, alignItems: 'center', justifyContent: 'center' }}>
-                  <MaterialIcons name="emoji-events" size={24} color={heroAccent} />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 12, fontWeight: 'bold', color: heroAccent, textTransform: 'uppercase' }}>{tournamentTitle}</Text>
-                  <Text style={{ fontSize: 10, color: Colors.textMuted, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, marginTop: 2 }}>Temporada Actual</Text>
-                </View>
-              </View>
-            ) : null}
-          </View>
-        </View>
+        )}
 
         {/* ── Equipaciones Section ── */}
         {equipaciones && equipaciones.length > 0 && (
@@ -752,7 +803,7 @@ export default function TeamDetailScreen({ route, navigation }) {
           <View style={{ paddingHorizontal: 16, paddingTop: 24 }}>
             <Text style={{ fontSize: 12, fontWeight: 'bold', color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 1.5, marginBottom: 12, paddingHorizontal: 4 }}>Últimos Resultados</Text>
             <View style={{ backgroundColor: isDark ? Colors.surface : '#ffffff', borderRadius: Radius.xl, borderWidth: 1, borderColor: isDark ? Colors.border : '#e2e8f0', overflow: 'hidden', elevation: 1, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2 }}>
-              {playedMatches.slice(0, 5).map((m, i) => {
+              {(showAllLastMatches ? playedMatches : playedMatches.slice(0, 6)).map((m, i) => {
                 const norm = normalizeTeamName(teamName);
                 const clubBase = getClubBaseName(teamName);
                 const hBase = getClubBaseName(m.homeTeam);
@@ -783,6 +834,18 @@ export default function TeamDetailScreen({ route, navigation }) {
                   </TouchableOpacity>
                 );
               })}
+              {playedMatches.length > 6 && (
+                <TouchableOpacity
+                  onPress={() => setShowAllLastMatches(!showAllLastMatches)}
+                  activeOpacity={0.7}
+                  style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 12, backgroundColor: Colors.primaryAlpha10 }}
+                >
+                  <Text style={{ color: heroAccent, fontWeight: '800', fontSize: 12, textTransform: 'uppercase' }}>
+                    {showAllLastMatches ? 'Ocultar' : `Ver más (${playedMatches.length})`}
+                  </Text>
+                  <MaterialIcons name={showAllLastMatches ? "expand-less" : "expand-more"} size={20} color={heroAccent} />
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         )}

@@ -7,7 +7,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { fetchAndParse } from '../utils/htmlParser';
 
 // Keyed by URL → parsed block array. Solo dura lo que la sesión de la app.
-const resultCache = new Map();
+export const resultCache = new Map();
 
 /**
  * @param {string} url - URL pública a parsear

@@ -1498,6 +1498,304 @@ function extractCellText(cellNode) {
   return cleaned || iconTitle || '';
 }
 
+// ─── Extraer información del equipo desde el HTML base ──────────────────────
+function extractTeamInfoFromBaseHtml(html, teamUrl) {
+  const teamId = teamUrl.match(/\/team\/(\d+)/i)?.[1] || null;
+  let name = teamUrl.match(/\/team\/\d+\/([^/]+)/i)?.[1] || null;
+  if (name) name = decodeURIComponent(name).replace(/[-_]/g, ' ').trim();
+  let shieldUrl = null;
+  let club = null;
+  let category = null;
+  try {
+    const titleMatch = html.match(/<title>([^<]*)<\/title>/i);
+    if (titleMatch && !name) name = titleMatch[1].replace(/-\s*\w+\s*$/i, '').trim();
+    const logoMatch = html.match(/<img[^>]+class="[^"]*team-logo[^"]*"[^>]+src="([^"]+)"/i);
+    if (logoMatch) shieldUrl = toAbsoluteUrl(logoMatch[1]);
+    if (!shieldUrl) {
+      const altMatch = html.match(/<img[^>]+alt="[^"]*shield[^"]*"[^>]+src="([^"]+)"/i);
+      if (altMatch) shieldUrl = toAbsoluteUrl(altMatch[1]);
+    }
+    const clubMatch = html.match(/Club[:\s]+([^<\n]+)/i);
+    if (clubMatch) club = clubMatch[1].trim();
+    const catMatch = html.match(/Categor[íi]a[:\s]+([^<\n]+)/i);
+    if (catMatch) category = catMatch[1].trim();
+  } catch (_) {}
+  return { teamId, name, shieldUrl, club, category };
+}
+
+// ─── Extraer competiciones desde el HTML de la pestaña 'tournaments' ──────
+const COL_COMP_TEAM = 'colstyle-nombre';
+const COL_COMP_NAME = 'colstyle-torneo';
+const COL_COMP_SEASON = 'colstyle-temporada';
+const COL_COMP_CATEGORY = 'colstyle-categoria';
+const COL_COMP_GENDER = 'colstyle-genero';
+
+function parseCompetitionsFromHtml(compHtml, baseHtml, matchHtml) {
+  const competitions = [];
+
+  // Collect all tournament URLs from base HTML and match links
+  const tournamentUrls = new Map();
+  const addTournamentUrl = (url) => {
+    const abs = url.startsWith('http') ? url : toAbsoluteUrl(url);
+    const id = abs.match(/\/tournament\/(\d+)/i)?.[1];
+    if (id && !tournamentUrls.has(id)) tournamentUrls.set(id, abs.replace(/\/+$/, ''));
+  };
+
+  if (baseHtml) {
+    const linkMatches = [...baseHtml.matchAll(/<link[^>]+href="([^"]*\/tournament\/\d+[^"]*)"/gi)];
+    linkMatches.forEach(m => addTournamentUrl(m[1]));
+    const aMatches = [...baseHtml.matchAll(/<a[^>]+href="([^"]*\/tournament\/\d+[^"]*)"/gi)];
+    aMatches.forEach(m => addTournamentUrl(m[1]));
+  }
+  if (matchHtml) {
+    const matchLinks = [...matchHtml.matchAll(/<a[^>]+href="([^"]*\/tournament\/(\d+)\/match\/\d+[^"]*)"/gi)];
+    matchLinks.forEach(m => addTournamentUrl(m[1]));
+  }
+
+  const dom = parseHTML(compHtml);
+  const tables = DomUtils.findAll(
+    n => n.type === 'tag' && n.name === 'table',
+    dom.children || [], true
+  );
+
+  for (const table of tables) {
+    const rows = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'tr',
+      table.children || []
+    );
+    if (rows.length < 2) continue;
+
+    for (let ri = 1; ri < rows.length; ri++) {
+      const cells = DomUtils.findAll(
+        n => n.type === 'tag' && (n.name === 'td' || n.name === 'th'),
+        rows[ri].children || []
+      );
+
+      let teamName = '', compName = '', season = '', category = '', gender = '';
+      let teamHref = '';
+
+      cells.forEach(cell => {
+        const cls = (cell.attribs?.class || '');
+        const text = getTextContent(cell).replace(/\s+/g, ' ').trim();
+        const link = DomUtils.findOne(
+          n => n.type === 'tag' && n.name === 'a' && n.attribs?.href,
+          cell.children || []
+        );
+
+        if (cls.includes(COL_COMP_TEAM)) {
+          teamName = text;
+          if (link) teamHref = toAbsoluteUrl(link.attribs.href);
+        } else if (cls.includes(COL_COMP_NAME)) {
+          compName = text;
+        } else if (cls.includes(COL_COMP_SEASON)) {
+          season = text;
+        } else if (cls.includes(COL_COMP_CATEGORY)) {
+          category = text;
+        } else if (cls.includes(COL_COMP_GENDER)) {
+          gender = text;
+        }
+      });
+
+      if (!compName || compName.length < 2) continue;
+
+      // Use first available tournament URL if we have one
+      const firstEntry = tournamentUrls.values().next().value;
+      const href = firstEntry ? firstEntry + '/ranking' : '';
+      const id = firstEntry ? [...tournamentUrls.keys()][0] : null;
+
+      competitions.push({
+        title: compName,
+        href,
+        category,
+        season: season || 'Actual',
+        gender,
+        teamName,
+        teamHref,
+        id,
+      });
+    }
+    if (competitions.length > 0) break;
+  }
+
+  return competitions;
+}
+
+const HOUR_REGEX = /\b\d{1,2}:\d{2}\b/;
+
+function parseSimpleMatchRow(row) {
+  const cells = DomUtils.findAll(
+    n => n.type === 'tag' && (n.name === 'td' || n.name === 'th'),
+    row.children || []
+  );
+  if (cells.length < 3) return null;
+
+  const getTeamFromCell = (cell) => {
+    const ellipsis = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'span' && /\bellipsis\b/i.test(n.attribs?.class || ''),
+      cell.children || []
+    );
+    const name = ellipsis?.attribs?.title?.trim() || (ellipsis ? getTextContent(ellipsis).trim() : getTextContent(cell).trim());
+    const img = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'img',
+      cell.children || []
+    );
+    const logo = img ? toAbsoluteUrl(img.attribs?.src || img.attribs?.['data-src'] || '') : null;
+    return { name, logo: logo ? normalizeTeamLogoUrl(logo) : null };
+  };
+
+  const team1 = getTeamFromCell(cells[0]);
+  const team2 = getTeamFromCell(cells[2]);
+
+  const scoreText = getTextContent(cells[1]).replace(/\s+/g, ' ').trim().replace(/[‐‑‒–—―]/g, '-');
+  const scoreParts = scoreText.match(/(\d+)\s*-\s*(\d+)/);
+
+  const firstLink = DomUtils.findOne(
+    n => n.type === 'tag' && n.name === 'a' && n.attribs?.href,
+    cells[0].children || []
+  );
+  const href = firstLink?.attribs?.href ? toAbsoluteUrl(firstLink.attribs.href) : null;
+
+  if (!team1.name || !team2.name) return null;
+
+  // Detect state: if a score is present, match is finished; otherwise it's upcoming
+  const hasScore = scoreParts && (scoreParts[1] !== '0' || scoreParts[2] !== '0');
+
+  // Check for date/time in the result cell (upcoming matches might have date instead of score)
+  let date = null;
+  const cell1Text = getTextContent(cells[1]).replace(/\s+/g, ' ').trim();
+  if (!hasScore && HOUR_REGEX.test(cell1Text)) {
+    date = cell1Text;
+  }
+
+  return {
+    homeTeam: team1.name,
+    awayTeam: team2.name,
+    homeLogo: team1.logo,
+    awayLogo: team2.logo,
+    scoreText: hasScore ? scoreText : '',
+    matchScore: scoreParts ? { home: scoreParts[1], away: scoreParts[2] } : { home: null, away: null },
+    href,
+    date,
+    state: hasScore ? 'finished' : 'upcoming',
+  };
+}
+
+// ─── Extraer partidos desde el HTML de una pestaña (upcoming / last-results) ─
+function parseMatchesFromTabHtml(tabHtml) {
+  const matches = [];
+  const dom = parseHTML(tabHtml);
+  const tables = DomUtils.findAll(
+    n => n.type === 'tag' && n.name === 'table',
+    dom.children || [], true
+  );
+  tables.forEach(table => {
+    // Detect column classes to choose parser
+    const headerRow = DomUtils.findOne(
+      n => n.type === 'tag' && n.name === 'tr',
+      table.children || []
+    );
+    const headerCells = headerRow ? DomUtils.findAll(
+      n => n.type === 'tag' && (n.name === 'th' || n.name === 'td'),
+      headerRow.children || []
+    ) : [];
+    const classStr = headerCells.map(c => c.attribs?.class || '').join(' ');
+    const isSimpleTable = /colstyle-resultado/i.test(classStr) && !/colstyle-parciales/i.test(classStr);
+
+    const rows = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'tr',
+      table.children || []
+    );
+    rows.forEach((row, i) => {
+      if (i === 0) return; // skip header
+      const parsed = isSimpleTable ? parseSimpleMatchRow(row) : parseMatchRow(row);
+      if (parsed && parsed.homeTeam && parsed.awayTeam) matches.push(parsed);
+    });
+  });
+  return matches;
+}
+
+// ─── Extraer estadísticas desde el HTML de la pestaña 'stats' ──────────────
+function parseStatsFromTabHtml(statsHtml) {
+  const rows = [];
+  const dom = parseHTML(statsHtml);
+
+  const extractPairs = (cells) => {
+    for (let i = 0; i < cells.length - 1; i++) {
+      const label = getTextContent(cells[i]).replace(/\s+/g, ' ').trim();
+      const value = getTextContent(cells[i + 1]).replace(/\s+/g, ' ').trim();
+      if (label && value && /\d/.test(value) && !/\d/.test(label)) {
+        rows.push([label, value]);
+        i++;
+      }
+    }
+  };
+
+  // 1. Buscar tabla de estadísticas
+  const tables = DomUtils.findAll(
+    n => n.type === 'tag' && n.name === 'table',
+    dom.children || [], true
+  );
+  for (const table of tables) {
+    const trs = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'tr',
+      table.children || []
+    );
+    for (const tr of trs) {
+      const cells = DomUtils.findAll(
+        n => n.type === 'tag' && (n.name === 'td' || n.name === 'th'),
+        tr.children || []
+      );
+      if (cells.length >= 2) {
+        const label = getTextContent(cells[0]).replace(/\s+/g, ' ').trim();
+        const value = getTextContent(cells[1]).replace(/\s+/g, ' ').trim();
+        if (label && label.length > 1 && value) {
+          rows.push([label, value]);
+        }
+      }
+    }
+    if (rows.length > 0) break;
+  }
+
+  // 2. Fallback: buscar <dl> <dt>/<dd>
+  if (rows.length === 0) {
+    const dts = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'dt',
+      dom.children || [], true
+    );
+    const dds = DomUtils.findAll(
+      n => n.type === 'tag' && n.name === 'dd',
+      dom.children || [], true
+    );
+    dts.forEach((dt, i) => {
+      const label = getTextContent(dt).replace(/\s+/g, ' ').trim();
+      const value = dds[i] ? getTextContent(dds[i]).replace(/\s+/g, ' ').trim() : '';
+      if (label && label.length > 1 && value) rows.push([label, value]);
+    });
+  }
+
+  // 3. Fallback: buscar <div> o <p> con "Label: Value" pattern
+  if (rows.length === 0) {
+    const allElements = DomUtils.findAll(
+      n => n.type === 'tag' && (n.name === 'div' || n.name === 'p' || n.name === 'span' || n.name === 'li'),
+      dom.children || [], true
+    );
+    for (const el of allElements) {
+      const text = getTextContent(el).replace(/\s+/g, ' ').trim();
+      const colonIdx = text.indexOf(':');
+      if (colonIdx > 0 && colonIdx < text.length - 1) {
+        const label = text.substring(0, colonIdx).trim();
+        const value = text.substring(colonIdx + 1).trim();
+        if (label && label.length > 1 && value) {
+          const already = rows.some(r => r[0].toLowerCase() === label.toLowerCase());
+          if (!already) rows.push([label, value]);
+        }
+      }
+    }
+  }
+
+  return rows;
+}
+
 // ─── Añadido para procesar dinámicamente las pestañas AJAX de un equipo ───
 async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   const currentUrl = toAbsoluteUrl(teamUrl);
@@ -1535,7 +1833,7 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   const mId = currentUrl.match(/\/team\/(\d+)/i)?.[1];
   if (!mId) return initialBlocks;
 
-  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information', 'competitions'];
+  const tabsToFetch = ['upcoming-matches', 'last-results', 'stats', 'information', 'tournaments'];
 
   const extraHtmlPromises = tabsToFetch.map(async (tab) => {
     try {
@@ -1563,10 +1861,14 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   const rawTabs = await Promise.all(extraHtmlPromises);
   const infoHtml = rawTabs[3] || '';
   const compHtml = rawTabs[4] || '';
+  const statsHtml = rawTabs[2] || '';
 
-  // Parse HTML from the first 4 tabs normally to keep stats, matches, etc.
+  // Parse HTML from the first 4 tabs normally to keep matches, etc.
   const extraHtml = rawTabs.slice(0, 4).join('\n\n<br>\n\n');
   const extraBlocks = parseBlocksFromHtml(extraHtml);
+
+  // -- EXTRAER ESTADÍSTICAS DESDE LA PESTAÑA 'stats' --
+  const statsRows = statsHtml ? parseStatsFromTabHtml(statsHtml) : [];
 
   // -- EXTRAER COLORES DE EQUIPACIÓN DE 'information' --
   const equipacionesExtracted = [];
@@ -1590,31 +1892,62 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   });
 
   // -- EXTRAER COMPETICIONES --
-  // Normally it is a list of links to tournaments, or text.
-  const compBlocks = parseBlocksFromHtml(compHtml);
-  let competitionsExtracted = compBlocks
-    .filter(b => b.type === 'link' && /\/tournament\//i.test(b.href))
-    .map(b => ({ title: b.content, href: b.href, season: 'Actual' }));
-
-  // Fallback si no hay links, buscamos encabezados o links puros en el html
+  let competitionsExtracted = compHtml ? parseCompetitionsFromHtml(compHtml, html, rawTabs[1]) : [];
+  // Fallback: desde bloques de la pestaña
   if (competitionsExtracted.length === 0) {
-    const dom = parseHTML(compHtml);
-    const links = DomUtils.findAll(n => n.type === 'tag' && n.name === 'a', dom.children || [], true);
-    competitionsExtracted = links.map(l => ({
-      title: getTextContent(l).replace(/\s+/g, ' ').trim(),
-      href: toAbsoluteUrl(l.attribs?.href || ''),
-      season: 'Actual',
-    })).filter(c => c.title.length > 1 && /\/tournament\//i.test(c.href));
+    const compBlocks = parseBlocksFromHtml(compHtml);
+    compBlocks
+      .filter(b => b.type === 'link' && /\/tournament\//i.test(b.href))
+      .forEach(b => competitionsExtracted.push({ title: b.content, href: b.href, season: 'Actual', category: null, id: b.href.match(/\/tournament\/(\d+)/i)?.[1] || null }));
+  }
+  // Fallback: desde el HTML base de la página (links a torneos)
+  if (competitionsExtracted.length === 0) {
+    const baseBlocks = parseBlocksFromHtml(html);
+    baseBlocks
+      .filter(b => b.type === 'link' && /\/tournament\//i.test(b.href))
+      .forEach(b => {
+        if (!competitionsExtracted.some(c => c.href === b.href)) {
+          competitionsExtracted.push({ title: b.content, href: b.href, season: 'Actual', category: null, id: b.href.match(/\/tournament\/(\d+)/i)?.[1] || null });
+        }
+      });
   }
 
-  // Custom blocks that will be retrieved by useMemo in TeamDetailScreen
+  // -- EXTRAER PRÓXIMOS PARTIDOS Y ÚLTIMOS RESULTADOS --
+  const upcomingHtml = rawTabs[0] || '';
+  const lastResultsHtml = rawTabs[1] || '';
+  const upcomingMatchesExtracted = upcomingHtml ? parseMatchesFromTabHtml(upcomingHtml) : [];
+  const lastResultsExtracted = lastResultsHtml ? parseMatchesFromTabHtml(lastResultsHtml) : [];
+
+  // -- EXTRAER INFORMACIÓN DEL EQUIPO DESDE EL HTML BASE --
+  const teamInfo = extractTeamInfoFromBaseHtml(html, currentUrl);
+  if (!teamInfo.name) teamInfo.name = teamUrl.match(/\/team\/\d+\/([^/]+)/i)?.[1]?.replace(/[-_]/g, ' ')?.trim?.() || null;
+
+  // Custom blocks
   const customBlocks = [];
+
+  // Añadir tabla de estadísticas para que TeamDetailScreen la detecte como statsTable
+  if (statsRows.length > 0) {
+    customBlocks.push({ type: 'table', headers: ['Nombre', 'Cantidad'], rows: statsRows });
+  }
+
   if (competitionsExtracted.length > 0) {
     customBlocks.push({ type: 'competitions', items: competitionsExtracted });
   }
   if (equipacionesExtracted.length > 0) {
     customBlocks.push({ type: 'equipaciones', items: equipacionesExtracted });
   }
+
+  // Añadir bloque teamContext con todos los datos estructurados
+  customBlocks.push({
+    type: 'teamContext',
+    teamId: mId,
+    teamInfo,
+    competitions: competitionsExtracted,
+    equipaciones: equipacionesExtracted,
+    upcomingMatches: upcomingMatchesExtracted,
+    lastResults: lastResultsExtracted,
+    stats: statsRows,
+  });
 
   return [...initialBlocks, ...extraBlocks, ...customBlocks];
 }

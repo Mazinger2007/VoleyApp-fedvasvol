@@ -1,10 +1,14 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, TextInput, Animated, Dimensions } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, TextInput, Animated, Dimensions, ActivityIndicator } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
-import { Spacing } from '../styles/theme';
 import PagerView from '../components/PagerViewWrapper';
+import { downloadPdfBase64 } from '../utils/pdfExtractor';
+import PDFExtractorWebView from '../components/PDFExtractorWebView';
+import { parseBeachResults } from '../utils/parseBeachResults';
+
+const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -122,12 +126,47 @@ function MatchCard({ match, onPress }) {
 }
 
 export default function BeachListScreen({ route, navigation }) {
-  const { data, pdfName } = route.params || {};
+  const { data: preParsedData, pdfName, pdfUrl } = route.params || {};
   const { colors: Colors, isDark } = useTheme();
   const [activeTab, setActiveTab] = useState('ranking');
   const [searchQuery, setSearchQuery] = useState('');
   const [hideUnplayed, setHideUnplayed] = useState(false);
   const pagerRef = useRef(null);
+
+  const [parsedData, setParsedData] = useState(preParsedData || null);
+  const [loading, setLoading] = useState(!preParsedData && !!pdfUrl);
+  const [error, setError] = useState(null);
+  const [pdfBase64, setPdfBase64] = useState(null);
+
+  useEffect(() => {
+    if (preParsedData || !pdfUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const b64 = await downloadPdfBase64(pdfUrl);
+        if (!cancelled) setPdfBase64(b64);
+      } catch (e) {
+        if (!cancelled) { setError(e.message || 'Error al descargar el PDF'); setLoading(false); }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pdfUrl, preParsedData]);
+
+  const handleDataExtracted = useCallback((extracted) => {
+    if (!extracted) return;
+    const results = parseBeachResults(extracted);
+    setParsedData(results);
+    setLoading(false);
+    setPdfBase64(null);
+  }, []);
+
+  const handleExtractError = useCallback((err) => {
+    setError(err?.message || 'Error al procesar el PDF');
+    setLoading(false);
+  }, []);
+
+  const data = parsedData;
 
   const TABS = ['ranking', 'matches'];
   const TAB_COUNT = 2;
@@ -346,6 +385,58 @@ export default function BeachListScreen({ route, navigation }) {
     }),
   }), [Colors]);
 
+  if (loading) {
+    return (
+      <View style={{ flex: 1 }}>
+        {pdfBase64 ? (
+          <PDFExtractorWebView
+            pdfBase64={pdfBase64}
+            onData={handleDataExtracted}
+            onError={handleExtractError}
+          />
+        ) : null}
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.header}>
+            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+              <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+            </TouchableOpacity>
+            <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
+            <View style={{ width: 44 }} />
+          </View>
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+            <ActivityIndicator size="large" color={Colors.primary} />
+            <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textMuted }}>Cargando datos...</Text>
+          </View>
+        </SafeAreaView>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <View style={styles.header}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+            <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+          </TouchableOpacity>
+          <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
+          <View style={{ width: 44 }} />
+        </View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 }}>
+          <MaterialIcons name="error-outline" size={48} color={Colors.textMuted} style={{ opacity: 0.4 }} />
+          <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textPrimary, textAlign: 'center' }}>{error}</Text>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={{ marginTop: 12, paddingVertical: 12, paddingHorizontal: 24, backgroundColor: Colors.primary, borderRadius: 12 }}
+            activeOpacity={0.8}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>Volver</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
@@ -404,7 +495,7 @@ export default function BeachListScreen({ route, navigation }) {
       </View>
 
       <View style={styles.pager}>
-        <PagerView
+        <AnimatedPagerView
           ref={pagerRef}
           style={{ flex: 1 }}
           initialPage={0}
@@ -425,7 +516,7 @@ export default function BeachListScreen({ route, navigation }) {
           <ScrollView key="matches" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
             {renderMatchesTab()}
           </ScrollView>
-        </PagerView>
+        </AnimatedPagerView>
       </View>
     </SafeAreaView>
   );

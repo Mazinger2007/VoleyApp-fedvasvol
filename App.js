@@ -1,25 +1,33 @@
-// App.js
-// Punto de entrada de la app.
-// Configura React Navigation con NavigationContainer.
-// La navegación principal usa un pager deslizable y una barra inferior fija.
-
 import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Animated, Platform, TouchableOpacity, AppState } from 'react-native';
+import { StyleSheet, View, Animated, Platform, AppState, Text, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as NavigationBar from 'expo-navigation-bar';
-import { MaterialIcons, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { MaterialIcons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import PagerView from './src/components/PagerViewWrapper';
 
-// ── Pantallas ────────────────────────────────────────────────────────────────
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
+import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { FavoritesProvider } from './src/contexts/FavoritesContext';
+
+import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
+import { initTeamsData } from './src/constants/teamColors';
+import { hydrateTeamLogos } from './src/utils/teamCache';
+import { checkForNewNews } from './src/services/newsNotificationService';
+import NotificationBanner from './src/components/NotificationBanner';
+
+import LoginScreen from './src/screens/auth/LoginScreen';
+import RegisterScreen from './src/screens/auth/RegisterScreen';
+import BlockedScreen from './src/screens/auth/BlockedScreen';
+import HomeScreen from './src/screens/home/HomeScreen';
 import MatchesScreen from './src/screens/MatchesScreen';
-import BeachScreen from './src/screens/BeachScreen';
-import NewsScreen from './src/screens/NewsScreen';
-import SettingsScreen from './src/screens/SettingsScreen';
+import OldNewsScreen from './src/screens/NewsScreen';
+import ProfileScreen from './src/screens/profile/ProfileScreen';
+
 import LeagueScreen from './src/screens/LeagueScreen';
 import TournamentScreen from './src/screens/TournamentScreen';
 import TeamDetailScreen from './src/screens/TeamDetailScreen';
@@ -28,154 +36,263 @@ import JornadaDetailScreen from './src/screens/JornadaDetailScreen';
 import MatchDetailScreen from './src/screens/MatchDetailScreen';
 import PostDetailScreen from './src/screens/PostDetailScreen';
 import BeachResultScreen from './src/screens/BeachResultScreen';
+import BeachScreen from './src/screens/BeachScreen';
 import BeachListScreen from './src/screens/BeachListScreen';
 import BeachMatchDetailScreen from './src/screens/BeachMatchDetailScreen';
 import BeachPairScreen from './src/screens/BeachPairScreen';
 import InfoScreen from './src/screens/InfoScreen';
+import AppInfoScreen from './src/screens/profile/AppInfoScreen';
 import LoadingView from './src/components/LoadingView';
 
-// ── Tema ─────────────────────────────────────────────────────────────────────
-import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
-import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
-import { initTeamsData } from './src/constants/teamColors';
-import { checkForNewNews } from './src/services/newsNotificationService';
-import NotificationBanner from './src/components/NotificationBanner';
-
-// load time, before any React tree renders. This means getCachedLogoColorSync
-// will return instant results for already-seen URLs.
-
 const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
 
-const TAB_ITEMS = [
-  { key: 'Matches', title: 'LIGAS', icon: 'emoji-events', component: MatchesScreen },
-  { key: 'Beach', title: 'VOLEY PLAYA', icon: 'beach-access', component: BeachScreen },
-  { key: 'News', title: 'NOTICIAS', icon: 'newspaper', component: NewsScreen },
-  { key: 'Settings', title: 'AJUSTES', icon: 'settings', component: SettingsScreen },
-];
-
-// ─── Tab icon component ───────────────────────────────────────────────────────
-function TabIcon({ iconName, focused, colors }) {
-  const iconColor = focused ? colors.primary : colors.textMuted;
+function TabNavigator() {
+  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
-    <View style={iconStyles.wrap}>
-      <MaterialIcons
-        name={iconName || 'circle'}
-        size={Platform.OS === 'web' ? 24 : 25}
-        color={iconColor}
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarShowLabel: false,
+        tabBarActiveTintColor: colors.primary,
+        tabBarInactiveTintColor: colors.textMuted,
+        tabBarHideOnKeyboard: true,
+        tabBarStyle: {
+          backgroundColor: isDark ? 'rgba(18,18,18,0.97)' : 'rgba(255,255,255,0.97)',
+          borderTopColor: colors.border,
+          borderTopWidth: 0.5,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: -2 },
+          shadowOpacity: isDark ? 0.3 : 0.08,
+          shadowRadius: 8,
+          height: 62 + insets.bottom,
+          paddingBottom: insets.bottom,
+          paddingTop: 8,
+          paddingHorizontal: 4,
+        },
+        tabBarIconStyle: {
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        tabBarItemStyle: {
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          borderRadius: 14,
+          paddingVertical: 4,
+          marginHorizontal: 2,
+        },
+      }}
+    >
+      <Tab.Screen
+        name="HomeTab"
+        component={HomeScreen}
+        options={{
+          tabBarIcon: ({ color, focused }) => (
+            <View style={{
+              alignItems: 'center', justifyContent: 'center',
+              width: 52, height: 36, borderRadius: 12,
+              backgroundColor: focused ? colors.primary + '18' : 'transparent',
+            }}>
+              <MaterialIcons name="home" size={26} color={color} />
+            </View>
+          ),
+        }}
       />
-    </View>
+      <Tab.Screen
+        name="ResultsTab"
+        component={MatchesScreen}
+        options={{
+          tabBarIcon: ({ color, focused }) => (
+            <View style={{
+              alignItems: 'center', justifyContent: 'center',
+              width: 52, height: 36, borderRadius: 12,
+              backgroundColor: focused ? colors.primary + '18' : 'transparent',
+            }}>
+              <MaterialIcons name="emoji-events" size={26} color={color} />
+            </View>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="BeachTab"
+        component={BeachScreen}
+        options={{
+          tabBarIcon: ({ color, focused }) => (
+            <View style={{
+              alignItems: 'center', justifyContent: 'center',
+              width: 52, height: 36, borderRadius: 12,
+              backgroundColor: focused ? colors.primary + '18' : 'transparent',
+            }}>
+              <MaterialIcons name="beach-access" size={26} color={color} />
+            </View>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="NewsTab"
+        component={OldNewsScreen}
+        options={{
+          tabBarIcon: ({ color, focused }) => (
+            <View style={{
+              alignItems: 'center', justifyContent: 'center',
+              width: 52, height: 36, borderRadius: 12,
+              backgroundColor: focused ? colors.primary + '18' : 'transparent',
+            }}>
+              <MaterialIcons name="newspaper" size={26} color={color} />
+            </View>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="ProfileTab"
+        component={ProfileScreen}
+        options={{
+          tabBarIcon: ({ color, focused }) => (
+            <View style={{
+              alignItems: 'center', justifyContent: 'center',
+              width: 52, height: 36, borderRadius: 12,
+              backgroundColor: focused ? colors.primary + '18' : 'transparent',
+            }}>
+              <MaterialIcons name="person" size={26} color={color} />
+            </View>
+          ),
+        }}
+      />
+    </Tab.Navigator>
   );
 }
 
-const iconStyles = StyleSheet.create({
-  wrap: {
-    width: 44,
-    height: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    position: 'relative',
-  },
-});
+function AuthStack() {
+  return (
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="Login" component={LoginScreen} />
+      <Stack.Screen name="Register" component={RegisterScreen} />
+    </Stack.Navigator>
+  );
+}
 
-function MainTabs({ navigation }) {
-  const { colors: Colors, isDark } = useTheme();
-  const insets = useSafeAreaInsets();
-  const isMobile = Platform.OS !== 'web';
-  const pagerRef = useRef(null);
-  const [activeIndex, setActiveIndex] = useState(0);
-  const tabBarHeight = isMobile ? 62 : 56;
-
-  const goToTab = (index) => {
-    if (index < 0 || index >= TAB_ITEMS.length) return;
-    pagerRef.current?.setPage?.(index);
-  };
+function MainStack() {
+  const { colors, isDark } = useTheme();
 
   return (
-    <View style={{ flex: 1 }}>
-      <PagerView
-        ref={pagerRef}
-        style={{ flex: 1 }}
-        initialPage={0}
-        onPageSelected={(event) => setActiveIndex(event.nativeEvent.position)}
-      >
-        {TAB_ITEMS.map((tab) => {
-          const ScreenComponent = tab.component;
-          return (
-            <View key={tab.key} style={{ flex: 1, paddingBottom: tabBarHeight + insets.bottom }}>
-              <ScreenComponent navigation={navigation} />
-            </View>
-          );
-        })}
-      </PagerView>
+    <Stack.Navigator
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: 'transparent' },
+        animation: 'slide_from_right',
+      }}
+    >
+      <Stack.Screen name="Tabs" component={TabNavigator} />
+      <Stack.Screen name="League" component={LeagueScreen} />
+      <Stack.Screen name="Tournament" component={TournamentScreen} />
+      <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
+      <Stack.Screen name="RankingTable" component={RankingTableScreen} />
+      <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
+      <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
+      <Stack.Screen name="Info" component={InfoScreen} />
+      <Stack.Screen name="AppInfo" component={AppInfoScreen} />
+      <Stack.Screen name="PostDetail" component={PostDetailScreen} />
+      <Stack.Screen name="Beach" component={BeachScreen} />
+      <Stack.Screen name="BeachResult" component={BeachResultScreen} />
+      <Stack.Screen name="BeachList" component={BeachListScreen} />
+      <Stack.Screen name="BeachMatchDetail" component={BeachMatchDetailScreen} />
+      <Stack.Screen name="BeachPair" component={BeachPairScreen} />
+    </Stack.Navigator>
+  );
+}
 
-      <View
-        style={[
-          styles.tabBar,
-          {
-            backgroundColor: isDark ? 'rgba(15,25,35,0.98)' : 'rgba(255,255,255,0.98)',
-            borderTopColor: Colors.border,
-            height: tabBarHeight + insets.bottom,
-            paddingBottom: Math.max(insets.bottom, isMobile ? 6 : 4),
-          },
-        ]}
-      >
-        {TAB_ITEMS.map((tab, index) => {
-          const focused = index === activeIndex;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              onPress={() => goToTab(index)}
-              activeOpacity={0.8}
-              style={styles.tabButton}
-            >
-              <TabIcon iconName={tab.icon} focused={focused} colors={Colors} />
-            </TouchableOpacity>
-          );
-        })}
+function RootNavigator() {
+  const { user, isGuest, isBlocked, loading: authLoading } = useAuth();
+  const { colors, isDark } = useTheme();
+
+  if (authLoading) {
+    return (
+      <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
-    </View>
+    );
+  }
+
+  if (isBlocked) {
+    return (
+      <NavigationContainer
+        theme={{
+          dark: isDark,
+          colors: {
+            primary: colors.primary,
+            background: 'transparent',
+            card: colors.surface,
+            text: colors.textPrimary,
+            border: colors.border,
+            notification: colors.primary,
+          },
+        }}
+      >
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="Blocked" component={BlockedScreen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    );
+  }
+
+  return (
+    <NavigationContainer
+      theme={{
+        dark: isDark,
+        colors: {
+          primary: colors.primary,
+          background: 'transparent',
+          card: colors.surface,
+          text: colors.textPrimary,
+          border: colors.border,
+          notification: colors.primary,
+        },
+      }}
+    >
+      {user || isGuest ? <MainStack /> : <AuthStack />}
+    </NavigationContainer>
   );
 }
 
 export default function App() {
   const [fontsLoaded] = useFonts({
     ...MaterialIcons.font,
-    ...MaterialCommunityIcons.font,
-    ...Ionicons.font,
   });
 
   useEffect(() => {
     async function prepare() {
       try {
-        // Kick off AsyncStorage → memory hydration of logo colors
         hydrateLogoColors();
+        hydrateTeamLogos();
         initTeamsData();
-
-        // Inicializar y bloquear la orientación vertical por defecto
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        if (ScreenOrientation?.lockAsync) {
+          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+        }
       } catch (e) {
         console.warn('Initialization Error:', e);
       }
     }
-
     prepare();
   }, []);
 
+  if (!fontsLoaded) return null;
+
   return (
     <ThemeProvider>
-      <AppContent fontsLoaded={fontsLoaded} />
+      <AppContent />
     </ThemeProvider>
   );
 }
 
-function AppContent({ fontsLoaded }) {
-  const { colors: Colors, isDark, animColors, isAppReady } = useTheme();
-  const safeBgColor = animColors?.background || Colors.background;
-  const isUiReady = isAppReady && fontsLoaded;
+function AppContent() {
+  const { colors, isDark } = useTheme();
   const appStartRef = useRef(Date.now());
   const [showLoader, setShowLoader] = useState(true);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -183,24 +300,12 @@ function AppContent({ fontsLoaded }) {
     }
   }, [isDark]);
 
-  // Keep global loader visible for at least 600ms to avoid flash of empty content
   useEffect(() => {
-    if (isUiReady) {
-      const elapsed = Date.now() - appStartRef.current;
-      const delay = Math.max(0, 600 - elapsed);
-      const timer = setTimeout(() => setShowLoader(false), delay);
-      return () => clearTimeout(timer);
-    }
-  }, [isUiReady]);
-
-  // Fade navigator in smoothly instead of snapping
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: isUiReady ? 1 : 0,
-      duration: 350,
-      useNativeDriver: true,
-    }).start();
-  }, [isUiReady, fadeAnim]);
+    const elapsed = Date.now() - appStartRef.current;
+    const delay = Math.max(0, 600 - elapsed);
+    const timer = setTimeout(() => setShowLoader(false), delay);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
@@ -208,78 +313,30 @@ function AppContent({ fontsLoaded }) {
         checkForNewNews();
       }
     });
-
     return () => sub.remove();
   }, []);
 
   return (
     <SafeAreaProvider>
-      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={Colors.background} />
-      {/* Animated background layer — transitions smoothly on theme change */}
-      <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: safeBgColor }]} pointerEvents="none" />
-
-      <View style={{ flex: 1 }}>
-        <NavigationContainer
-          theme={{
-            dark: isDark,
-            colors: {
-              primary: Colors.primary,
-              background: 'transparent',
-              card: Colors.surface,
-              text: Colors.textPrimary,
-              border: Colors.border,
-              notification: Colors.primary,
-            },
-          }}
-        >
-          {/* We keep the navigator ALWAYS rendered so it can mount children (data fetching)
-              but we fade it in smoothly once everything is ready. */}
-          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-            <Stack.Navigator screenOptions={{ headerShown: false, contentStyle: { backgroundColor: 'transparent' } }}>
-              <Stack.Screen name="MainTabs" component={MainTabs} />
-              <Stack.Screen name="League" component={LeagueScreen} />
-              <Stack.Screen name="Tournament" component={TournamentScreen} />
-              <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
-              <Stack.Screen name="RankingTable" component={RankingTableScreen} />
-              <Stack.Screen name="JornadaDetail" component={JornadaDetailScreen} />
-              <Stack.Screen name="MatchDetail" component={MatchDetailScreen} />
-              <Stack.Screen name="Info" component={InfoScreen} />
-              <Stack.Screen name="PostDetail" component={PostDetailScreen} />
-              <Stack.Screen name="BeachResult" component={BeachResultScreen} />
-              <Stack.Screen name="BeachList" component={BeachListScreen} />
-              <Stack.Screen name="BeachMatchDetail" component={BeachMatchDetailScreen} />
-              <Stack.Screen name="BeachPair" component={BeachPairScreen} />
-            </Stack.Navigator>
-          </Animated.View>
-        </NavigationContainer>
-
-        {/* Notification Banner */}
-        <NotificationBanner />
-
-        {/* Global Full-Screen Loader */}
-        {showLoader && (
-          <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
-            <LoadingView message="Cargando ligas y torneos..." />
-          </View>
-        )}
-      </View>
+      <StatusBar style={isDark ? 'light' : 'dark'} backgroundColor={colors.background} />
+      <AuthProvider>
+        <FavoritesProvider>
+          <RootNavigator />
+        </FavoritesProvider>
+      </AuthProvider>
+      <NotificationBanner />
+      {showLoader && (
+        <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
+          <LoadingView message="Cargando..." />
+        </View>
+      )}
     </SafeAreaProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  tabBar: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    elevation: 0,
-  },
-  tabButton: {
+  loadingContainer: {
     flex: 1,
-    paddingTop: 4,
     alignItems: 'center',
     justifyContent: 'center',
   },

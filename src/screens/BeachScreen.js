@@ -67,7 +67,7 @@ export default function BeachScreen({ navigation }) {
   }, []);
 
   const handleOpenPDF = useCallback((url, name) => {
-    navigation.navigate('BeachResult', { pdfUrl: url, pdfName: name });
+    navigation.navigate('BeachList', { pdfUrl: url, pdfName: name });
   }, [navigation]);
 
   const styles = useMemo(() => StyleSheet.create({

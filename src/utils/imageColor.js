@@ -7,6 +7,13 @@ function quantize(value) {
   return Math.max(0, Math.min(255, Math.round(value / 16) * 16));
 }
 
+// Returns true if the color is too light/white to be useful as an accent
+function isTooLight(r, g, b) {
+  // Perceived luminance (ITU-R BT.709)
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return luminance > 210;
+}
+
 function rgbToHex(red, green, blue) {
   const toHex = (channel) => channel.toString(16).padStart(2, '0');
   return `#${toHex(red)}${toHex(green)}${toHex(blue)}`;
@@ -23,6 +30,8 @@ function buildBorderHistogram(rgba, width, height) {
     const blue = rgba[index + 2];
     const alpha = rgba[index + 3];
     if (alpha < 120) return;
+    // Skip white/near-white pixels so they don't dominate the histogram
+    if (isTooLight(red, green, blue)) return;
 
     const key = `${quantize(red)}-${quantize(green)}-${quantize(blue)}`;
     histogram.set(key, (histogram.get(key) || 0) + 1);
@@ -52,10 +61,13 @@ function pickDominantFromHistogram(histogram) {
     }
   }
 
-  if (!winningKey) return '#ffffff';
+  if (!winningKey) return null;
 
   const [red, green, blue] = winningKey.split('-').map(Number);
-  return rgbToHex(red, green, blue);
+  const hex = rgbToHex(red, green, blue);
+  // Final safety check: don't return very light colors
+  if (isTooLight(red, green, blue)) return null;
+  return hex;
 }
 
 function isPng(buffer) {
@@ -89,7 +101,7 @@ function decodeToRgba(uint8) {
 }
 
 export async function getDominantBorderColor(imageUrl) {
-  if (!imageUrl) return '#ffffff';
+  if (!imageUrl) return null;
   if (colorCache.has(imageUrl)) return colorCache.get(imageUrl);
   try {
     const response = await fetch(imageUrl);
@@ -97,8 +109,8 @@ export async function getDominantBorderColor(imageUrl) {
     const uint8 = new Uint8Array(arrayBuffer);
     const decoded = decodeToRgba(uint8);
     if (!decoded) {
-      colorCache.set(imageUrl, '#ffffff');
-      return '#ffffff';
+      colorCache.set(imageUrl, null);
+      return null;
     }
 
     const histogram = buildBorderHistogram(decoded.rgba, decoded.width, decoded.height);
@@ -106,7 +118,7 @@ export async function getDominantBorderColor(imageUrl) {
     colorCache.set(imageUrl, color);
     return color;
   } catch (_) {
-    colorCache.set(imageUrl, '#ffffff');
-    return '#ffffff';
+    colorCache.set(imageUrl, null);
+    return null;
   }
 }

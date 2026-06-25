@@ -10,15 +10,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─── Paleta oscura ────────────────────────────────────────────────────────────
 const darkColors = {
-  primary: '#0d8ff2',
-  primaryDark: '#0b76ca',
-  primaryAlpha20: 'rgba(13,143,242,0.20)',
-  primaryAlpha15: 'rgba(13,143,242,0.15)',
-  primaryAlpha10: 'rgba(13,143,242,0.10)',
+  primary: '#0f9f7a',
+  primaryDark: '#08795e',
+  primaryAlpha20: 'rgba(15,159,122,0.20)',
+  primaryAlpha15: 'rgba(15,159,122,0.15)',
+  primaryAlpha10: 'rgba(15,159,122,0.10)',
 
-  background: '#101a22',
-  surface: '#17242f',
-  surfaceAlt: '#1f2e3b',
+  background: '#0b1117',
+  surface: '#121b24',
+  surfaceAlt: '#1b2630',
 
   textPrimary: '#f1f5f9',
   textSecondary: '#cbd5e1',
@@ -57,15 +57,15 @@ const darkColors = {
 
 // ─── Paleta clara ─────────────────────────────────────────────────────────────
 const lightColors = {
-  primary: '#0d8ff2',
-  primaryDark: '#0b76ca',
-  primaryAlpha20: 'rgba(13,143,242,0.20)',
-  primaryAlpha15: 'rgba(13,143,242,0.15)',
-  primaryAlpha10: 'rgba(13,143,242,0.10)',
+  primary: '#0f9f7a',
+  primaryDark: '#08795e',
+  primaryAlpha20: 'rgba(15,159,122,0.20)',
+  primaryAlpha15: 'rgba(15,159,122,0.15)',
+  primaryAlpha10: 'rgba(15,159,122,0.10)',
 
-  background: '#f5f7f8',
+  background: '#f6f8f7',
   surface: '#ffffff',
-  surfaceAlt: '#eef2f4',
+  surfaceAlt: '#edf2f0',
 
   textPrimary: '#0f172a',
   textSecondary: '#334155',
@@ -104,12 +104,13 @@ const lightColors = {
 
 // ─── Colores de Acento ────────────────────────────────────────────────────────
 export const ACCENT_COLORS = {
-  emerald: { primary: '#059669', primaryDark: '#047857' },
+  emerald: { primary: '#0f9f7a', primaryDark: '#08795e' },
   blue: { primary: '#0d8ff2', primaryDark: '#0b76ca' },
   navy: { primary: '#001f3d', primaryDark: '#001224' },
   red: { primary: '#dc2626', primaryDark: '#b91c1c' },
   amber: { primary: '#f59e0b', primaryDark: '#d97706' },
   purple: { primary: '#9333ea', primaryDark: '#7e22ce' },
+  tuquoise: { primary: '#14b8a6', primaryDark: '#0d9488' },
 };
 
 function hexToRgba(hex, alpha) {
