@@ -39,6 +39,7 @@ export function cacheTeamsFromRanking(_rankingUrl, tableBlocks) {
         teamsByName[name] = {
           name,
           logo: table.rowLogos?.[i] || table.rowImages?.[i] || null,
+          url: table.rowLinks?.[i] || null,
         };
       }
     });

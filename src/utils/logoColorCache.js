@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const CACHE_KEY_PREFIX = '@logo_color_';
+const CACHE_VERSION_KEY = '@logo_color_version';
+const CACHE_VERSION = '2';
 
 // In-memory cache is king — instant lookup with zero I/O
 const memoryCache = new Map();
@@ -25,14 +27,25 @@ export function hydrateLogoColorCache() {
   if (hydrationDone || hydrationPromise) return hydrationPromise;
   hydrationPromise = (async () => {
     try {
-      const allKeys = await AsyncStorage.getAllKeys();
-      const logoKeys = (allKeys || []).filter((k) => k.startsWith(CACHE_KEY_PREFIX));
-      if (logoKeys.length > 0) {
-        const pairs = await AsyncStorage.multiGet(logoKeys);
-        for (const [key, value] of pairs) {
-          if (key && value) {
-            const url = key.slice(CACHE_KEY_PREFIX.length);
-            memoryCache.set(url, value);
+      // Version check: if the extraction method changed, invalidate all old caches
+      const storedVersion = await AsyncStorage.getItem(CACHE_VERSION_KEY);
+      if (storedVersion !== CACHE_VERSION) {
+        const allKeys = await AsyncStorage.getAllKeys();
+        const oldLogoKeys = (allKeys || []).filter((k) => k.startsWith(CACHE_KEY_PREFIX));
+        if (oldLogoKeys.length > 0) {
+          await AsyncStorage.multiRemove(oldLogoKeys);
+        }
+        await AsyncStorage.setItem(CACHE_VERSION_KEY, CACHE_VERSION);
+      } else {
+        const allKeys = await AsyncStorage.getAllKeys();
+        const logoKeys = (allKeys || []).filter((k) => k.startsWith(CACHE_KEY_PREFIX));
+        if (logoKeys.length > 0) {
+          const pairs = await AsyncStorage.multiGet(logoKeys);
+          for (const [key, value] of pairs) {
+            if (key && value) {
+              const url = key.slice(CACHE_KEY_PREFIX.length);
+              memoryCache.set(url, value);
+            }
           }
         }
       }
@@ -174,4 +187,32 @@ export function ensureLogoColorsCached(urls, extractColorFn) {
   for (const url of urls) {
     requestLogoColorExtraction(url, extractColorFn);
   }
+}
+
+// ─── Clear all cached colors (memory + disk) ────────────────────────────────
+export async function clearLogoColorCache() {
+  memoryCache.clear();
+  extractionQueue.length = 0;
+  queuedUrls.clear();
+  isProcessingQueue = false;
+  processingScheduled = false;
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const logoKeys = (allKeys || []).filter((k) => k.startsWith(CACHE_KEY_PREFIX));
+    if (logoKeys.length > 0) {
+      await AsyncStorage.multiRemove(logoKeys);
+    }
+    await AsyncStorage.removeItem(CACHE_VERSION_KEY);
+  } catch (_) {
+    // ignore
+  }
+  // Re-queue extraction for all URLs that have active subscribers
+  for (const url of extractionListeners.keys()) {
+    if (extractionListeners.get(url)?.size > 0) {
+      queuedUrls.delete(url);
+      extractionQueue.push(url);
+      queuedUrls.add(url);
+    }
+  }
+  scheduleProcessing();
 }

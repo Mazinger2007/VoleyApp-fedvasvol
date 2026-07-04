@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { StyleSheet, View, Animated, Platform, AppState, Text, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, useRef } from 'react';
+import { StyleSheet, View, Platform, AppState, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -9,6 +9,9 @@ import * as NavigationBar from 'expo-navigation-bar';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
+import * as SplashScreen from 'expo-splash-screen';
+
+SplashScreen.preventAutoHideAsync();
 
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
@@ -19,6 +22,8 @@ import { initTeamsData } from './src/constants/teamColors';
 
 import { checkForNewNews } from './src/services/newsNotificationService';
 import NotificationBanner from './src/components/NotificationBanner';
+import { fetchAndParse, URLS } from './src/utils/htmlParser';
+import { resultCache } from './src/hooks/useFetch';
 
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
@@ -29,6 +34,7 @@ import OldNewsScreen from './src/screens/news/NewsScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 
 import LeagueScreen from './src/screens/leagues/LeagueScreen';
+import LeagueDetailScreen from './src/screens/leagues/LeagueDetailScreen';
 import TournamentScreen from './src/screens/leagues/TournamentScreen';
 import TeamDetailScreen from './src/screens/leagues/TeamDetailScreen';
 import RankingTableScreen from './src/screens/leagues/RankingTableScreen';
@@ -42,7 +48,6 @@ import BeachMatchDetailScreen from './src/screens/beach/BeachMatchDetailScreen';
 import BeachPairScreen from './src/screens/beach/BeachPairScreen';
 import InfoScreen from './src/screens/leagues/InfoScreen';
 import AppInfoScreen from './src/screens/profile/AppInfoScreen';
-import LoadingView from './src/components/LoadingView';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -189,6 +194,7 @@ function MainStack() {
     >
       <Stack.Screen name="Tabs" component={TabNavigator} />
       <Stack.Screen name="League" component={LeagueScreen} />
+      <Stack.Screen name="LeagueDetail" component={LeagueDetailScreen} />
       <Stack.Screen name="Tournament" component={TournamentScreen} />
       <Stack.Screen name="TeamDetail" component={TeamDetailScreen} />
       <Stack.Screen name="RankingTable" component={RankingTableScreen} />
@@ -263,6 +269,7 @@ export default function App() {
   const [fontsLoaded] = useFonts({
     ...MaterialIcons.font,
   });
+  const [appReady, setAppReady] = useState(false);
 
   useEffect(() => {
     async function prepare() {
@@ -274,12 +281,20 @@ export default function App() {
         }
       } catch (e) {
         console.warn('Initialization Error:', e);
+      } finally {
+        setAppReady(true);
       }
     }
     prepare();
   }, []);
 
-  if (!fontsLoaded) return null;
+  useEffect(() => {
+    if (fontsLoaded && appReady) {
+      SplashScreen.hideAsync();
+    }
+  }, [fontsLoaded, appReady]);
+
+  if (!fontsLoaded || !appReady) return null;
 
   return (
     <ThemeProvider>
@@ -290,8 +305,7 @@ export default function App() {
 
 function AppContent() {
   const { colors, isDark } = useTheme();
-  const appStartRef = useRef(Date.now());
-  const [showLoader, setShowLoader] = useState(true);
+  const prefetchedRef = useRef(false);
 
   useEffect(() => {
     if (Platform.OS === 'android') {
@@ -300,19 +314,26 @@ function AppContent() {
   }, [isDark]);
 
   useEffect(() => {
-    const elapsed = Date.now() - appStartRef.current;
-    const delay = Math.max(0, 600 - elapsed);
-    const timer = setTimeout(() => setShowLoader(false), delay);
-    return () => clearTimeout(timer);
-  }, []);
-
-  useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         checkForNewNews();
       }
     });
     return () => sub.remove();
+  }, []);
+
+  // Prefetch data for all tabs into shared cache so transitions feel instant
+  useEffect(() => {
+    if (prefetchedRef.current) return;
+    prefetchedRef.current = true;
+    const urls = [URLS.home, URLS.beachVolleyball, URLS.posts];
+    urls.forEach((url) => {
+      if (!resultCache.has(url)) {
+        fetchAndParse(url)
+          .then((blocks) => { resultCache.set(url, blocks); })
+          .catch(() => {});
+      }
+    });
   }, []);
 
   return (
@@ -324,11 +345,6 @@ function AppContent() {
         </FavoritesProvider>
       </AuthProvider>
       <NotificationBanner />
-      {showLoader && (
-        <View style={[StyleSheet.absoluteFill, { zIndex: 9999 }]}>
-          <LoadingView message="Cargando..." />
-        </View>
-      )}
     </SafeAreaProvider>
   );
 }

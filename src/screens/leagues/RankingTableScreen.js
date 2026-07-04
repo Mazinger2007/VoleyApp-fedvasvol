@@ -4,7 +4,6 @@ import {
   Text,
   ScrollView,
   TouchableOpacity,
-  Image,
   StatusBar,
   StyleSheet,
   useWindowDimensions,
@@ -15,6 +14,7 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Radius, Shadow, Spacing, Typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { cacheTeamsFromRanking, getTeamFromCache } from '../../utils/teamCache';
+import BaseTeamLogo from '../../components/base/TeamLogo';
 
 function findColIndex(headers, ...keywords) {
   for (const kw of keywords) {
@@ -57,15 +57,6 @@ function getCell(row, idx, fallback = '-') {
   if (idx < 0) return fallback;
   const value = String(row[idx] ?? '').trim();
   return value || fallback;
-}
-
-function getInitials(name = '') {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((chunk) => chunk[0]?.toUpperCase())
-    .join('');
 }
 
 function formatDiff(value = '-') {
@@ -140,6 +131,17 @@ function findExactHeaderIndex(headers, ...candidates) {
     if (index >= 0) return index;
   }
   return -1;
+}
+
+function TeamLogoCell({ logoUrl, teamName, compactMode, colors }) {
+  return (
+    <BaseTeamLogo
+      uri={logoUrl}
+      name={teamName}
+      size={compactMode ? 30 : 40}
+      style={{ borderWidth: 1, borderColor: 'rgba(13, 143, 242, 0.20)' }}
+    />
+  );
 }
 
 export default function RankingTableScreen({ route, navigation }) {
@@ -386,19 +388,6 @@ export default function RankingTableScreen({ route, navigation }) {
     posBadgeText: { color: Colors.textPrimary, fontSize: compactMode ? 11 : Typography.size.sm, fontWeight: Typography.weight.bold },
     posPlainText: { color: Colors.textMuted, fontSize: compactMode ? 11 : Typography.size.sm, fontWeight: Typography.weight.bold },
     teamRow: { flexDirection: 'row', alignItems: 'center', gap: compactMode ? Spacing.sm : Spacing.md, minWidth: 0 },
-    logoWrap: {
-      width: compactMode ? 30 : 40,
-      height: compactMode ? 30 : 40,
-      borderRadius: Radius.full,
-      backgroundColor: Colors.surfaceAlt,
-      borderWidth: 1,
-      borderColor: 'rgba(13, 143, 242, 0.20)',
-      alignItems: 'center',
-      justifyContent: 'center',
-      overflow: 'hidden',
-    },
-    logoImage: { width: '100%', height: '100%' },
-    logoInitials: { color: Colors.textMuted, fontSize: compactMode ? 9 : Typography.size.xs, fontWeight: Typography.weight.bold },
     teamName: { flex: 1, color: Colors.textPrimary, fontSize: compactMode ? 11 : Typography.size.md, fontWeight: Typography.weight.semiBold },
     statText: { fontSize: compactMode ? 10 : Typography.size.sm, fontWeight: Typography.weight.medium },
     numberPrimary: { color: Colors.primary, fontSize: compactMode ? 12 : Typography.size.lg, fontWeight: Typography.weight.bold },
@@ -538,13 +527,13 @@ export default function RankingTableScreen({ route, navigation }) {
                       onPress={() => handlePressTeam(row)}
                     >
                       <View style={styles.teamRow}>
-                        <View style={styles.logoWrap}>
-                          {row.logo ? (
-                            <Image source={{ uri: row.logo }} style={styles.logoImage} resizeMode="cover" />
-                          ) : (
-                            <Text style={styles.logoInitials}>{getInitials(row.teamName) || '?'}</Text>
-                          )}
-                        </View>
+                        <TeamLogoCell
+                          logoUrl={row.logo}
+                          teamName={row.teamName}
+                          compactMode={compactMode}
+                          isDark={isDark}
+                          colors={Colors}
+                        />
                         <Text style={styles.teamName} numberOfLines={1}>{row.teamName}</Text>
                       </View>
                     </TouchableOpacity>

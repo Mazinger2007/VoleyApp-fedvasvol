@@ -3,20 +3,18 @@
 // Recibe bloques de tipo 'table' con resultados de competición
 // y los presenta como tarjetas de partido modernas.
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
   FlatList,
   TouchableOpacity,
-  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { getDominantBorderColor } from '../utils/imageColor';
-import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
+import BaseTeamLogo from './base/TeamLogo';
 
 /**
  * Convierte una fila de tabla en un objeto partido.
@@ -159,27 +157,16 @@ function formatWeekdayEs(rawDate) {
   return null;
 }
 
-function stripLogoResolution(url = '') {
-  if (!url) return '';
-  return String(url).replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '');
-}
-
-function withLogoResolution(url = '', size = 120) {
-  if (!url) return '';
-  const clean = stripLogoResolution(url);
-  return clean.replace(/(\.[a-zA-Z0-9]+)([?#].*)?$/, `.${size}x${size}$1$2`);
-}
-
-function buildLogoCandidates(url = '') {
-  if (!url) return [];
-  const base = stripLogoResolution(url);
-  return [
-    withLogoResolution(base, 200),
-    base,
-    withLogoResolution(base, 120),
-    withLogoResolution(base, 60),
-    withLogoResolution(base, 30),
-  ].filter((value, index, list) => value && list.indexOf(value) === index);
+function isScoreTextValid(value) {
+  // Returns true if it looks like a real score (e.g. "3-1") and not just a stand-in.
+  if (!value || value === '-') return false;
+  const trimmed = String(value).trim();
+  if (trimmed === '-') return false;
+  const parts = trimmed.split('-');
+  if (parts.length < 2) return false;
+  const left = parseInt(parts[0], 10);
+  const right = parseInt(parts[parts.length - 1], 10);
+  return !isNaN(left) && !isNaN(right);
 }
 
 /**
@@ -350,46 +337,6 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
   const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);
   const { state } = summary;
-  const homeLogoCandidates = useMemo(() => buildLogoCandidates(summary.homeLogo), [summary.homeLogo]);
-  const awayLogoCandidates = useMemo(() => buildLogoCandidates(summary.awayLogo), [summary.awayLogo]);
-  const [homeLogoIndex, setHomeLogoIndex] = useState(0);
-  const [awayLogoIndex, setAwayLogoIndex] = useState(0);
-  const [homeLogoBgColor, setHomeLogoBgColor] = useState(() => getCachedLogoColorSync(homeLogoCandidates[0]) || '#ffffff');
-  const [awayLogoBgColor, setAwayLogoBgColor] = useState(() => getCachedLogoColorSync(awayLogoCandidates[0]) || '#ffffff');
-
-  useEffect(() => {
-    setHomeLogoIndex(0);
-    setAwayLogoIndex(0);
-  }, [summary.homeLogo, summary.awayLogo]);
-
-  const homeLogoUri = homeLogoCandidates[homeLogoIndex] || null;
-  const awayLogoUri = awayLogoCandidates[awayLogoIndex] || null;
-
-  useEffect(() => {
-    if (!homeLogoUri) { setHomeLogoBgColor(Colors.surfaceAlt); return; }
-    // Synchronous lookup first (after hydration this is instant)
-    const cached = getCachedLogoColorSync(homeLogoUri);
-    if (cached) { setHomeLogoBgColor(cached); }
-    // Queue extraction if not yet computed; subscribe for when it arrives
-    requestLogoColorExtraction(homeLogoUri, getDominantBorderColor);
-    let mounted = true;
-    const unsubscribe = subscribeToLogoColor(homeLogoUri, (color) => {
-      if (mounted && color) setHomeLogoBgColor(color);
-    });
-    return () => { mounted = false; unsubscribe(); };
-  }, [homeLogoUri, Colors.surfaceAlt]);
-
-  useEffect(() => {
-    if (!awayLogoUri) { setAwayLogoBgColor(Colors.surfaceAlt); return; }
-    const cached = getCachedLogoColorSync(awayLogoUri);
-    if (cached) { setAwayLogoBgColor(cached); }
-    requestLogoColorExtraction(awayLogoUri, getDominantBorderColor);
-    let mounted = true;
-    const unsubscribe = subscribeToLogoColor(awayLogoUri, (color) => {
-      if (mounted && color) setAwayLogoBgColor(color);
-    });
-    return () => { mounted = false; unsubscribe(); };
-  }, [awayLogoUri, Colors.surfaceAlt]);
 
   const pillStyle = state === 'live'
     ? { bg: 'rgba(239,68,68,0.12)', text: '#ef4444', border: 'rgba(239,68,68,0.30)' }
@@ -459,20 +406,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
 
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Spacing.sm, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.lg }}>
         <View style={{ flex: 1, alignItems: 'center', gap: Spacing.xs }}>
-          <View style={{ width: 62, height: 62, borderRadius: Radius.full, backgroundColor: homeLogoUri ? homeLogoBgColor : Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center' }}>
-            {homeLogoUri ? (
-              <Image
-                source={{ uri: homeLogoUri }}
-                style={{ width: 50, height: 50, borderRadius: 25 }}
-                resizeMode="contain"
-                onError={() => {
-                  setHomeLogoIndex((current) => (current + 1 < homeLogoCandidates.length ? current + 1 : homeLogoCandidates.length));
-                }}
-              />
-            ) : (
-              <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold }}>{summary.homeTeam.slice(0, 2).toUpperCase()}</Text>
-            )}
-          </View>
+          <BaseTeamLogo uri={homeLogo} name={homeTeam} size={62} style={{ borderWidth: 1, borderColor: Colors.border }} />
           <Text style={{ color: Colors.textPrimary, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textAlign: 'center', lineHeight: 14, textTransform: 'uppercase' }} numberOfLines={2}>{summary.homeTeam}</Text>
         </View>
 
@@ -497,20 +431,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
         </View>
 
         <View style={{ flex: 1, alignItems: 'center', gap: Spacing.xs }}>
-          <View style={{ width: 62, height: 62, borderRadius: Radius.full, backgroundColor: awayLogoUri ? awayLogoBgColor : Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center' }}>
-            {awayLogoUri ? (
-              <Image
-                source={{ uri: awayLogoUri }}
-                style={{ width: 50, height: 50, borderRadius: 25 }}
-                resizeMode="contain"
-                onError={() => {
-                  setAwayLogoIndex((current) => (current + 1 < awayLogoCandidates.length ? current + 1 : awayLogoCandidates.length));
-                }}
-              />
-            ) : (
-              <Text style={{ color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold }}>{summary.awayTeam.slice(0, 2).toUpperCase()}</Text>
-            )}
-          </View>
+          <BaseTeamLogo uri={awayLogo} name={awayTeam} size={62} style={{ borderWidth: 1, borderColor: Colors.border }} />
           <Text style={{ color: Colors.textPrimary, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textAlign: 'center', lineHeight: 14, textTransform: 'uppercase' }} numberOfLines={2}>{summary.awayTeam}</Text>
         </View>
       </View>

@@ -14,6 +14,7 @@ import DragReorderSection from '../../components/DragReorderSection';
 import AuthModal from '../../components/AuthModal';
 import ContactModal from '../../components/ContactModal';
 import StatusModal from '../../components/StatusModal';
+import { clearLogoColorCache } from '../../utils/logoColorCache';
 
 const TOGGLE_WIDTH = 51;
 const TOGGLE_HEIGHT = 31;
@@ -318,7 +319,7 @@ export default function ProfileScreen({ navigation }) {
                       if (fav.entityType === 'team') {
                         navigation.navigate('TeamDetail', { teamName: fav.entityName, teamUrl: fav.entityId });
                       } else if (fav.entityType === 'league' || fav.entityType === 'competition') {
-                        navigation.navigate('League', { url: fav.entityId, title: fav.entityName });
+                        navigation.navigate('LeagueDetail', { url: fav.entityId, title: fav.entityName });
                       }
                     }}
                   />
@@ -349,7 +350,7 @@ export default function ProfileScreen({ navigation }) {
                       if (fav.entityType === 'team') {
                         navigation.navigate('TeamDetail', { teamName: fav.entityName, teamUrl: fav.entityId });
                       } else if (fav.entityType === 'league' || fav.entityType === 'competition') {
-                        navigation.navigate('League', { url: fav.entityId, title: fav.entityName });
+                        navigation.navigate('LeagueDetail', { url: fav.entityId, title: fav.entityName });
                       }
                     }}
                   />
@@ -388,6 +389,35 @@ export default function ProfileScreen({ navigation }) {
                 <MaterialIcons name="info-outline" size={18} color={colors.primary} />
               </View>
               <Text style={[styles.settingText, { color: colors.textPrimary }]}>Sobre la app</Text>
+            </View>
+            <MaterialIcons name="chevron-right" size={20} color={colors.textMuted} />
+          </TouchableOpacity>
+
+          <View style={[styles.divider, { backgroundColor: colors.divider }]} />
+
+          <TouchableOpacity
+            style={styles.settingRow}
+            onPress={async () => {
+              try {
+                await clearLogoColorCache();
+                const allKeys = await AsyncStorage.getAllKeys();
+                const ytKeys = (allKeys || []).filter(k => k.startsWith('yt_video_'));
+                if (ytKeys.length > 0) {
+                  await AsyncStorage.multiRemove(ytKeys);
+                }
+                const total = ytKeys.length;
+                setStatusModal({ visible: true, title: 'Caché borrado', message: `Se han eliminado los colores de escudos y ${total} vídeos en caché.`, type: 'success' });
+              } catch {
+                setStatusModal({ visible: true, title: 'Error', message: 'No se pudo borrar el caché.', type: 'error' });
+              }
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={styles.settingLeft}>
+              <View style={[styles.settingIcon, { backgroundColor: colors.primaryAlpha15 }]}>
+                <MaterialIcons name="delete-sweep" size={18} color={colors.primary} />
+              </View>
+              <Text style={[styles.settingText, { color: colors.textPrimary }]}>Borrar caché</Text>
             </View>
             <MaterialIcons name="chevron-right" size={20} color={colors.textMuted} />
           </TouchableOpacity>

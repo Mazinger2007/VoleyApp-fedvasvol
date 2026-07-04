@@ -454,8 +454,8 @@ export default function HomeScreen({ navigation }) {
                     teams={teams || []}
                     loading={isLoading}
                     colors={colors}
-                    onPressHeader={() => navigation.navigate('League', { url: item.entityId, title: item.entityName })}
-                    onPressTeam={() => navigation.navigate('League', { url: item.entityId, title: item.entityName })}
+                    onPressHeader={() => navigation.navigate('LeagueDetail', { url: item.entityId, title: item.entityName })}
+                    onPressTeam={() => navigation.navigate('LeagueDetail', { url: item.entityId, title: item.entityName })}
                   />
                 );
               }}

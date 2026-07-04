@@ -41,7 +41,7 @@ export function openTournamentDetail(navigation, tournament, extraParams = {}) {
     return;
   }
 
-  navigation.navigate('League', {
+  navigation.navigate('LeagueDetail', {
     url: toRankingUrl(tournament.href),
     title,
     defaultTab: 'ranking',

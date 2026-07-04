@@ -22,7 +22,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import LoadingView from '../../components/LoadingView';
 import { useFetch } from '../../hooks/useFetch';
 import { toAbsoluteUrl } from '../../utils/htmlParser';
-import { getDominantBorderColor } from '../../utils/imageColor';
+import { getDominantColor } from '../../utils/imageColor';
 import { Spacing, Typography, Radius } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useFavorites } from '../../contexts/FavoritesContext';
@@ -384,7 +384,7 @@ export default function TeamDetailScreen({ route, navigation }) {
     let mounted = true;
     async function resolveColor() {
       if (!teamLogoUri) return;
-      const color = await getDominantBorderColor(teamLogoUri);
+      const color = await getDominantColor(teamLogoUri);
       if (mounted && color) setAccentColor(color);
     }
     resolveColor();

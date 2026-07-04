@@ -24,7 +24,7 @@ import { Radius, Spacing, Typography, Shadow } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import StatusModal from '../../components/StatusModal';
 import { getMatchSummary, parseMatchDateTime } from '../../components/MatchList';
-import { getCachedLogoColorSync } from '../../utils/logoColorCache';
+import BaseTeamLogo from '../../components/base/TeamLogo';
 import { OFFICIAL_CHANNELS as SUPABASE_CHANNELS } from '../../constants/teamColors';
 import { fetchAndParse } from '../../utils/htmlParser';
 import LoadingView from '../../components/LoadingView';
@@ -37,35 +37,6 @@ import { supabase } from '../../utils/supabase';
 
 const { width: SCREEN_WIDTH_PROB } = Dimensions.get('window');
 const SCREEN_WIDTH = SCREEN_WIDTH_PROB || 375;
-
-function TeamLogo({ uri, name, isDark, size = 64 }) {
-  const bgColor = getCachedLogoColorSync(uri) || (isDark ? '#1e293b' : '#f1f5f9');
-  const containerSize = size + 12; // Un poco más de espacio para el círculo
-  return (
-    <View style={[styles.logoWrap, {
-      width: containerSize,
-      height: containerSize,
-      borderRadius: containerSize / 2,
-      backgroundColor: bgColor,
-      justifyContent: 'center',
-      alignItems: 'center',
-      overflow: 'hidden'
-    }]}>
-      {uri ? (
-        <Image
-          source={uri}
-          style={{ width: '95%', height: '95%' }}
-          contentFit="contain"
-          transition={200}
-        />
-      ) : (
-        <View style={[styles.logoPlaceholder, { width: size, height: size, borderRadius: size / 2, backgroundColor: 'rgba(0,0,0,0.1)' }]}>
-          <Text style={{ fontSize: size / 3, fontWeight: 'bold', color: '#94a3b8' }}>{name?.[0] || '?'}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
 
 export default function MatchDetailScreen({ route, navigation }) {
   const { match, calendarUrl } = route?.params || {};
@@ -86,7 +57,20 @@ export default function MatchDetailScreen({ route, navigation }) {
   const [matchBlocksLoading, setMatchBlocksLoading] = useState(true);
   const initialLoadAttempted = useRef(false);
 
-  // 2. Refs
+  // 2. Resetear estados al cambiar de partido (React Navigation screen reuse)
+  useEffect(() => {
+    setCurrentMatch(match);
+    setMatchBlocks([]);
+    setMatchBlocksLoading(true);
+    initialLoadAttempted.current = false;
+    setYoutubeVideoId(null);
+    setYoutubeLoading(false);
+    setHasSearched(false);
+    setIsPlaying(false);
+    setActiveTab('detalles');
+  }, [match, calendarUrl]);
+
+  // 3. Refs
   const pagerRef = useRef(null);
   const bellAnim = useRef(new Animated.Value(1)).current;
 
@@ -1032,28 +1016,6 @@ export default function MatchDetailScreen({ route, navigation }) {
     }
   }, [calendarUrl, currentMatch?.href, updateMatchFromBlocks, updateMatchFromDirectMatchBlocks]);
 
-  // When opened from TournamentScreen, fetch direct match URL to load sets.
-  useEffect(() => {
-    let cancelled = false;
-    async function loadDirectMatchData() {
-      const matchHref = currentMatch?.href;
-      if (!matchHref) return;
-
-      setMatchBlocksLoading(true);
-      try {
-        const directBlocks = await fetchAndParse(matchHref);
-        if (!cancelled && directBlocks) {
-          updateMatchFromDirectMatchBlocks(directBlocks);
-        }
-      } catch (error) {
-        console.warn('[MatchDetail] Error loading direct match data:', error?.message || error);
-      } finally {
-        if (!cancelled) setMatchBlocksLoading(false);
-      }
-    }
-    loadDirectMatchData();
-    return () => { cancelled = true; };
-  }, [currentMatch?.href, updateMatchFromDirectMatchBlocks]);
 
   const openVenueInMaps = () => {
     if (!matchCoords?.latitude || !matchCoords?.longitude) {
@@ -1358,7 +1320,7 @@ export default function MatchDetailScreen({ route, navigation }) {
               activeOpacity={0.7}
               onPress={() => handlePressTeamDetail(summary.homeTeam, summary.homeUrl, summary.homeLogo)}
             >
-              <TeamLogo uri={summary.homeLogo} name={summary.homeTeam} isDark={isDark} size={64} />
+              <BaseTeamLogo uri={summary.homeLogo} name={summary.homeTeam} size={64} style={{ borderWidth: 1, borderColor: Colors.border }} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.homeTeam}</Text>
             </TouchableOpacity>
             <View style={styles.scoreContainer}>
@@ -1373,7 +1335,7 @@ export default function MatchDetailScreen({ route, navigation }) {
               activeOpacity={0.7}
               onPress={() => handlePressTeamDetail(summary.awayTeam, summary.awayUrl, summary.awayLogo)}
             >
-              <TeamLogo uri={summary.awayLogo} name={summary.awayTeam} isDark={isDark} size={64} />
+              <BaseTeamLogo uri={summary.awayLogo} name={summary.awayTeam} size={64} style={{ borderWidth: 1, borderColor: Colors.border }} />
               <Text style={styles.teamName} numberOfLines={2}>{summary.awayTeam}</Text>
             </TouchableOpacity>
           </View>

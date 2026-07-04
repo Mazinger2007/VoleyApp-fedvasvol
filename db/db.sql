@@ -54,10 +54,22 @@ CREATE TABLE IF NOT EXISTS favorites (
     entity_type VARCHAR(20) NOT NULL
         CHECK (entity_type IN ('team', 'competition', 'league', 'tournament', 'match')),
     entity_id VARCHAR(100) NOT NULL,
+    entity_name TEXT,
     sort_order INT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, entity_type, entity_id)
 );
+
+ALTER TABLE favorites ADD COLUMN IF NOT EXISTS entity_name TEXT;
+ALTER TABLE favorites ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+DROP TRIGGER IF EXISTS update_favorites_updated_at ON favorites;
+CREATE TRIGGER update_favorites_updated_at
+    BEFORE UPDATE ON favorites
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
 CREATE INDEX IF NOT EXISTS idx_favorites_user_order
     ON favorites (user_id, sort_order);
 

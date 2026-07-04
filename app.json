@@ -9,7 +9,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#FFFFFF"
     },
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "icon": "./assets/Logo.png",
     "ios": {
       "supportsTablet": true,
@@ -23,7 +23,8 @@
       },
       "permissions": [
         "android.permission.READ_CALENDAR",
-        "android.permission.WRITE_CALENDAR"
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.NOTIFICATION_SERVICE"
       ]
     },
     "scheme": "voleibolvizcaya",
@@ -48,7 +49,21 @@
       ],
       "expo-image",
       "expo-status-bar",
-      "expo-build-properties"
+      "expo-build-properties",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FFFFFF",
+          "image": "./assets/Logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "dark": {
+            "image": "./assets/Logo.png",
+            "backgroundColor": "#FFFFFF"
+          }
+        }
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {

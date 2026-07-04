@@ -1,10 +1,12 @@
-import React, { memo, useMemo, useState, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, TouchableOpacity, Image, Platform, ActivityIndicator } from 'react-native';
+import React, { memo, useMemo, useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, FlatList, TouchableOpacity, Image, Platform, Animated } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
 import { toRankingUrl } from '../utils/htmlParser';
+
 
 const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfiguring }) {
   const [imageErrs, setImageErrs] = useState({});
@@ -183,7 +185,7 @@ function isActive(status) {
   return s.includes('curso') || s.includes('activ') || s.includes('en juego');
 }
 
-function CompetitionCard({ item, blocks, onPress }) {
+function CompetitionCard({ item, blocks, onPress, onMainLogoReady }) {
   const { colors: Colors, isDark } = useTheme();
   const { name, status, season, category, sex, teamCount, organizer, logo } = item;
   const active = isActive(status);
@@ -223,6 +225,8 @@ function CompetitionCard({ item, blocks, onPress }) {
             {logo ? (
               <Image
                 source={{ uri: logo }}
+                onLoad={() => onMainLogoReady?.()}
+                onError={() => onMainLogoReady?.()}
                 style={{ width: 36, height: 36, borderRadius: 18, marginRight: 8, backgroundColor: isDark ? '#1e293b' : '#f1f5f9', borderWidth: 1, borderColor: '#e5e7eb' }}
                 resizeMode="contain"
               />
@@ -297,8 +301,59 @@ function CompetitionCard({ item, blocks, onPress }) {
   );
 }
 
+const SHIMMER_WIDTH = 220;
+
+function ShimmerBar({ width, height, borderRadius, translateX, isDark }) {
+  return (
+    <View
+      style={{
+        width,
+        height,
+        borderRadius,
+        backgroundColor: isDark ? '#334155' : '#e2e8f0',
+        overflow: 'hidden',
+      }}
+    >
+      <Animated.View
+        style={{
+          width: SHIMMER_WIDTH,
+          height: '100%',
+          transform: [{ translateX }],
+        }}
+      >
+        <LinearGradient
+          colors={[
+            'transparent',
+            isDark ? 'rgba(148,163,184,0.10)' : 'rgba(255,255,255,0.60)',
+            isDark ? 'rgba(148,163,184,0.18)' : 'rgba(255,255,255,0.85)',
+            isDark ? 'rgba(148,163,184,0.10)' : 'rgba(255,255,255,0.60)',
+            'transparent',
+          ]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{ flex: 1 }}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
 function SkeletonCompetitionCard() {
-  const { colors: Colors, isDark } = useTheme();
+  const { isDark } = useTheme();
+  const shimmerAnim = useRef(new Animated.Value(-SHIMMER_WIDTH)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(shimmerAnim, {
+        toValue: 340,
+        duration: 1100,
+        useNativeDriver: true,
+      })
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <View style={{
       backgroundColor: isDark ? '#1e293b' : '#ffffff',
@@ -308,47 +363,77 @@ function SkeletonCompetitionCard() {
       height: 165,
       marginBottom: Spacing.md,
       padding: Spacing.xl,
-      justifyContent: 'space-between'
+      justifyContent: 'space-between',
     }}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <View style={{ width: 80, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-        <View style={{ width: 60, height: 20, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+        <ShimmerBar width={80} height={20} borderRadius={Radius.sm} translateX={shimmerAnim} isDark={isDark} />
+        <ShimmerBar width={60} height={20} borderRadius={Radius.sm} translateX={shimmerAnim} isDark={isDark} />
       </View>
       <View style={{ gap: 8 }}>
-        <View style={{ width: '70%', height: 24, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
-        <View style={{ width: '40%', height: 16, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.sm }} />
+        <ShimmerBar width="70%" height={24} borderRadius={Radius.sm} translateX={shimmerAnim} isDark={isDark} />
+        <ShimmerBar width="40%" height={16} borderRadius={Radius.sm} translateX={shimmerAnim} isDark={isDark} />
       </View>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', paddingTop: Spacing.md }}>
-        <View style={{ width: 60, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: 16 }} />
-        <View style={{ width: 100, height: 32, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: Radius.md }} />
+        <ShimmerBar width={60} height={32} borderRadius={16} translateX={shimmerAnim} isDark={isDark} />
+        <ShimmerBar width={100} height={32} borderRadius={Radius.md} translateX={shimmerAnim} isDark={isDark} />
       </View>
     </View>
   );
 }
 
-function LeagueCardWrapper({ item, onPress, onLoaded }) {
+
+function LeagueCardWrapper({ item, loadGeneration, onPress, onLoaded }) {
   const rankingUrl = (!item.href || /configurando/i.test(item.status)) ? null : toRankingUrl(item.href);
   const { blocks, loading } = useFetch(rankingUrl);
+  const reportedRef = useRef(false);
+  const [fetchReady, setFetchReady] = useState(false);
+  const [mainLogoReady, setMainLogoReady] = useState(!item.logo);
+  const loadGenRef = useRef(loadGeneration);
+
+  useEffect(() => {
+    if (loadGenRef.current !== loadGeneration) {
+      loadGenRef.current = loadGeneration;
+      setFetchReady(false);
+      setMainLogoReady(!item.logo);
+      reportedRef.current = false;
+    }
+  }, [loadGeneration, item.logo]);
+
+  useEffect(() => {
+    setFetchReady(false);
+    setMainLogoReady(!item.logo);
+    reportedRef.current = false;
+  }, [rankingUrl, item.logo]);
 
   useEffect(() => {
     if (!loading) {
+      setFetchReady(true);
+    }
+  }, [loading]);
+
+  useEffect(() => {
+    if (fetchReady && mainLogoReady && !reportedRef.current) {
+      reportedRef.current = true;
       onLoaded();
     }
-  }, [loading, onLoaded]);
+  }, [fetchReady, mainLogoReady, onLoaded]);
 
-  // Once fetched, reveal the real Card populated fully with its data
-  return <CompetitionCard item={item} onPress={onPress} blocks={blocks} />;
+  return (
+    <CompetitionCard
+      item={item}
+      onPress={onPress}
+      blocks={blocks}
+      onMainLogoReady={() => setMainLogoReady(true)}
+    />
+  );
 }
 
-export default function CompetitionList({ tableBlock, onOpenTournament, onReady }) {
+export default function CompetitionList({
+  tableBlock,
+  onOpenTournament,
+  loadGeneration = 0,
+}) {
   const { colors: Colors, isDark } = useTheme();
-
-  // Si no hay ligas, notificar inmediatamente para no bloquear la app
-  useEffect(() => {
-    if (!tableBlock?.rows?.length && onReady) {
-      onReady();
-    }
-  }, [tableBlock, onReady]);
 
   if (!tableBlock?.rows?.length) {
     return (
@@ -374,54 +459,67 @@ export default function CompetitionList({ tableBlock, onOpenTournament, onReady 
     logo: tableBlock.rowLogos?.[i] || tableBlock.rowImages?.[i] || null,
   }));
 
+  const totalCards = tournaments.length;
   const [loadedCount, setLoadedCount] = useState(0);
+  const [forcedReady, setForcedReady] = useState(false);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const isReady = forcedReady || loadedCount >= totalCards;
 
   const handleLoaded = useCallback(() => {
     setLoadedCount(prev => prev + 1);
   }, []);
 
-  const totalCards = tournaments.length;
-  // Fallback de seguridad: reducido a 4s para no bloquear demasiado en caso de red lenta
-  const [forcedReady, setForcedReady] = useState(false);
+  // Reset al cambiar de datos
   useEffect(() => {
-    const timer = setTimeout(() => setForcedReady(true), 4000);
+    fadeAnim.setValue(0);
+    setForcedReady(false);
+    setLoadedCount(0);
+    // Safety timeout: si en 8s no han cargado todos, mostramos igualmente
+    const timer = setTimeout(() => setForcedReady(true), 8000);
     return () => clearTimeout(timer);
-  }, []);
+  }, [tableBlock, loadGeneration]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isReady = forcedReady || loadedCount >= totalCards;
-
+  // Fade-in cuando todas las cards están listas
   useEffect(() => {
-    if (isReady && onReady) {
-      onReady();
+    if (isReady) {
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 280,
+        useNativeDriver: true,
+      }).start();
     }
-  }, [isReady, onReady]);
+  }, [isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <View>
+      {/* Skeletons: visibles mientras !isReady */}
       {!isReady && (
-        <View style={{ padding: Spacing.xxxl, alignItems: 'center', justifyContent: 'center' }}>
-          <ActivityIndicator size="large" color={Colors.primary} />
-          <Text style={{ marginTop: Spacing.md, color: Colors.textMuted, fontSize: Typography.size.md }}>
-            Cargando competiciones...
-          </Text>
+        <View style={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md }}>
+          {tournaments.map((_, i) => (
+            <SkeletonCompetitionCard key={i} />
+          ))}
         </View>
       )}
-      <View style={{ opacity: isReady ? 1 : 0, height: isReady ? 'auto' : 0, overflow: 'hidden' }}>
+
+      {/* Cards reales con fade-in */}
+      <Animated.View style={{ opacity: fadeAnim }}>
         <FlatList
           data={tournaments}
           keyExtractor={(item) => item.id}
+          extraData={loadGeneration}
           contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md }}
           ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
           renderItem={({ item }) => (
             <LeagueCardWrapper
               item={item}
+              loadGeneration={loadGeneration}
               onPress={(tipo) => item.href && onOpenTournament?.(item.href, item.name, tipo)}
               onLoaded={handleLoaded}
             />
           )}
           scrollEnabled={false}
         />
-      </View>
+      </Animated.View>
     </View>
   );
 }

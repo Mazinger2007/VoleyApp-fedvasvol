@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
+  KeyboardAvoidingView, ActivityIndicator, ScrollView,
 } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -31,82 +31,84 @@ export default function LoginScreen({ navigation }) {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+    <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background }]}>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior="padding"
       >
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>Voleibol Vizcaya</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Inicia sesión para continuar</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.header}>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>Voleibol Vizcaya</Text>
+            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Inicia sesión para continuar</Text>
+          </View>
 
-        <View style={styles.form}>
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Email</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.surfaceAlt, color: colors.textPrimary, borderColor: colors.border }]}
-            placeholder="tu@email.com"
-            placeholderTextColor={colors.textMuted}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          <View style={styles.form}>
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Email</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surfaceAlt, color: colors.textPrimary, borderColor: colors.border }]}
+              placeholder="tu@email.com"
+              placeholderTextColor={colors.textMuted}
+              value={email}
+              onChangeText={setEmail}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
 
-          <Text style={[styles.label, { color: colors.textSecondary }]}>Contraseña</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.surfaceAlt, color: colors.textPrimary, borderColor: colors.border }]}
-            placeholder="••••••••"
-            placeholderTextColor={colors.textMuted}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoCapitalize="none"
-          />
+            <Text style={[styles.label, { color: colors.textSecondary }]}>Contraseña</Text>
+            <TextInput
+              style={[styles.input, { backgroundColor: colors.surfaceAlt, color: colors.textPrimary, borderColor: colors.border }]}
+              placeholder="••••••••"
+              placeholderTextColor={colors.textMuted}
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoCapitalize="none"
+            />
 
-          {error ? (
-            <Text style={[styles.error, { color: colors.error }]}>{error}</Text>
-          ) : null}
+            {error ? (
+              <Text style={[styles.error, { color: colors.error }]}>{error}</Text>
+            ) : null}
 
-          <TouchableOpacity
-            style={[styles.button, { backgroundColor: colors.primary }]}
-            onPress={handleLogin}
-            disabled={loading}
-            activeOpacity={0.8}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.textOnPrimary} />
-            ) : (
-              <Text style={[styles.buttonText, { color: colors.textOnPrimary }]}>Iniciar sesión</Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, { backgroundColor: colors.primary }]}
+              onPress={handleLogin}
+              disabled={loading}
+              activeOpacity={0.8}
+            >
+              {loading ? (
+                <ActivityIndicator color={colors.textOnPrimary} />
+              ) : (
+                <Text style={[styles.buttonText, { color: colors.textOnPrimary }]}>Iniciar sesión</Text>
+              )}
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.registerLink]}
-            onPress={() => navigation.navigate('Register')}
-          >
-            <Text style={{ color: colors.textSecondary }}>
-              ¿No tienes cuenta?{' '}
-              <Text style={{ color: colors.primary, fontWeight: '600' }}>Regístrate</Text>
-            </Text>
-          </TouchableOpacity>
-        </View>
+            <TouchableOpacity
+              style={[styles.registerLink]}
+              onPress={() => navigation.navigate('Register')}
+            >
+              <Text style={{ color: colors.textSecondary }}>
+                ¿No tienes cuenta?{' '}
+                <Text style={{ color: colors.primary, fontWeight: '600' }}>Regístrate</Text>
+              </Text>
+            </TouchableOpacity>
+          </View>
 
-        <View style={styles.footer}>
-          <TouchableOpacity
-            style={[styles.guestButton, { borderColor: colors.border }]}
-            onPress={continueAsGuest}
-            activeOpacity={0.8}
-          >
-            <Text style={[styles.guestText, { color: colors.textMuted }]}>Continuar sin sesión</Text>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={[styles.guestButton, { borderColor: colors.border }]}
+              onPress={continueAsGuest}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.guestText, { color: colors.textMuted }]}>Continuar sin sesión</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </View>
   );
 }
 

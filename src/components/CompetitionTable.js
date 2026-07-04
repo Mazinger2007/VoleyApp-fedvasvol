@@ -1,15 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { MaterialIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { getDominantBorderColor } from '../utils/imageColor';
-import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../utils/logoColorCache';
+import BaseTeamLogo from './base/TeamLogo';
 
 function getInitials(name = '') {
   return name
@@ -91,50 +89,6 @@ function buildLogoCandidates(url = '') {
   ].filter((value, index, list) => value && list.indexOf(value) === index);
 }
 
-function TeamLogo({ teamLogo, initials, Colors }) {
-  const candidates = useMemo(() => buildLogoCandidates(teamLogo), [teamLogo]);
-  const [index, setIndex] = useState(0);
-  const [bgColor, setBgColor] = useState(() => getCachedLogoColorSync(candidates[0]) || '#ffffff');
-  const uri = candidates[index] || null;
-
-  const isGeneric = useMemo(() => {
-    if (!initials) return true;
-    const lower = initials.toLowerCase();
-    return lower === 'se' || lower === 'sq' || lower === '??';
-  }, [initials]);
-
-  useEffect(() => {
-    if (!uri) { setBgColor(Colors.surfaceAlt); return; }
-    const cached = getCachedLogoColorSync(uri);
-    if (cached) { setBgColor(cached); }
-    requestLogoColorExtraction(uri, getDominantBorderColor);
-    let mounted = true;
-    const unsubscribe = subscribeToLogoColor(uri, (color) => {
-      if (mounted && color) setBgColor(color);
-    });
-    return () => { mounted = false; unsubscribe(); };
-  }, [uri, Colors.surfaceAlt]);
-
-  return (
-    <View style={{ width: 32, height: 32, borderRadius: Radius.sm, backgroundColor: uri ? bgColor : Colors.surfaceAlt, justifyContent: 'center', alignItems: 'center' }}>
-      {uri ? (
-        <Image
-          source={uri}
-          style={{ width: 24, height: 24 }}
-          contentFit="contain"
-          transition={{ effect: 'cross-dissolve', duration: 100 }}
-          cachePolicy="memory-disk"
-          onError={() => setIndex((current) => (current + 1 < candidates.length ? current + 1 : candidates.length))}
-        />
-      ) : isGeneric ? (
-        <MaterialIcons name="security" size={16} color={Colors.textMuted} />
-      ) : (
-        <Text style={{ color: Colors.textMuted, fontSize: 11, fontWeight: Typography.weight.bold }}>{initials || '?'}</Text>
-      )}
-    </View>
-  );
-}
-
 function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
   const { colors: Colors } = useTheme();
 
@@ -201,7 +155,7 @@ function CompetitionTable({ tableBlock, title, onPressTeam, onPressExpand }) {
               </View>
 
               <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
-                <TeamLogo teamLogo={teamLogo} initials={initials} Colors={Colors} />
+                <BaseTeamLogo uri={teamLogo} name={teamName} size={32} style={{ borderWidth: 1, borderColor: 'rgba(13, 143, 242, 0.20)' }} />
                 <Text style={{ flex: 1, color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.semiBold }} numberOfLines={1}>
                   {teamName}
                 </Text>

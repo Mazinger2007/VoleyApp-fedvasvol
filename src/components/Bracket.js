@@ -1,10 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import PagerView from './PagerViewWrapper';
 import { Spacing, Radius, Shadow } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { MaterialIcons } from '@expo/vector-icons';
 import { getMatchSummary } from './MatchList';
+import BaseTeamLogo from './base/TeamLogo';
 
 const CARD_GAP = 16;
 const CONNECTOR_WIDTH = 40;
@@ -197,7 +198,7 @@ const Bracket = ({ championshipData, onMatchPress }) => {
         <View style={styles.teamRow}>
           <View style={styles.teamInfo}>
             {match.homeLogo ? (
-              <Image source={{ uri: match.homeLogo }} style={styles.logo} resizeMode="contain" />
+              <BaseTeamLogo uri={match.homeLogo} name={match.homeTeam} size={28} style={{ borderWidth: 1, borderColor: 'rgba(13, 143, 242, 0.20)' }} />
             ) : (
               <View style={[styles.logoPlaceholder, { backgroundColor: ThemeColors.surfaceAlt }]}>
                 <MaterialIcons name="shield" size={14} color={ThemeColors.textMuted} />
@@ -215,7 +216,7 @@ const Bracket = ({ championshipData, onMatchPress }) => {
         <View style={styles.teamRow}>
           <View style={styles.teamInfo}>
             {match.awayLogo ? (
-              <Image source={{ uri: match.awayLogo }} style={styles.logo} resizeMode="contain" />
+              <BaseTeamLogo uri={match.awayLogo} name={match.awayTeam} size={28} style={{ borderWidth: 1, borderColor: 'rgba(13, 242, 143, 0.20)' }} />
             ) : (
               <View style={[styles.logoPlaceholder, { backgroundColor: ThemeColors.surfaceAlt }]}>
                 <MaterialIcons name="shield" size={14} color={ThemeColors.textMuted} />

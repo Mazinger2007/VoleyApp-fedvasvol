@@ -50,6 +50,18 @@ function generateUUID() {
   });
 }
 
+function hashPassword(str) {
+  if (!str) return '';
+  let hash = 0;
+  for (let i = 0, len = str.length; i < len; i++) {
+    let chr = str.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0;
+  }
+  // Añadimos un salt estático muy simple para ofuscar un poco más
+  return 'hashed_' + Math.abs(hash).toString(36);
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
@@ -125,6 +137,8 @@ export function AuthProvider({ children }) {
   }
 
   const signIn = useCallback(async (email, password) => {
+    if (!email || !password) throw new Error('Debes introducir email y contraseña');
+
     const { data, error } = await supabase
       .from('users')
       .select('*')
@@ -133,6 +147,12 @@ export function AuthProvider({ children }) {
 
     if (error) throw new Error('Error al conectar con el servidor');
     if (!data) throw new Error('Usuario no encontrado');
+    
+    // Verificar contraseña (compatibilidad hacia atrás: si no tiene password en BD, dejamos entrar)
+    if (data.password && data.password !== hashPassword(password)) {
+      throw new Error('Contraseña incorrecta');
+    }
+
     if (data.is_blocked) throw new Error(data.blocked_reason || 'Tu cuenta ha sido deshabilitada');
 
     await AsyncStorage.multiSet([
@@ -164,6 +184,7 @@ export function AuthProvider({ children }) {
       .maybeSingle();
 
     if (existingUsername) throw new Error('Este nombre de usuario ya está en uso');
+    if (!password || password.length < 4) throw new Error('La contraseña es demasiado corta');
 
     const newId = generateUUID();
     const { data, error } = await supabase
@@ -172,6 +193,7 @@ export function AuthProvider({ children }) {
         id: newId,
         username: username.trim(),
         email: email.toLowerCase().trim(),
+        password: hashPassword(password),
         role: 'user',
       })
       .select()

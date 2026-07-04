@@ -4,17 +4,20 @@
 // V4: Soporta señal de aborto para cancelar navegación.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { AppState } from 'react-native';
 import { fetchAndParse } from '../utils/htmlParser';
 
 // Keyed by URL → parsed block array. Solo dura lo que la sesión de la app.
 export const resultCache = new Map();
+const fetchedAtCache = new Map();
+const DEFAULT_STALE_MS = 5 * 60 * 1000;
 
 /**
  * @param {string} url - URL pública a parsear
  * @returns {{ blocks, loading, error, refresh }}
  */
 export function useFetch(url, options = {}) {
-  const { lazy = false } = options;
+  const { lazy = false, refreshOnAppFocus = true, staleMs = DEFAULT_STALE_MS } = options;
   const [state, setState] = useState(() => ({
     url,
     blocks: (url && !lazy && resultCache.has(url)) ? resultCache.get(url) : [],
@@ -25,14 +28,17 @@ export function useFetch(url, options = {}) {
   const latestRequestTokenRef = useRef(0);
   const abortControllerRef = useRef(null);
 
-  // Derivación de estado síncrona: Si la URL cambia, reseteamos el estado INMEDIATAMENTE
+  const resolvedState = state.url !== url
+    ? {
+        url,
+        blocks: (url && resultCache.has(url)) ? resultCache.get(url) : [],
+        loading: Boolean(url && !lazy && !resultCache.has(url)),
+        error: null,
+      }
+    : state;
+
   if (state.url !== url) {
-    setState({
-      url,
-      blocks: (url && resultCache.has(url)) ? resultCache.get(url) : [],
-      loading: url && !lazy && !resultCache.has(url),
-      error: null,
-    });
+    setState(resolvedState);
   }
 
   const load = useCallback(async (forceRefresh = false) => {
@@ -67,31 +73,64 @@ export function useFetch(url, options = {}) {
       const result = await fetchAndParse(currentUrl, { signal });
       
       if (latestRequestTokenRef.current === nextToken && !signal.aborted) {
+        const previous = resultCache.get(currentUrl);
+        if (Array.isArray(previous) && previous.length > 0 && Array.isArray(result) && result.length === 0) {
+          setState({ url: currentUrl, blocks: previous, loading: false, error: null });
+          return;
+        }
         resultCache.set(currentUrl, result);
+        fetchedAtCache.set(currentUrl, Date.now());
         setState({ url: currentUrl, blocks: result, loading: false, error: null });
       }
     } catch (caughtError) {
       if (latestRequestTokenRef.current === nextToken && !signal.aborted) {
         const errorMsg = caughtError?.message || 'Error desconocido';
-        setState({ url: currentUrl, blocks: [], loading: false, error: errorMsg });
+        const cached = resultCache.get(currentUrl);
+        setState({
+          url: currentUrl,
+          blocks: cached || [],
+          loading: false,
+          error: cached ? null : errorMsg,
+        });
       }
     }
   }, [url, lazy]);
 
   const refresh = useCallback(() => {
     if (url) resultCache.delete(url);
+    if (url) fetchedAtCache.delete(url);
     load(true);
   }, [url, load]);
 
   useEffect(() => {
-    load();
+    let active = true;
+    if (active) load();
     return () => {
-      // Cleanup on unmount
+      active = false;
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
     };
   }, [load]);
 
-  return { blocks: state.blocks, loading: state.loading, error: state.error, refresh };
+  useEffect(() => {
+    if (!refreshOnAppFocus || !url) return undefined;
+
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') return;
+      const fetchedAt = fetchedAtCache.get(url) || 0;
+      if (!resultCache.has(url) || Date.now() - fetchedAt > staleMs) {
+        load(true);
+      }
+    });
+
+    return () => sub.remove();
+  }, [load, refreshOnAppFocus, staleMs, url]);
+
+  return {
+    blocks: resolvedState.blocks,
+    loading: resolvedState.loading,
+    error: resolvedState.error,
+    refresh,
+  };
 }

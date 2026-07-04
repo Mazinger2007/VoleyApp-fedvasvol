@@ -2052,7 +2052,8 @@ function parsePostDetail(html) {
   );
   if (!container) return null;
   const headerImg = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'img' && n.attribs?.alt === 'Cabecera', container);
-  const image = headerImg ? toAbsoluteUrl(headerImg.attribs.src) : '';
+  const headerLink = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'a' && n.attribs?.class?.includes('ml-image'), container);
+  const image = headerLink ? toAbsoluteUrl(headerLink.attribs.href) : (headerImg ? toAbsoluteUrl(headerImg.attribs.src) : '');
   const titleEl = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'h1', container);
   const title = titleEl ? getTextContent(titleEl).trim() : '';
   const allPTags = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'p', container);
@@ -2060,9 +2061,16 @@ function parsePostDetail(html) {
   const galleryEl = DomUtils.findOne((n) => n.type === 'tag' && n.name === 'div' && n.attribs?.id === 'legacy-news-gallery', container);
   const gallery = [];
   if (galleryEl) {
-    const imgs = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'img', galleryEl);
-    for (const img of imgs) {
-      if (img.attribs?.src) gallery.push(toAbsoluteUrl(img.attribs.src));
+    const anchors = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'a' && n.attribs?.href?.match(/\.(jpeg|jpg|png|webp)/i), galleryEl);
+    if (anchors.length > 0) {
+      for (const a of anchors) {
+        gallery.push(toAbsoluteUrl(a.attribs.href));
+      }
+    } else {
+      const imgs = DomUtils.findAll((n) => n.type === 'tag' && n.name === 'img', galleryEl);
+      for (const img of imgs) {
+        if (img.attribs?.src) gallery.push(toAbsoluteUrl(img.attribs.src));
+      }
     }
   }
   const fileTable = DomUtils.findOne(
@@ -2294,6 +2302,11 @@ export async function discoverAllPhases(url, { signal } = {}) {
  * Descarga y parsea todos los datos de un campeonato (Txapelketa) de forma unificada.
  * Utiliza scraping HTML directo (sin AJAX) para evitar problemas de CORS y AJAX.
  */
+export function getFullImageUrl(url = '') {
+  if (!url) return url;
+  return url.replace(/\.\d+x\d+\.[A-Z]\.[A-Z]/, '');
+}
+
 export async function fetchChampionshipData(rankingUrl, siblingUrls = [], { signal } = {}) {
   const cacheKey = normalizeUrlForCache(rankingUrl);
   const cached = championshipDataCache.get(cacheKey);

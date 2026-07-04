@@ -1,11 +1,14 @@
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Linking, Dimensions } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, ActivityIndicator, Image, Linking, Dimensions, Modal } from 'react-native';
 import GalleryViewer from '../../components/GalleryViewer';
 import { useTheme } from '../../contexts/ThemeContext';
 import { fetchAndParse } from '../../utils/htmlParser';
 import { Spacing } from '../../styles/theme';
+import { downloadPdfBase64 } from '../../utils/pdfExtractor';
+import { parseBeachResults } from '../../utils/parseBeachResults';
+import PDFExtractorWebView from '../../components/PDFExtractorWebView';
 
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -83,22 +86,79 @@ export default function PostDetailScreen({ route, navigation }) {
     return () => { cancelled = true; };
   }, [postUrl]);
 
+  const [analyzingFile, setAnalyzingFile] = useState(false);
+  const [pdfBase64, setPdfBase64] = useState(null);
+  const [currentFile, setCurrentFile] = useState(null);
+
   const BEACH_PDF_PATTERN = /(sub[_-]?\d+|u[_-]?\d+)/i;
+
+  const handlePdfData = useCallback((pages) => {
+    setAnalyzingFile(false);
+    setPdfBase64(null);
+    const file = currentFile;
+    setCurrentFile(null);
+
+    if (!file) return;
+
+    try {
+      const parsed = parseBeachResults(pages);
+      const isBeachVolley = (parsed?.partidos?.length > 0) || (parsed?.ranking?.length > 0);
+
+      if (isBeachVolley) {
+        navigation.push('BeachList', { pdfUrl: file.url, pdfName: file.name });
+      } else {
+        Linking.openURL(file.url).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('[PostDetail] Error parsing PDF data:', e.message);
+      Linking.openURL(file.url).catch(() => {});
+    }
+  }, [currentFile, navigation]);
+
+  const handlePdfError = useCallback((errorMsg) => {
+    console.warn('[PostDetail] PDF extraction error:', errorMsg);
+    setAnalyzingFile(false);
+    setPdfBase64(null);
+    const file = currentFile;
+    setCurrentFile(null);
+    if (file) {
+      Linking.openURL(file.url).catch(() => {});
+    }
+  }, [currentFile]);
 
   const handleOpenFile = useCallback(async (file) => {
     const url = file.url;
     if (!url) return;
 
+    // 1. Direct match for known pattern (instant opening)
     if (BEACH_PDF_PATTERN.test(file.name) || BEACH_PDF_PATTERN.test(url)) {
       navigation.push('BeachList', { pdfUrl: url, pdfName: file.name });
       return;
     }
 
+    // 2. Non-PDF files: open normally
+    if (!/\.pdf$/i.test(url)) {
+      try {
+        const supported = await Linking.canOpenURL(url);
+        if (supported) await Linking.openURL(url);
+      } catch (e) {
+        console.warn('[PostDetail] Error opening file:', e.message);
+      }
+      return;
+    }
+
+    // 3. Unknown PDF: analyze content dynamically
+    setAnalyzingFile(true);
+    setCurrentFile(file);
     try {
-      const supported = await Linking.canOpenURL(url);
-      if (supported) await Linking.openURL(url);
-    } catch (e) {
-      console.warn('[PostDetail] Error opening file:', e.message);
+      const b64 = await downloadPdfBase64(url);
+      setPdfBase64(b64);
+    } catch (err) {
+      console.warn('[PostDetail] PDF download failed:', err?.message || err);
+      setAnalyzingFile(false);
+      setPdfBase64(null);
+      setCurrentFile(null);
+      Linking.openURL(url).catch(() => {});
     }
   }, [navigation]);
 
@@ -302,6 +362,27 @@ export default function PostDetailScreen({ route, navigation }) {
         initialIndex={fullScreenIdx === -1 ? 0 : (fullScreenIdx >= 0 ? fullScreenIdx : 0)}
         onClose={closeFullScreen}
       />
+
+      {/* Extractor de PDF oculto para análisis dinámico */}
+      {!!pdfBase64 && (
+        <PDFExtractorWebView
+          pdfBase64={pdfBase64}
+          onData={handlePdfData}
+          onError={handlePdfError}
+        />
+      )}
+
+      {/* Modal indicador de análisis */}
+      {analyzingFile && (
+        <Modal transparent animationType="fade" visible={analyzingFile}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}>
+            <View style={{ backgroundColor: isDark ? '#1e293b' : '#ffffff', padding: 24, borderRadius: 16, alignItems: 'center', gap: 12 }}>
+              <ActivityIndicator size="large" color={Colors.primary} />
+              <Text style={{ color: Colors.textPrimary, fontWeight: '700', fontSize: 15 }}>Analizando documento...</Text>
+            </View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }

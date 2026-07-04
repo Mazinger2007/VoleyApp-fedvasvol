@@ -1,2054 +1,423 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
+import { useCallback } from 'react';
 import {
-  View, Text, ScrollView, TouchableOpacity, RefreshControl, StyleSheet, StatusBar, Image,
-  Linking, Alert, Platform, useWindowDimensions, Modal, TextInput
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  RefreshControl,
+  StyleSheet,
+  StatusBar,
+  Modal,
+  Animated,
+  Platform,
 } from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
-import { BlurView } from 'expo-blur';
-import CompetitionTable from '../../components/CompetitionTable';
-import MatchList, { parseMatchDateTime, getMatchSummary, formatMatchDisplayDate } from '../../components/MatchList';
-import Bracket from '../../components/Bracket';
+
+import CompetitionList from '../../components/CompetitionList';
 import LoadingView from '../../components/LoadingView';
 import ErrorView from '../../components/ErrorView';
 import { useFetch } from '../../hooks/useFetch';
-import { useLivePolling } from '../../hooks/useLivePolling';
-import {
-  discoverCalendarUrlFromRanking,
-  discoverSeasonLabel,
-  toRankingUrl,
-  extractPhaseLinks,
-  discoverAllPhases,
-  fetchChampionshipData,
-} from '../../utils/htmlParser';
-import { isTournament } from '../../utils/navigationHelper';
-import { getDominantBorderColor } from '../../utils/imageColor';
-import { ensureLogoColorsCached, getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../../utils/logoColorCache';
-import { Radius, Spacing, Typography } from '../../styles/theme';
+import { URLS } from '../../utils/htmlParser';
+import { openTournamentDetail } from '../../utils/navigationHelper';
+import { Spacing, Typography, Radius } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useFavorites } from '../../contexts/FavoritesContext';
-import StatusModal from '../../components/StatusModal';
-import { cacheTeamsFromRanking, getTeamFromCache, clearTeamCache } from '../../utils/teamCache';
 
-function ensureCalendarAllUrl(value = '') {
-  if (!value) return value;
-  const clean = value.replace(/\/+$/, '');
-  if (/\/calendar\/\d+\/all$/i.test(clean)) return clean;
-  if (/\/calendar\/\d+$/i.test(clean)) return clean;
-  return clean;
-}
+const CATEGORY_ORDER = ['infantil', 'junior', 'juvenil', 'cadete', 'senior', 'voley playa', 'playa'];
 
-function getPreferredCalendarUrl(rankingUrl = '', fallback = '') {
-  const tournament = rankingUrl.match(/^(https?:\/\/[^/]+\/[a-z]{2}\/tournament\/\d+)/i)?.[1] || '';
-  return ensureCalendarAllUrl(fallback || `${tournament}/calendar`);
-}
-
-function stripLogoResolution(url = '') {
-  if (!url) return '';
-  return String(url).replace(/\.\d+x\d+(?=\.[a-zA-Z0-9]+(?:[?#].*)?$)/, '');
-}
-
-function withLogoResolution(url = '', size = 120) {
-  if (!url) return '';
-  const clean = stripLogoResolution(url);
-  return clean.replace(/(\.[a-zA-Z0-9]+)([?#].*)?$/, `.${size}x${size}$1$2`);
-}
-
-function buildLogoCandidates(url = '') {
-  if (!url) return [];
-  const base = stripLogoResolution(url);
-  return [
-    withLogoResolution(base, 200),
-    base,
-    withLogoResolution(base, 120),
-    withLogoResolution(base, 60),
-    withLogoResolution(base, 30),
-  ].filter((value, index, list) => value && list.indexOf(value) === index);
-}
-
-function normalizeTeamName(value = '') {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function findColIndex(headers = [], ...keywords) {
-  for (const kw of keywords) {
-    const idx = headers.findIndex((h) => String(h || '').toLowerCase().includes(kw));
-    if (idx >= 0) return idx;
-  }
-  return -1;
-}
-
-function findPositionCol(headers = [], teamCol = -1) {
-  const explicit = findColIndex(headers, 'pos', 'puesto', '#');
-  if (explicit >= 0) return explicit;
-  const repeated = headers
-    .map((h, i) => ({ h: String(h || '').trim().toLowerCase(), i }))
-    .filter((item) => item.h === 'p')
-    .map((item) => item.i);
-  const candidates = repeated.filter((i) => teamCol < 0 || i < teamCol);
-  return candidates[0] ?? repeated[0] ?? -1;
-}
-
-function findPointsCol(headers = [], teamCol = -1) {
-  const explicit = findColIndex(headers, 'pts', 'puntos', 'point');
-  if (explicit >= 0) return explicit;
-  const repeated = headers
-    .map((h, i) => ({ h: String(h || '').trim().toLowerCase(), i }))
-    .filter((item) => item.h === 'p')
-    .map((item) => item.i);
-  const candidates = repeated.filter((i) => teamCol < 0 || i > teamCol);
-  return candidates[0] ?? repeated[1] ?? -1;
-}
-
-function getCellValue(row = [], idx = -1, fallback = '-') {
-  if (idx < 0) return fallback;
-  const value = String(row[idx] ?? '').trim();
-  return value || fallback;
-}
-
-function parseScorePair(match = {}) {
-  const homeRaw = match?.homeScore ?? match?.matchScore?.home;
-  const awayRaw = match?.awayScore ?? match?.matchScore?.away;
-  const home = Number(homeRaw);
-  const away = Number(awayRaw);
-  if (!Number.isFinite(home) || !Number.isFinite(away)) return null;
-  return { home, away };
-}
-
-function sumTeamPointsScored(calendarTables = [], teamName = '') {
-  const normalizedTeam = normalizeTeamName(teamName);
-  if (!normalizedTeam) return 0;
-  return calendarTables.reduce((acc, table) => {
-    const matches = table?.matches || [];
-    return acc + matches.reduce((sum, match) => {
-      const homeName = normalizeTeamName(match?.homeTeam || '');
-      const awayName = normalizeTeamName(match?.awayTeam || '');
-      const isHome = homeName === normalizedTeam;
-      const isAway = awayName === normalizedTeam;
-      if (!isHome && !isAway) return sum;
-
-      const sets = Array.isArray(match?.sets) ? match.sets : [];
-      const fromSets = sets.reduce((setTotal, setItem) => {
-        const homeSet = Number(setItem?.home);
-        const awaySet = Number(setItem?.away);
-        if (!Number.isFinite(homeSet) || !Number.isFinite(awaySet)) return setTotal;
-        return setTotal + (isHome ? homeSet : awaySet);
-      }, 0);
-      if (fromSets > 0) return sum + fromSets;
-
-      const score = parseScorePair(match);
-      if (!score) return sum;
-      return sum + (isHome ? score.home : score.away);
-    }, 0);
-  }, 0);
-}
-
-
-function FeaturedMatch({ match, onPress }) {
-  if (!match) return null;
-  const { colors: Colors, isDark } = useTheme();
-  const summary = getMatchSummary(match);
-  const { state, homeTeam, awayTeam, homeScore, awayScore, venue, time, dateLabel } = summary;
-
-  return (
-    <View style={{ padding: Spacing.lg, paddingBottom: 0 }}>
-      <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, marginBottom: Spacing.md }}>
-        Partido Destacado
-      </Text>
-      <TouchableOpacity
-        activeOpacity={0.9}
-        onPress={() => onPress(match)}
-        style={{
-          backgroundColor: isDark ? '#1e293b' : '#ffffff',
-          borderRadius: Radius.xl,
-          overflow: 'hidden',
-          borderWidth: 1,
-          borderColor: 'rgba(13,14,242,0.1)',
-          elevation: 5,
-          ...(Platform.OS !== 'web' ? {
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.1,
-            shadowRadius: 12,
-          } : {
-            boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-          })
-        }}
-      >
-        <View style={{ height: 160, backgroundColor: Colors.surfaceAlt, overflow: 'hidden' }}>
-          <Image
-            source={{ uri: 'https://images.unsplash.com/photo-1592659762303-90081d34b277?q=80&w=1000&auto=format&fit=crop' }}
-            style={{ width: '100%', height: '100%', opacity: 0.8 }}
-            resizeMode="cover"
-          />
-          <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,31,61,0.4)' }} />
-          {state === 'live' && (
-            <View style={{ position: 'absolute', top: 12, left: 12, backgroundColor: '#ef4444', paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.sm, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' }} />
-              <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>EN VIVO</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={{ padding: Spacing.lg }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-            <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold' }}>
-              {homeTeam} vs {awayTeam}
-            </Text>
-            {homeScore !== null && (
-              <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold' }}>
-                {homeScore} - {awayScore}
-              </Text>
-            )}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 16 }}>
-            <MaterialIcons name="location-on" size={14} color="#e2e8f0" />
-            <Text style={{ color: '#e2e8f0', fontSize: 13 }}>{venue || 'Sede por confirmar'}</Text>
-            <Text style={{ color: '#e2e8f0', fontSize: 13, marginLeft: 4 }}>
-              • {time}{time && dateLabel ? ' · ' : ''}{dateLabel}
-            </Text>
-          </View>
-
-          <View style={{ backgroundColor: '#fff', paddingVertical: 12, borderRadius: Radius.lg, alignItems: 'center' }}>
-            <Text style={{ color: Colors.primary, fontWeight: 'bold', fontSize: 14 }}>Ver detalles del partido</Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-const normalizeString = (str) => (str || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
-
-const DAYS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-const MONTHS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-
-const getMonthDays = (year, month) => {
-  const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const days = [];
-
-  // Adjusted for Monday start (0=Mon, ..., 6=Sun)
-  const offset = (firstDay === 0 ? 6 : firstDay - 1);
-  for (let i = 0; i < offset; i++) days.push(null);
-  for (let i = 1; i <= daysInMonth; i++) days.push(i);
-  return days;
-};
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
 
 export default function LeagueScreen({ route, navigation }) {
   const { colors: Colors, isDark } = useTheme();
-  const { isFavorite, toggleFavorite } = useFavorites();
-  const insets = useSafeAreaInsets();
-  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
-  const { url, title, defaultTab, season, openSubgroupModalOnMount } = route.params || {};
-
-  // Construct URLs with season if present
-  const getUrlWithSeason = (baseUrl) => {
-    if (!season || !baseUrl) return baseUrl;
-    const urlObj = new URL(baseUrl);
-    urlObj.searchParams.set('season', season);
-    return urlObj.toString();
-  };
-
-  const [activeTab, setActiveTab] = useState(defaultTab || 'ranking');
-  const [expandedCalendar, setExpandedCalendar] = useState({});
-  // Track the last selected jornada index
-  const [selectedJornadaIndex, setSelectedJornadaIndex] = useState(null);
-  const [statusModal, setStatusModal] = useState({ visible: false, title: '', message: '', type: 'info' });
-  const [seasonLabel, setSeasonLabel] = useState(null);
-  const [resolvedCalendarUrl, setResolvedCalendarUrl] = useState(null);
-
-  // Search State
-  const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
-  const [searchTeams, setSearchTeams] = useState([]); // Multi-select teams
-  const [searchDate, setSearchDate] = useState(null);
-  const [searchLocations, setSearchLocations] = useState([]); // Multi-select locations
-  const [isTeamPickerVisible, setIsTeamPickerVisible] = useState(false);
-  const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
-  const [isLocationPickerVisible, setIsLocationPickerVisible] = useState(false);
-  const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
-  const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
-
-  const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDate;
-
-  const switchTab = useCallback((nextTab) => {
-    if (!nextTab || nextTab === activeTab) return;
-    setActiveTab(nextTab);
-  }, [activeTab]);
-
-  const initialRankingUrl = useMemo(() => getUrlWithSeason(toRankingUrl(url)), [url, season]);
-  const [currentRankingUrl, setCurrentRankingUrl] = useState(initialRankingUrl);
-  // Remove currentPhaseTitle and only use original title for header
-  const [isSubgroupModalVisible, setIsSubgroupModalVisible] = useState(false);
-  const [availableSubgroups, setAvailableSubgroups] = useState([]);
-  const [isSwitchingSubgroup, setIsSwitchingSubgroup] = useState(false);
-  const [isFetchingSubgroups, setIsFetchingSubgroups] = useState(true);
+  const [search, setSearch] = useState('');
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [selectedSeason, setSelectedSeason] = useState(null);
+  const [availableSeasons, setAvailableSeasons] = useState([]);
+  const [showSeasons, setShowSeasons] = useState(false);
+  const slideAnim = useRef(new Animated.Value(500)).current;
+  const loadGenerationRef = useRef(0);
+  const prevFetchUrlRef = useRef(null);
+  const userChangedSeasonRef = useRef(false);
+  const mountedRef = useRef(true);
+  // loadGeneration como estado para que los hijos re-rendericen cuando sube
+  const [loadGeneration, setLoadGeneration] = useState(0);
 
   useEffect(() => {
-    if (openSubgroupModalOnMount && !isFetchingSubgroups && availableSubgroups.length > 1) {
-      setIsSubgroupModalVisible(true);
+    if (showSeasons) {
+      slideAnim.setValue(500);
+      Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, speed: 20, bounciness: 0 }).start();
     }
-  }, [openSubgroupModalOnMount, isFetchingSubgroups, availableSubgroups.length]);
+  }, [showSeasons, slideAnim]);
+
+  const fetchUrl = useMemo(() => {
+    if (!selectedSeason || !userChangedSeasonRef.current) return URLS.home;
+    return `${URLS.home}?season=${selectedSeason}`;
+  }, [selectedSeason]);
+
+  if (prevFetchUrlRef.current !== fetchUrl) {
+    prevFetchUrlRef.current = fetchUrl;
+    loadGenerationRef.current += 1;
+  }
+
+  const { blocks, loading, error, refresh } = useFetch(fetchUrl);
 
   useEffect(() => {
-    setCurrentRankingUrl(initialRankingUrl);
-  }, [initialRankingUrl]);
-
-  useEffect(() => {
-    const abort = new AbortController();
-    async function fetchSubgroups() {
-      try {
-        const phases = await discoverAllPhases(initialRankingUrl, { signal: abort.signal });
-        const filtered = phases.filter(p => {
-          const low = (p.title || '').toLowerCase();
-          if (/excel|exportar|imprimir|csv|pdf|seleccionar competición|competiciones/.test(low)) return false;
-          return true;
-        });
-
-        if (!abort.signal.aborted) {
-          setAvailableSubgroups(filtered);
-          setIsFetchingSubgroups(false);
-        }
-      } catch (error) {
-        if (!abort.signal.aborted) setIsFetchingSubgroups(false);
-      }
-    }
-    fetchSubgroups();
-    return () => abort.abort();
-  }, [initialRankingUrl, title]);
-
-
-  const rankingUrl = currentRankingUrl;
-  const phaseHashMatch = currentRankingUrl?.match(/#phase-(\d+)/);
-  const phaseIndex = phaseHashMatch ? parseInt(phaseHashMatch[1], 10) : -1;
-  const fetchRankingUrl = phaseIndex >= 0 ? currentRankingUrl.split('#')[0] : currentRankingUrl;
-
-  const [urlResolved, setUrlResolved] = useState(!!fetchRankingUrl);
-  const urlIsPending = !urlResolved && isFetchingSubgroups;
-
-  useEffect(() => {
-    if (fetchRankingUrl) setUrlResolved(true);
-  }, [fetchRankingUrl]);
-
-  const {
-    blocks: rawRankingBlocks,
-    loading: _rankingLoading,
-    error: rankingError,
-    refresh: refreshRanking,
-  } = useFetch(fetchRankingUrl);
-
-  const phaseLinks = useMemo(() => {
-    if (!rawRankingBlocks) return [];
-    return extractPhaseLinks(rawRankingBlocks, rankingUrl);
-  }, [rawRankingBlocks, rankingUrl]);
-
-  const subgroupEntities = useMemo(() => {
-    const isGenericTeam = (t) => !t || t === 'TBD' || t === 'Sin equipo' || /^(Ganador|Vencedor|Perdedor|1\s*[ºo]|2\s*[ºo]|3\s*[ºo])/i.test(String(t).trim());
-    return (rawRankingBlocks || []).filter((b) => {
-      if (b.type === 'bracket') {
-        const allMatches = b.columns?.flatMap(c => c.matches || []) || [];
-        return allMatches.length > 0 && allMatches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
-      }
-      if (b.type === 'table') {
-        if (!b.rows || b.rows.length === 0) return false;
-        if (b.matches && b.matches.length > 0) {
-          return b.matches.some(m => !isGenericTeam(m.homeTeam) || !isGenericTeam(m.awayTeam));
-        }
-        return true;
-      }
-      return false;
-    });
-  }, [rawRankingBlocks]);
-
-  const isFlatLeague = useMemo(() => {
-    const rankingTablesCount = subgroupEntities.filter((b) => b.type === 'table').length;
-    const hasRealPhaseTabs = phaseLinks.length > 0;
-    return rankingTablesCount > 1 && !hasRealPhaseTabs;
-  }, [subgroupEntities, phaseLinks]);
-
-  const selectedGroupIndex = useMemo(() => {
-    if (phaseIndex >= 0) return phaseIndex;
-    if (isFlatLeague) return 0;
-    return -1;
-  }, [phaseIndex, isFlatLeague]);
-
-  const rankingBlocks = useMemo(() => {
-    if (!rawRankingBlocks) return rawRankingBlocks;
-
-    // If a specific virtual phase is selected, filter to that one
-    if (phaseIndex >= 0) {
-      if (phaseIndex >= subgroupEntities.length) return rawRankingBlocks;
-      const targetEntity = subgroupEntities[phaseIndex];
-      return rawRankingBlocks.filter(b => {
-        if ((b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket') {
-          return b === targetEntity;
-        }
-        return true;
-      });
-    }
-
-    // Excepción para ligas "planas": por defecto mostramos solo la primera clasificación
-    // para emular comportamiento de pestañas sin tocar la lógica global existente.
-    if (isFlatLeague && subgroupEntities.length > 1) {
-      const firstTableEntity = subgroupEntities.find((b) => b.type === 'table');
-      if (!firstTableEntity) return rawRankingBlocks;
-      return rawRankingBlocks.filter(b => {
-        if ((b.type === 'table' && b.rows?.length > 0) || b.type === 'bracket') {
-          return b === firstTableEntity;
-        }
-        return true;
-      });
-    }
-
-    return rawRankingBlocks;
-  }, [rawRankingBlocks, phaseIndex, subgroupEntities, isFlatLeague]);
-
-  const rankingLoading = _rankingLoading || isSwitchingSubgroup;
-
-  // React to successful fetch to clear switching state
-  useEffect(() => {
-    if (!_rankingLoading && isSwitchingSubgroup) {
-      setIsSwitchingSubgroup(false);
-      setIsSubgroupModalVisible(false); // Make sure modal gets closed
-    }
-  }, [_rankingLoading, isSwitchingSubgroup]);
-
-  // UPDATE CACHE WITH RANKING TEAMS For MatchDetail Navigation
-  useEffect(() => {
-    if (rankingBlocks && rankingBlocks.length > 0) {
-      cacheTeamsFromRanking(rankingUrl, rankingBlocks);
-    }
-  }, [rankingBlocks, rankingUrl]);
-
-  // El caché persistirá para ser usado por MatchDetail y otras sub-pantallas
-
-
-
-  const calendarUrlFromBlocks = useMemo(() => {
-    const linkBlocks = (rawRankingBlocks || []).filter((b) => b.type === 'link');
-
-    const calendarByHref = linkBlocks.find((b) => /\/calendar\/\d+/i.test(b.href || ''));
-    if (calendarByHref?.href) return calendarByHref.href;
-
-    const calendarByText = linkBlocks.find(
-      (b) => /calendario|calendar/i.test((b.content || '').toLowerCase()) && /\/calendar\//i.test(b.href || '')
-    );
-    if (calendarByText?.href) return calendarByText.href;
-
-    const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i) ||
-      rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
-    return match ? `${match[1]}/calendar` : null;
-  }, [rawRankingBlocks, rankingUrl]);
-
-  useEffect(() => {
-    const abort = new AbortController();
-
-    async function resolveCalendar() {
-      if (calendarUrlFromBlocks && /\/calendar\/\d+/i.test(calendarUrlFromBlocks)) {
-        if (!abort.signal.aborted) setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks));
-        return;
-      }
-
-      try {
-        const discovered = await discoverCalendarUrlFromRanking(rankingUrl, { signal: abort.signal });
-        if (!abort.signal.aborted) {
-          setResolvedCalendarUrl(getUrlWithSeason(discovered || calendarUrlFromBlocks || null));
-        }
-      } catch (_) {
-        if (!abort.signal.aborted) {
-          setResolvedCalendarUrl(getUrlWithSeason(calendarUrlFromBlocks || null));
-        }
-      }
-    }
-
-    resolveCalendar();
-
-    return () => abort.abort();
-  }, [calendarUrlFromBlocks, rankingUrl, season]);
-
-  // --- NUEVO: Manejo de Campeonatos (Txapelketas) ---
-  const [championshipData, setChampionshipData] = useState(null);
-  const [championshipLoading, setChampionshipLoading] = useState(false);
-
-  const tournamentBaseUrl = useMemo(() => {
-    const match = rankingUrl.match(/^(https?:\/\/[^/]+\/(?:es|en)\/tournament\/\d+)/i)
-      || rankingUrl.match(/^(https?:\/\/[^/]+\/tournament\/\d+)/i);
-    return match?.[1] || '';
-  }, [rankingUrl]);
-
-  const selectedRankingTableGroupId = useMemo(() => {
-    const selectedTable = (rankingBlocks || []).find((b) => b.type === 'table' && b.rows?.length > 0);
-    return selectedTable?.tableGroupId || null;
-  }, [rankingBlocks]);
-
-  const flatLeagueCalendarUrl = useMemo(() => {
-    if (!isFlatLeague || !tournamentBaseUrl || !selectedRankingTableGroupId) return null;
-    return getUrlWithSeason(`${tournamentBaseUrl}/calendar/${selectedRankingTableGroupId}`);
-  }, [isFlatLeague, tournamentBaseUrl, selectedRankingTableGroupId, season]);
-
-  const isChampionship = useMemo(() => {
-    // A phase is treated as a championship if CURRENT active blocks contain a bracket,
-    // OR when we have a virtual phase with isBracket=true selected.
-    const activeBlocks = rankingBlocks || [];
-    if (activeBlocks.length === 0) return false;
-
-    // Solo habilitar el modo "campeonato" de pantalla completa si estamos en una fase 
-    // específica marcada como bracket, o si tras un filtrado razonable es dominante.
-    if (phaseIndex === -1) return false; // Por defecto mostrar todo en cascada
-
-    const blocksHaveBracket = (rankingBlocks || []).some(b => b.type === 'bracket');
-    if (blocksHaveBracket) return true;
-    const hasPlayoffTables = (rankingBlocks || []).some(b =>
-      b.type === 'table' &&
-      /cuartos|semi|final|tercer|play\s*off?|torneo|eliminatoria/i.test(b.title || '')
-    );
-    if (hasPlayoffTables) return true;
-    // Check the selected virtual subgroup metadata
-    if (phaseIndex >= 0) {
-      const selectedSubgroup = availableSubgroups.find(s => s.phaseIndex === phaseIndex);
-      if (selectedSubgroup?.isBracket) return true;
-    }
-    return false;
-  }, [rankingBlocks, phaseIndex, availableSubgroups]);
-
-  // When selected phase is a bracket, don't fetch calendar (there is none)
-  const selectedSubgroupIsBracket = useMemo(() => {
-    if (phaseIndex < 0) return false;
-    const s = availableSubgroups.find(sg => sg.phaseIndex === phaseIndex);
-    return s?.isBracket || false;
-  }, [phaseIndex, availableSubgroups]);
-
-  const fetchCalendarUrl = useMemo(() => {
-    if (selectedSubgroupIsBracket && phaseIndex >= 0) return null;
-    if (isFlatLeague && flatLeagueCalendarUrl) return flatLeagueCalendarUrl;
-    return phaseIndex >= 0 && resolvedCalendarUrl ? resolvedCalendarUrl.split('#')[0] : resolvedCalendarUrl;
-  }, [selectedSubgroupIsBracket, phaseIndex, isFlatLeague, flatLeagueCalendarUrl, resolvedCalendarUrl]);
-
-  const {
-    blocks: calendarBlocksRaw,
-    loading: calendarLoading,
-    error: calendarError,
-    refresh: refreshCalendar,
-  } = useFetch(fetchCalendarUrl, { lazy: false });
-
-  // Live match polling — automatically starts only when EN CURSO matches detected,
-  // updates calendarBlocks in place without full re-render of parent.
-  const [liveCalendarBlocks, setLiveCalendarBlocks] = useState(null);
-  useLivePolling(fetchCalendarUrl, calendarBlocksRaw, setLiveCalendarBlocks, refreshRanking);
-
-  // Use live-updated blocks if available, else use fetched blocks
-  const calendarBlocks = liveCalendarBlocks || calendarBlocksRaw;
-  const activeCalendarUrl = fetchCalendarUrl || resolvedCalendarUrl;
-
-  useEffect(() => {
-    const abort = new AbortController();
-    async function resolveSeason() {
-      try {
-        const discoveredSeason = await discoverSeasonLabel(rankingUrl, { signal: abort.signal });
-        if (!abort.signal.aborted) setSeasonLabel(discoveredSeason || null);
-      } catch (_) {
-        if (!abort.signal.aborted) setSeasonLabel(null);
-      }
-    }
-    resolveSeason();
-    return () => abort.abort();
-  }, [rankingUrl]);
-
-  // Cache logo colors directly reading from rankingBlocks once available
-  useEffect(() => {
-    if (!rankingBlocks?.length) return;
-    const logos = [];
-    for (const block of rankingBlocks) {
-      if (block?.rowLogos && Array.isArray(block.rowLogos)) {
-        for (const logo of block.rowLogos) {
-          if (logo && !logos.includes(logo)) logos.push(logo);
-        }
-      }
-      if (block?.rowImages && Array.isArray(block.rowImages)) {
-        for (const logo of block.rowImages) {
-          if (logo && !logos.includes(logo)) logos.push(logo);
-        }
-      }
-    }
-    if (logos.length) ensureLogoColorsCached(logos, getDominantBorderColor);
-  }, [rankingBlocks]);
-
-  // rankingBlocks is already filtered to the active phase entity by the useMemo above.
-  // No additional phaseIndex slicing needed here — it would double-filter.
-  const { rankingTables, rankingBrackets } = useMemo(() => {
-    const rawTables = (rankingBlocks || []).filter((b) => b.type === 'table' && b.rows?.length > 0);
-    const rawBrackets = (rankingBlocks || []).filter((b) => b.type === 'bracket');
-    
-    const tList = [];
-    let mergedColumns = [];
-
-    // Collect columns from native brackets
-    rawBrackets.forEach(b => {
-      if (Array.isArray(b.columns)) {
-        mergedColumns.push(...b.columns);
-      }
-    });
-
-    // Detect if any "table" is actually an eliminatory round of a playoff
-    // so we can render it as a clean bracket instead of an ugly table.
-    rawTables.forEach(b => {
-      const hStr = (b.headers || []).join(' ').toLowerCase();
-      const hasPointsOrPos = /puntos|pts|pos|puesto|#/i.test(hStr);
-      // It's a playoff/eliminatory if it doesn't have ranking columns but has matches
-      const isEliminatory = !hasPointsOrPos && (b.matches || []).length > 0;
-
-      if (isEliminatory) {
-        // Splitting eliminatory tables into multiple columns if they have different internal rounds (semis, final, etc)
-        const matchesByPhase = {};
-        (b.matches || []).forEach((m) => {
-          const ph = m.phase || m.title || b.title || 'Eliminatoria';
-          if (!matchesByPhase[ph]) matchesByPhase[ph] = [];
-          matchesByPhase[ph].push(m);
-        });
-
-        Object.entries(matchesByPhase).forEach(([ph, ms]) => {
-          mergedColumns.push({
-            header: ph,
-            matches: ms,
-          });
-        });
-      } else {
-        tList.push(b);
-      }
-    });
-
-    let bList = [];
-    if (mergedColumns.length > 0) {
-      // Sort columns chronologically 
-      const getWeight = (t) => {
-        const lower = (t || '').toLowerCase();
-        if (/final/.test(lower) && !/semi/.test(lower)) return 100;
-        if (/3\s*[ºo°]|tercer|consolaci/i.test(lower)) return 90;
-        if (/semi/.test(lower)) return 80;
-        if (/cuarto/.test(lower)) return 60;
-        if (/octavo/.test(lower)) return 40;
-        return 10;
-      };
-      
-      mergedColumns.sort((a, b) => getWeight(a.header) - getWeight(b.header));
-      // Put them all into a single bracket so they render side-by-side
-      bList = [{ type: 'bracket', columns: mergedColumns }];
-    }
-
-    return { rankingTables: tList, rankingBrackets: bList };
-  }, [rankingBlocks]);
-
-  const calendarTables = useMemo(() => {
-    let allTables = (calendarBlocks || []).filter((b) => b.type === 'table');
-
-    // Filtrado inteligente: si hay un subgroup seleccionado, filtramos el calendario
-    // para mostrar solo los partidos de los equipos que aparecen en ese subgroup.
-    if (!isFlatLeague && phaseIndex >= 0 && rankingBlocks && rankingBlocks.length > 0) {
-      const activeTeamsInPhase = new Set();
-      rankingBlocks.forEach(b => {
-        if (b.type === 'table' && b.rows) {
-          const teamIdx = findColIndex(b.headers, 'equipo', 'nombre', 'team', 'club');
-          b.rows.forEach(row => {
-            const teamName = row[teamIdx];
-            if (teamName) activeTeamsInPhase.add(normalizeTeamName(teamName));
-          });
-        }
-        if (b.type === 'bracket' && b.columns) {
-          b.columns.forEach(col => {
-            (col.matches || []).forEach(m => {
-              if (m.homeTeam) activeTeamsInPhase.add(normalizeTeamName(m.homeTeam));
-              if (m.awayTeam) activeTeamsInPhase.add(normalizeTeamName(m.awayTeam));
-            });
-          });
-        }
-      });
-
-      if (activeTeamsInPhase.size > 0) {
-        allTables = allTables.map(table => {
-          const filteredMatches = (table.matches || []).filter(m =>
-            activeTeamsInPhase.has(normalizeTeamName(m.homeTeam)) ||
-            activeTeamsInPhase.has(normalizeTeamName(m.awayTeam))
-          );
-          if (filteredMatches.length === 0) return null;
-          return { ...table, matches: filteredMatches };
-        }).filter(Boolean);
-      }
-    }
-
-    return allTables.slice().reverse();
-  }, [calendarBlocks, phaseIndex, rankingBlocks, isFlatLeague]);
-
-
-  const flattenedMatches = useMemo(() => {
-    return calendarTables.flatMap(t => t.matches || []);
-  }, [calendarTables]);
-
-  const filteredMatches = useMemo(() => {
-    if (!hasActiveFilters) return [];
-    let result = [...flattenedMatches];
-
-    if (searchTeams.length > 0) {
-      if (searchTeams.length === 2) {
-        const [teamA, teamB] = searchTeams;
-        result = result.filter((m) =>
-          (m.homeTeam === teamA && m.awayTeam === teamB) ||
-          (m.homeTeam === teamB && m.awayTeam === teamA)
-        );
-      } else {
-        result = result.filter((m) =>
-          searchTeams.includes(m.homeTeam) ||
-          searchTeams.includes(m.awayTeam)
-        );
-      }
-    }
-
-    if (searchLocations.length > 0) {
-      result = result.filter(m => searchLocations.includes(m.venue || 'Sede por confirmar'));
-    }
-
-    if (searchDate) {
-      result = result.filter(m => (m.rawDate || m.date) === searchDate);
-    }
-
-    return result;
-  }, [flattenedMatches, searchTeams, searchLocations, searchDate, hasActiveFilters]);
-
-  const allAvailableTeams = useMemo(() => {
-    const teams = new Set();
-    flattenedMatches.forEach(m => {
-      if (m.homeTeam) teams.add(m.homeTeam);
-      if (m.awayTeam) teams.add(m.awayTeam);
-    });
-    return [...teams].sort();
-  }, [flattenedMatches]);
-
-  const allAvailableDates = useMemo(() => {
-    const dates = flattenedMatches.map(m => m.rawDate || m.date).filter(Boolean);
-    return [...new Set(dates)].sort();
-  }, [flattenedMatches]);
-
-  const allAvailableLocations = useMemo(() => {
-    const venues = flattenedMatches.map(m => m.venue || 'Sede por confirmar').filter(Boolean);
-    return [...new Set(venues)].sort();
-  }, [flattenedMatches]);
-
-  useEffect(() => {
-    if (isDatePickerVisible && !searchDate && allAvailableDates.length > 0) {
-      const first = allAvailableDates[0];
-      const match = first.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
-      if (match) {
-        const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
-        if (mIdx !== -1) {
-          setCalendarMonth(mIdx);
-        }
-      }
-    } else if (isDatePickerVisible && searchDate) {
-      const match = searchDate.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
-      if (match) {
-        const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
-        if (mIdx !== -1) setCalendarMonth(mIdx);
-      }
-    }
-  }, [isDatePickerVisible, searchDate, allAvailableDates]);
-
-  const rankingTeamCount = useMemo(() => {
-    if (!rankingTables || rankingTables.length === 0) return 0;
-    return rankingTables.reduce((acc, table) => acc + (table.rows?.length || 0), 0);
-  }, [rankingTables]);
-
-  useEffect(() => {
-    if (!calendarTables.length) return;
-
-    setExpandedCalendar((prev) => {
-      const next = {};
-      calendarTables.forEach((_, i) => {
-        const key = `jornada-${i}`;
-        // Restore expanded state for selected jornada after refresh
-        if (selectedJornadaIndex !== null && i === selectedJornadaIndex) {
-          next[key] = true;
-        } else {
-          next[key] = prev[key] ?? false;
-        }
-      });
-      return next;
-    });
-
-    // Si estamos en JornadaDetail y hay selectedJornadaIndex, navegar a la jornada correcta tras refresh
-    if (
-      selectedJornadaIndex !== null &&
-      navigation &&
-      navigation.getState &&
-      calendarTables[selectedJornadaIndex]
-    ) {
-      const navState = navigation.getState();
-      const currentRoute = navState.routes[navState.index];
-      if (currentRoute && currentRoute.name === 'JornadaDetail') {
-        const table = calendarTables[selectedJornadaIndex];
-        // Evitar doble transición de slide si el bloque de datos no ha cambiado realmente
-        if (currentRoute.params?.tableBlock !== table) {
-          const rawTitle = table.title || `Jornada ${calendarTables.length - selectedJornadaIndex}`;
-          // FIX: Limpiar fecha del título igual que en el render (ej: "Jornada 1 - 12/10..." -> "Jornada 1")
-          const displayTitle = rawTitle.replace(/\s*[-–—(]\s*\d{1,2}[\/\-]\d{1,2}.*$/, '').trim();
-
-          // Navegar a la jornada seleccionada con el bloque actualizado
-          navigation.replace('JornadaDetail', {
-            tableBlock: table,
-            title: displayTitle,
-            subtitle: seasonLabel,
-            calendarUrl: activeCalendarUrl,
-            jornadaIndex: selectedJornadaIndex,
-            rankingBlocks: currentRoute.params?.rankingBlocks
-          });
-        }
-      }
-    }
-  }, [calendarTables, selectedJornadaIndex, navigation, seasonLabel, activeCalendarUrl]);
-
-  const toggleCalendarSection = useCallback((index) => {
-    const key = `jornada-${index}`;
-    setExpandedCalendar((prev) => ({ ...prev, [key]: !prev[key] }));
-    // Persist the last selected jornada index
-    setSelectedJornadaIndex(index);
-  }, []);
-
-  const openMatchModal = useCallback((match) => {
-    if (!match) return;
-    navigation.navigate('MatchDetail', {
-      match: { ...match, ...getMatchSummary(match) },
-      calendarUrl: activeCalendarUrl,
-    });
-  }, [navigation, activeCalendarUrl]);
-
-  // OPTIMIZACIÓN: Callbacks estables para evitar re-render de tablas
-  const handlePressTeam = useCallback((teamName, teamUrl, teamLogo, leagueStats) => {
-    navigation.navigate('TeamDetail', {
-      teamName,
-      teamUrl,
-      teamLogo,
-      tournamentTitle: title,
-      leagueStats,
-      pointsScoredTotal: sumTeamPointsScored(calendarTables, teamName),
-      calendarUrl: activeCalendarUrl,
-      rankingBlocks: rankingBlocks,
-    });
-  }, [navigation, title, calendarTables, activeCalendarUrl, rankingBlocks]);
-
-  const handlePressExpand = useCallback((tableBlock, tableTitle) => {
-    navigation.navigate('RankingTable', {
-      tableBlock,
-      title: tableTitle || title || 'Clasificación',
-      subtitle: seasonLabel || 'Datos oficiales de la federación',
-      rankingUrl: rankingUrl,
-      calendarUrl: activeCalendarUrl,
-    });
-  }, [navigation, title, seasonLabel, rankingUrl, activeCalendarUrl]);
-
-  const handleOpenInfo = () => {
-    navigation.navigate('Info', {
-      tournamentUrl: rankingUrl,
-      title: title || 'Información',
-      teamCount: rankingTeamCount,
-    });
-  };
-
-  const leagueFavId = url || rankingUrl || '';
-  const isLeagueFav = isFavorite('league', leagueFavId);
-  const handleToggleLeagueFav = useCallback(() => {
-    toggleFavorite('league', leagueFavId, title || 'Liga');
-  }, [leagueFavId, title, toggleFavorite]);
-
-  const RT_LABELS = {
-    ranking: 'Clasificación',
-    calendar: 'Calendario',
-  };
-
-  const TABS = [
-    { key: 'ranking', label: 'Clasificación' },
-    { key: 'calendar', label: 'Calendario' },
-  ];
-
-  const getSubgroupLabel = useCallback((value = '') => {
-    const raw = String(value || '').trim();
-    if (!raw) return 'Competición';
-    if (/^clasificaci[oó]n\s+de\s+/i.test(raw)) return raw.replace(/^clasificaci[oó]n\s+de\s+/i, '').trim() || 'Clasificación';
-    if (/^calendario\s+de\s+/i.test(raw)) return raw.replace(/^calendario\s+de\s+/i, '').trim() || 'Calendario';
-    return raw;
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
 
-  const styles = StyleSheet.create({
-    safe: { flex: 1, backgroundColor: Colors.background },
-    header: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: Spacing.md,
-      paddingVertical: Spacing.sm,
-      backgroundColor: Colors.background,
-    },
-    backBtn: {
-      width: 40, height: 40,
-      justifyContent: 'center', alignItems: 'center',
-      backgroundColor: 'transparent',
-    },
-    headerTitle: {
-      flex: 1,
-      color: isDark ? Colors.textPrimary : Colors.primary,
-      fontSize: 15,
-      lineHeight: 18,
-      fontWeight: '900',
-      textAlign: 'center',
-      paddingHorizontal: Spacing.xs,
-      letterSpacing: -0.3,
-      textTransform: 'uppercase',
-    },
-    tabBar: { flexDirection: 'row', paddingHorizontal: Spacing.md, backgroundColor: Colors.background, borderBottomWidth: 1, borderBottomColor: Colors.border, position: 'relative' },
-    tabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: Spacing.sm, alignItems: 'center' },
-    tabItemActive: {},
-    tabIndicator: { position: 'absolute', bottom: 0, left: 0, height: 3, backgroundColor: Colors.primary, borderTopLeftRadius: 3, borderTopRightRadius: 3, zIndex: 10 },
-    tabLabel: { fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
-    mainPagerClip: { flex: 1, overflow: 'hidden' },
-    tabScene: { ...StyleSheet.absoluteFillObject },
-    tabSceneVisible: { opacity: 1 },
-    tabSceneHidden: { opacity: 0 },
-    mainPagerTrack: { flex: 1, flexDirection: 'row' },
-    mainPage: { flex: 1 },
-    scroll: { flex: 1, backgroundColor: Colors.background },
-    calendarBlock: { paddingTop: Spacing.sm, paddingHorizontal: Spacing.lg },
-    calendarTitleBtn: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm + 2, paddingBottom: Spacing.sm + 2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border, borderRadius: Radius.lg },
-    calendarTitle: { color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.bold },
-    calendarChevron: { color: Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold },
-    emptyWrap: { padding: Spacing.xxl, alignItems: 'center', gap: Spacing.md, marginTop: Spacing.xl },
-    emptyIcon: { fontSize: 44 },
-    emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
-    retryBtn: { backgroundColor: Colors.primary, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.xl, borderRadius: Radius.full, marginTop: Spacing.sm },
-    retryText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.semiBold, fontSize: Typography.size.sm },
+  useEffect(() => {
+    const seasonsBlock = blocks.find(b => b.type === 'seasons');
+    if (seasonsBlock && availableSeasons.length === 0) {
+      setAvailableSeasons(seasonsBlock.items);
+      if (!selectedSeason) setSelectedSeason(seasonsBlock.current);
+    }
+  }, [blocks, availableSeasons.length, selectedSeason]);
 
-    // Search Styles
-    searchContainer: { padding: Spacing.md, paddingTop: 0, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: Colors.background },
-    searchInputRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
-    searchInputWrapper: { flexDirection: 'row', alignItems: 'center', borderRadius: Radius.lg, backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border },
-    searchFilterBtn: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, height: 38, borderRadius: Radius.lg, backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border },
-    searchResultsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 4, marginBottom: Spacing.md },
-    searchResultsTitle: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary },
-    emptySearch: { padding: Spacing.xxl, alignItems: 'center', justifyContent: 'center', marginTop: Spacing.xxl },
-    emptySearchTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.textPrimary, marginBottom: 8 },
-    emptySearchText: { fontSize: 14, color: Colors.textMuted, textAlign: 'center', opacity: 0.7, marginBottom: Spacing.xl },
-    clearBtn: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: Radius.xl, backgroundColor: Colors.primary },
-    clearBtnText: { color: Colors.textOnPrimary, fontWeight: 'bold' },
+  const tournamentTable = useMemo(() => {
+    const tables = blocks.filter((b) => b.type === 'table');
+    return tables[0] || null;
+  }, [blocks]);
 
-    // Premium Search Modal
-    centeredModalWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xl },
-    premiumSearchCard: {
-      width: '100%',
-      maxWidth: 400,
-      borderRadius: Radius.xxl,
-      padding: Spacing.lg,
-      elevation: 10,
-      ...(Platform.OS === 'web'
-        ? { boxShadow: '0 10px 20px rgba(0,0,0,0.1)' }
-        : { shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.1, shadowRadius: 20 }
-      )
-    },
-    searchModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg },
-    searchModalTitle: { fontSize: 20, fontWeight: 'bold' },
-    searchModalBody: { maxHeight: 500 },
-    searchLabel: { fontSize: 14, fontWeight: 'bold', marginBottom: Spacing.xs, marginLeft: 4, textTransform: 'uppercase', letterSpacing: 1 },
-    searchFilterPill: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: Radius.lg, borderWidth: 1, borderColor: Colors.border },
-    searchModalBtn: { height: 54, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', marginTop: Spacing.md },
-    searchModalBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
+  const dynamicFilters = useMemo(() => {
+    const base = [{ key: 'all', label: 'Todas' }];
+    if (!tournamentTable) return base;
+    const { rows, headers } = tournamentTable;
+    if (!Array.isArray(rows) || !Array.isArray(headers)) return base;
 
-    // Selection Modal
-    selectionModal: { width: '90%', maxHeight: '80%', borderRadius: Radius.xxl, padding: Spacing.lg },
-    selectionModalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: Spacing.md, textAlign: 'center' },
-    selectionItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    selectionItemText: { fontSize: 16 },
+    const catIdx = headers.findIndex((h) => /categor/i.test(h));
+    if (catIdx < 0) return base;
 
-    // Date Grid
-    dateGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, justifyContent: 'space-between' },
-    dateGridItem: { width: '30%', padding: Spacing.sm, borderRadius: Radius.lg, alignItems: 'center', borderWidth: 1, borderColor: 'transparent' },
-    dateGridDay: { fontSize: 18, fontWeight: 'bold' },
-    dateGridMonth: { fontSize: 12, textTransform: 'uppercase' },
+    const seen = new Set();
+    const categories = [];
+    for (const row of rows) {
+      if (!Array.isArray(row)) continue;
+      const raw = row[catIdx];
+      if (!raw || !raw.trim()) continue;
+      const key = raw.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      categories.push({ key, label: capitalize(raw.trim()) });
+    }
 
-    dateModal: { width: '85%', maxHeight: '70%', borderRadius: Radius.xl, padding: Spacing.lg, elevation: 5 },
-    dateModalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: Spacing.md, textAlign: 'center' },
-    dateItem: { paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border },
-    dateItemText: { fontSize: 14 },
-    dateItemActive: { color: Colors.primary, fontWeight: 'bold' },
+    categories.sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a.key);
+      const bi = CATEGORY_ORDER.indexOf(b.key);
+      return (ai !== -1 ? ai : 99) - (bi !== -1 ? bi : 99) || a.key.localeCompare(b.key);
+    });
 
-    // Calendar UI Styles
-    calendarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.lg, paddingHorizontal: Spacing.sm },
-    calendarMonthTitle: { fontSize: 18, fontWeight: 'bold' },
-    calendarDaysHeader: { flexDirection: 'row', justifyContent: 'space-around', marginBottom: Spacing.sm },
-    calendarDayLabel: { width: '14%', textAlign: 'center', fontSize: 12, fontWeight: '600' },
-    calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
-    calendarDayCell: { width: '14.28%', height: 44, justifyContent: 'center', alignItems: 'center', marginBottom: 4 },
-    calendarDayText: { fontSize: 15 },
-    matchDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
-    modalFooterBtn: { height: 50, borderRadius: Radius.lg, justifyContent: 'center', alignItems: 'center' },
-    modalFooterBtnText: { fontSize: 14, fontWeight: 'bold', letterSpacing: 0.5 },
+    return [...base, ...categories];
+  }, [tournamentTable]);
 
-    // ── Full-screen match modal ───────────────────────────────────────────
-    modalRoot: { ...StyleSheet.absoluteFillObject, zIndex: 30, backgroundColor: Colors.background },
-    modalHeader: {
-      flexDirection: 'row', alignItems: 'center',
-      paddingHorizontal: Spacing.md,
-      paddingTop: insets.top + Spacing.sm,
+  useEffect(() => {
+    if (activeFilter !== 'all' && !dynamicFilters.some(f => f.key === activeFilter)) {
+      setActiveFilter('all');
+    }
+  }, [dynamicFilters, activeFilter]);
+
+  const filteredTable = useMemo(() => {
+    if (!tournamentTable) return null;
+    const { rows, headers, rowLinks, rowLogos, rowImages } = tournamentTable;
+
+    if (!Array.isArray(rows) || !Array.isArray(headers)) return tournamentTable;
+
+    const q = search.toLowerCase().trim();
+    const categoryIdx = headers.findIndex((h) => /categor/i.test(h));
+
+    const filtered = rows.reduce(
+      (acc, row, i) => {
+        if (!Array.isArray(row)) {
+          acc.rows.push(row);
+          acc.rowLinks.push(rowLinks?.[i] || null);
+          acc.rowLogos.push(rowLogos?.[i] || null);
+          acc.rowImages.push(rowImages?.[i] || null);
+          return acc;
+        }
+        const text = row.join(' ').toLowerCase();
+        const category = (categoryIdx >= 0 ? row[categoryIdx] : '')?.toLowerCase() || '';
+        const matchesSearch = !q || text.includes(q);
+        const matchesFilter = activeFilter === 'all' || `${text} ${category}`.includes(activeFilter);
+
+        if (matchesSearch && matchesFilter) {
+          acc.rows.push(row);
+          acc.rowLinks.push(rowLinks?.[i] || null);
+          acc.rowLogos.push(rowLogos?.[i] || null);
+          acc.rowImages.push(rowImages?.[i] || null);
+        }
+        return acc;
+      },
+      { rows: [], rowLinks: [], rowLogos: [], rowImages: [] }
+    );
+
+    return {
+      ...tournamentTable,
+      rows: filtered.rows,
+      rowLinks: filtered.rowLinks,
+      rowLogos: filtered.rowLogos,
+      rowImages: filtered.rowImages
+    };
+  }, [tournamentTable, search, activeFilter]);
+
+  const filteredTableKey = useMemo(() => {
+    if (!filteredTable?.rows) return '';
+    return filteredTable.rows.map((r, idx) => {
+      const href = filteredTable.rowLinks?.[idx] || '';
+      return href;
+    }).join('|');
+  }, [filteredTable]);
+
+  const filteredTableKeyRef = useRef(null);
+  useEffect(() => {
+    const newKey = `${fetchUrl}_${filteredTableKey}`;
+    if (filteredTableKeyRef.current !== newKey) {
+      filteredTableKeyRef.current = newKey;
+      loadGenerationRef.current += 1;
+      setLoadGeneration(loadGenerationRef.current);
+    }
+  }, [fetchUrl, filteredTableKey]);
+
+  const handleCardsReady = useCallback(() => {}, []);
+
+  const handleRefresh = useCallback(() => {
+    loadGenerationRef.current += 1;
+    setLoadGeneration(loadGenerationRef.current);
+    refresh();
+  }, [refresh]);
+
+  const handleOpenLeague = (url, leagueName, tipo) => {
+    openTournamentDetail(navigation, { href: url, name: leagueName, isTorneo: tipo === 'torneo' }, {
+      season: selectedSeason,
+    });
+  };
+
+  const styles = useMemo(() => StyleSheet.create({
+    safe: { flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f9' },
+    headerWrap: {
+      paddingHorizontal: Spacing.lg,
+      paddingTop: Spacing.lg,
       paddingBottom: Spacing.sm,
-      borderBottomWidth: 1, borderBottomColor: Colors.border,
-      backgroundColor: Colors.background,
+      backgroundColor: isDark ? 'rgba(15,25,35,0.8)' : 'rgba(255,255,255,0.8)',
+      borderBottomWidth: 1,
+      borderBottomColor: 'rgba(13,143,242,0.1)',
     },
-    modalCloseBtn: { width: 40, height: 40, borderRadius: Radius.full, justifyContent: 'center', alignItems: 'center' },
-    modalTitleText: { flex: 1, color: Colors.textPrimary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', paddingHorizontal: Spacing.sm },
-    modalTabRow: { flexDirection: 'row', paddingHorizontal: Spacing.md, borderBottomWidth: 1, borderBottomColor: Colors.border, backgroundColor: Colors.background },
-    modalTabItem: { flex: 1, paddingTop: Spacing.sm + 4, paddingBottom: 0, alignItems: 'center' },
-    modalTabLabel: { color: Colors.textMuted, fontSize: Typography.size.md, fontWeight: Typography.weight.bold, paddingBottom: Spacing.sm },
-    modalTabLabelActive: { color: Colors.primary, fontWeight: Typography.weight.bold },
-    modalTabUnderline: { height: 3, width: '100%', borderRadius: 2, backgroundColor: 'transparent' },
-    modalTabUnderlineActive: { backgroundColor: Colors.primary },
-    modalPagerClip: { flex: 1, overflow: 'hidden' },
-    modalPagerTrack: { flex: 1, flexDirection: 'row' },
-    modalPage: { flex: 1 },
-    modalScroll: { flex: 1, backgroundColor: Colors.background },
-    // Score section
-    scoreSection: { paddingHorizontal: Spacing.xl, paddingTop: Spacing.xl, paddingBottom: Spacing.md, alignItems: 'center' },
-    scoreTeamsRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', width: '100%', maxWidth: 340, gap: Spacing.md },
-    scoreTeamCol: { flex: 1, alignItems: 'center', gap: Spacing.sm },
-    scoreLogoWrap: { width: 80, height: 80, borderRadius: 40, backgroundColor: '#ffffff', borderWidth: 2, borderColor: Colors.border, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    scoreLogoImg: { width: 76, height: 76, backgroundColor: 'transparent' },
-    scoreLogoFallback: { color: Colors.textSecondary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold },
-    scoreTeamRoleLabel: { color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 1 },
-    scoreMid: { alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingTop: Spacing.sm },
-    scoreRow: { flexDirection: 'row', alignItems: 'baseline' },
-    scoreNum: { fontSize: 48, fontWeight: Typography.weight.bold, color: Colors.textPrimary, lineHeight: 56 },
-    scoreSep: { fontSize: Typography.size.xl, color: Colors.textMuted, paddingHorizontal: 4 },
-    statusPill: { paddingHorizontal: Spacing.md, paddingVertical: 4, borderRadius: Radius.full, borderWidth: 1 },
-    statusPillText: { fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textTransform: 'uppercase', letterSpacing: 0.5 },
-    metaChipsRow: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: Spacing.sm, marginTop: Spacing.lg, width: '100%' },
-    metaChip: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm, backgroundColor: Colors.surfaceAlt, borderRadius: Radius.lg },
-    metaChipText: { color: Colors.textPrimary, fontSize: Typography.size.sm, fontWeight: Typography.weight.medium },
-    // Sets table
-    setsSection: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.xl },
-    setsCard: { backgroundColor: Colors.surfaceAlt, borderRadius: Radius.xl, borderWidth: 1, borderColor: Colors.border, overflow: 'hidden' },
-    setsHeaderRow: { flexDirection: 'row', backgroundColor: Colors.surface, paddingVertical: Spacing.md, paddingHorizontal: Spacing.md },
-    setsHeaderCell: { flex: 1, color: Colors.textMuted, fontSize: Typography.size.xs, fontWeight: Typography.weight.bold, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 0.5 },
-    setsDataRow: { flexDirection: 'row', paddingVertical: Spacing.md, paddingHorizontal: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: Colors.border },
-    setsDataRowHighlight: { backgroundColor: isDark ? 'rgba(13,143,242,0.06)' : 'rgba(13,143,242,0.04)' },
-    setsCell: { flex: 1, color: Colors.textMuted, fontSize: Typography.size.lg, textAlign: 'center' },
-    setsCellWin: { color: Colors.primary, fontWeight: Typography.weight.bold },
-    noSetsBox: { backgroundColor: Colors.surfaceAlt, borderRadius: Radius.md, padding: Spacing.md, alignItems: 'center' },
-    noSetsText: { color: Colors.textMuted, fontSize: Typography.size.sm },
-    // Modal footer (details tab)
-    modalFooter: {
-      paddingHorizontal: Spacing.lg, paddingTop: Spacing.sm,
-      paddingBottom: insets.bottom > 0 ? insets.bottom : Spacing.md,
-      borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background,
+    topRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.md },
+    leftGroup: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+    headerTitle: {
+      color: isDark ? '#f1f5f9' : Colors.primary,
+      fontSize: 20,
+      fontWeight: 'bold',
+      letterSpacing: -0.5,
+      marginLeft: 10,
     },
-    modalFooterBtn: {
+    calendarBtn: {
+      width: 40, height: 40, borderRadius: Radius.md,
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(13,143,242,0.1)',
+      justifyContent: 'center', alignItems: 'center',
+      elevation: 2,
+    },
+    chipsScroll: { gap: Spacing.sm, paddingBottom: Spacing.md },
+    chip: {
+      height: 36,
+      paddingHorizontal: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      borderRadius: Radius.full,
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderWidth: 1,
+      borderColor: 'rgba(13,143,242,0.1)',
+    },
+    chipActive: {
       backgroundColor: Colors.primary,
-      borderRadius: Radius.lg,
-      paddingVertical: Spacing.md + 4,
+      borderColor: Colors.primary,
+    },
+    chipText: {
+      color: isDark ? '#cbd5e1' : '#475569',
+      fontSize: 14,
+      fontWeight: '500',
+    },
+    chipTextActive: {
+      color: '#ffffff',
+    },
+    scroll: { flex: 1, backgroundColor: isDark ? '#0f1923' : '#f5f7f9' },
+    emptyWrap: { padding: Spacing.xxxl, alignItems: 'center', gap: Spacing.md },
+    emptyText: { color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center' },
+    modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+    modalContent: {
+      backgroundColor: isDark ? '#1e293b' : '#ffffff',
+      borderTopLeftRadius: 32,
+      borderTopRightRadius: 32,
+      padding: 24,
+      paddingBottom: 48,
+      elevation: 20,
+      ...(Platform.OS !== 'web' ? {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -10 },
+        shadowOpacity: 0.1,
+        shadowRadius: 20,
+      } : {
+        boxShadow: '0 -10px 20px rgba(0,0,0,0.1)'
+      })
+    },
+    modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
+    modalTitle: { fontSize: 20, fontWeight: 'bold', color: isDark ? '#f1f5f9' : '#0f172a' },
+    modalCloseBtn: { padding: 8, backgroundColor: isDark ? '#334155' : '#f1f5f9', borderRadius: 20 },
+    seasonBtn: {
+      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+      paddingHorizontal: 16, paddingVertical: 16,
+      borderRadius: 16,
+      borderWidth: 2, borderColor: 'transparent',
+      backgroundColor: isDark ? '#334155' : '#f8fafc',
+      marginBottom: 12,
+    },
+    seasonBtnActive: {
+      borderColor: Colors.primary,
+      backgroundColor: isDark ? 'rgba(13,143,242,0.1)' : '#eff6ff',
+    },
+    seasonText: { fontSize: 16, fontWeight: '500', color: isDark ? '#cbd5e1' : '#334155' },
+    seasonTextActive: { fontWeight: '600', color: Colors.primary },
+    seasonRadio: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: isDark ? '#64748b' : '#cbd5e1' },
+    seasonRadioActive: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: Colors.primary, backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center' },
+    modalConfirmBtn: {
+      marginTop: 24,
+      backgroundColor: Colors.primary,
+      paddingVertical: 16,
+      borderRadius: 16,
       alignItems: 'center',
       elevation: 4,
       ...(Platform.OS !== 'web' ? {
         shadowColor: Colors.primary,
-        shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
-        shadowRadius: 8,
-      } : {
-        boxShadow: `0 4px 8px ${Colors.primary}4D`
-      })
-    },
-    modalFooterBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
-    // Map tab
-    mapPlaceholder: { height: 220, backgroundColor: isDark ? '#0c1929' : '#b8cfe2', margin: Spacing.md, borderRadius: Radius.xl, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-    mapPinCircle: {
-      width: 64, height: 64, borderRadius: Radius.full,
-      backgroundColor: Colors.primary, justifyContent: 'center', alignItems: 'center',
-      elevation: 6,
-      ...(Platform.OS !== 'web' ? {
-        shadowColor: Colors.primary,
         shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
-        shadowRadius: 12,
+        shadowRadius: 10,
       } : {
-        boxShadow: `0 4px 12px ${Colors.primary}66`
+        boxShadow: `0 4px 10px ${Colors.primary}4D`
       })
     },
-    mapInfoSection: { paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
-    mapTitleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: Spacing.md, marginBottom: Spacing.lg },
-    mapVenueTitle: { color: Colors.textPrimary, fontSize: Typography.size.xxl, fontWeight: Typography.weight.bold, letterSpacing: -0.5 },
-    mapSportsBadge: { backgroundColor: Colors.primaryAlpha10, borderRadius: Radius.xl, padding: Spacing.md },
-    mapBtns: { gap: Spacing.sm },
-    mapPrimaryBtn: {
-      backgroundColor: Colors.primary, borderRadius: Radius.xl,
-      paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg,
-      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm,
-      elevation: 3,
-      ...(Platform.OS !== 'web' ? {
-        shadowColor: Colors.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.25,
-        shadowRadius: 8,
-      } : {
-        boxShadow: `0 4px 8px ${Colors.primary}40`
-      })
-    },
-    mapPrimaryBtnText: { color: Colors.textOnPrimary, fontWeight: Typography.weight.bold, fontSize: Typography.size.md },
-    mapSecondaryBtn: { backgroundColor: Colors.surfaceAlt, borderRadius: Radius.xl, paddingVertical: Spacing.md + 4, paddingHorizontal: Spacing.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm },
-    mapSecondaryBtnText: { color: Colors.textPrimary, fontWeight: Typography.weight.semiBold, fontSize: Typography.size.md },
-    mapFooter: { borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background, paddingBottom: insets.bottom > 0 ? insets.bottom : Spacing.sm },
-    mapFooterTextBtn: { paddingVertical: Spacing.lg, alignItems: 'center' },
-    mapFooterTextBtnText: { color: Colors.textMuted, fontWeight: Typography.weight.bold, fontSize: Typography.size.sm, letterSpacing: 2 },
-    // ── Season configuration modal ───────────────────────────────────────
-    modalOverlay: {
-      flex: 1,
-      backgroundColor: 'rgba(0,0,0,0.6)',
-      justifyContent: 'center',
-      alignItems: 'center',
-      padding: Spacing.xl,
-    },
-    configModal: {
-      width: '100%',
-      maxWidth: 340,
-      borderRadius: Radius.xxl,
-      overflow: 'hidden',
-      elevation: 10,
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 10 },
-      shadowOpacity: 0.3,
-      shadowRadius: 20,
-    },
-    configModalHeader: {
-      height: 120,
-      justifyContent: 'center',
-      alignItems: 'center',
-    },
-    configModalBody: {
-      padding: Spacing.xl,
-      alignItems: 'center',
-    },
-    configModalTitle: {
-      fontSize: 22,
-      fontWeight: '900',
-      textAlign: 'center',
-      marginBottom: Spacing.md,
-      textTransform: 'uppercase',
-      letterSpacing: -0.5,
-    },
-    configModalText: {
-      fontSize: 16,
-      textAlign: 'center',
-      lineHeight: 22,
-      marginBottom: Spacing.s,
-    },
-    configModalSubtext: {
-      fontSize: 13,
-      textAlign: 'center',
-      lineHeight: 18,
-      marginBottom: Spacing.xl,
-      fontStyle: 'italic',
-    },
-    configModalBtn: {
-      width: '100%',
-      paddingVertical: Spacing.md,
-      borderRadius: Radius.lg,
-      alignItems: 'center',
-    },
-    configModalBtnText: {
-      color: '#ffffff',
-      fontWeight: '800',
-      letterSpacing: 1,
-    },
-  });
+    modalConfirmText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+  }), [Colors, isDark]);
 
-  const rankingContent = useMemo(() => {
-    const isTournament = /\b(torneo|copa|kopa|final|txapelketa|topaketa|sector|cup)\b/i.test(title || '');
-    if (rankingLoading) {
-      return <LoadingView variant="clean" message="Cargando clasificación..." />;
-    }
-
-    const hasData = rankingTables.length > 0 || rankingBrackets.length > 0;
-
-    if (hasData) {
-      return (
-        <View style={{ paddingBottom: Spacing.xxxl }}>
-          {rankingTables.map((table, i) => (
-            <CompetitionTable
-              key={`ranking-${i}`}
-              tableBlock={table}
-              title={seasonLabel
-                ? (rankingTables.length > 1 ? `${seasonLabel} · Grupo ${i + 1}` : seasonLabel)
-                : (rankingTables.length > 1 ? `Grupo ${i + 1}` : undefined)}
-              onPressTeam={handlePressTeam}
-              onPressExpand={handlePressExpand}
-            />
-          ))}
-          {rankingBrackets.map((bracket, i) => {
-            const isComplexBracket = (bracket.columns || []).length > 1;
-            const totalMatches = (bracket.columns || []).reduce((acc, col) => acc + (col.matches?.length || 0), 0);
-
-            // Si hay tablas de clasificación y el bracket es muy simple (ej: una sola tarjeta redundant)
-            // lo ocultamos a menos que sea explícitamente un torneo por nombre.
-            if (rankingTables.length > 0 && !isComplexBracket && totalMatches < 2 && !isTournament) {
-              return null;
-            }
-
-            // Para torneos con grupos, mostrar primero las tablas (Grupos)
-            // y luego los bloques de puestos (7º/8º, 5º/6º, 3º/4º, Final) cada uno como su propio mini-bracket.
-            if (isTournament && rankingTables.length > 0) {
-              const placementCols = Array.isArray(bracket.placements) ? bracket.placements : [];
-              const mainCols = Array.isArray(bracket.columns) ? bracket.columns : [];
-              const combinedCols = [...placementCols, ...mainCols];
-
-              const ordered = [
-                { key: '7', regex: /7\s*[ºo°]|7º|7/i, label: 'Puestos 7º y 8º' },
-                { key: '5', regex: /5\s*[ºo°]|5º|5/i, label: 'Puestos 5º y 6º' },
-                { key: '3', regex: /3\s*[ºo°]|3º|3|tercer/i, label: 'Puestos 3º y 4º' },
-                { key: 'final', regex: /final/i, label: 'Final' },
-              ];
-
-              return (
-                <View key={`tournament-${i}`} style={{ marginBottom: Spacing.xl }}>
-                  {ordered.map((o) => {
-                    const matches = combinedCols.filter((col) => o.regex.test(String(col.header || col.title || '')));
-                    if (!matches.length) return null;
-                    return matches.map((col, idx) => (
-                      <View key={`placement-${i}-${o.key}-${idx}`} style={{ marginBottom: Spacing.md }}>
-                        <Text style={[styles.sectionLabel, { color: Colors.textMuted, marginBottom: Spacing.sm }]}>{o.label}</Text>
-                        <Bracket
-                          championshipData={{
-                            mainFlow: [{ title: col.header || o.label, blocks: [{ type: 'bracket', columns: [col] }] }],
-                            placements: [],
-                          }}
-                          onMatchPress={openMatchModal}
-                        />
-                      </View>
-                    ));
-                  })}
-                </View>
-              );
-            }
-
-            return (
-              <Bracket
-                key={`bracket-${i}`}
-                championshipData={{
-                  mainFlow: [{ title: '', blocks: [bracket] }],
-                  placements: Array.isArray(bracket.placements) && bracket.placements.length > 0
-                    ? [{ title: 'Clasificación final', blocks: [{ type: 'bracket', columns: bracket.placements }] }]
-                    : [],
-                }}
-                onMatchPress={openMatchModal}
-              />
-            );
-          })}
-        </View>
-      );
-    }
-    return (
-      <View style={styles.emptyWrap}>
-        <MaterialIcons name="emoji-events" size={44} color={Colors.textMuted} />
-        <Text style={styles.emptyText}>No se encontró clasificación para este torneo.</Text>
-      </View>
-    );
-  }, [isChampionship, phaseLinks.length, championshipLoading, championshipData, rankingTables, rankingBrackets, rankingLoading, seasonLabel, handlePressTeam, handlePressExpand, Colors, styles.emptyWrap, styles.emptyText, openMatchModal]);
-
-  const calendarContent = useMemo(() => {
-    // Durante carga: mostrar loader, nunca un error prematuro
-    if (calendarLoading || isSwitchingSubgroup) {
-      return <LoadingView variant="clean" message="Cargando calendario..." />;
-    }
-
-    // Si el calendario aún no se ha activado (lazy, no hay URL), mostrar loader silencioso
-    if (!fetchCalendarUrl) {
-      // Torneo sin calendario (campeonato)
-      return null;
-    }
-
-    // Datos disponibles pero vacíos
-    if (calendarBlocks && calendarTables.length === 0) {
-      return (
-        <View style={styles.emptyWrap}>
-          <MaterialIcons name="calendar-month" size={44} color={Colors.textMuted} />
-          <Text style={styles.emptyText}>No se encontró calendario para este torneo.</Text>
-        </View>
-      );
-    }
-
-    // Todavía no tenemos datos (carga inicial lazy)
-    if (!calendarBlocks) {
-      return <LoadingView variant="clean" message="Cargando calendario..." />;
-    }
-
-    // Find all matches to pick a featured one (live first, then next upcoming)
-    const allMatches = [];
-    calendarTables.forEach(table => {
-      const tableMatches = table.matches || [];
-      allMatches.push(...tableMatches);
-    });
-
-    const liveMatch = allMatches.find(m => m.state === 'live');
-    const featuredMatch = liveMatch || null;
-
-    return (
-      <View style={{ paddingBottom: Spacing.xxxl }}>
-        {featuredMatch && (
-          <FeaturedMatch match={featuredMatch} onPress={openMatchModal} />
-        )}
-
-        <View style={{ paddingHorizontal: Spacing.lg, marginTop: Spacing.lg }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: Spacing.md }}>
-            <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold }}>
-              Jornadas
-            </Text>
-            <Text style={{ color: Colors.textMuted, fontSize: 11, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1 }}>
-              Temporada {(() => {
-                const yearPattern = /\b(20\d{2})\s*[\/\-]\s*(\d{2,4})\b/;
-                for (const src of [seasonLabel, season, title]) {
-                  const m = (src || '').match(yearPattern);
-                  if (m) return `${m[1]}/${m[2].length === 2 ? m[2] : m[2].slice(-2)}`;
-                }
-                return seasonLabel || season || '--/--';
-              })()}
-            </Text>
-          </View>
-
-          <View style={{ gap: 12 }}>
-            {calendarTables.map((table, i) => {
-              const jornada = calendarTables.length - i;
-              const rawTitle = table.title || `Jornada ${jornada}`;
-              const displayTitle = rawTitle.replace(/\s*[-–—(]\s*\d{1,2}[\/\-]\d{1,2}.*$/, '').trim();
-
-              const sectionKey = `jornada-${i}`;
-              const isOpen = !!expandedCalendar[sectionKey];
-
-              const matches = table.matches || [];
-              const hasMatches = matches.length > 0;
-              const summaries = matches.map(m => getMatchSummary(m));
-              const hasLive = summaries.some(s => s.state === 'live');
-              const allFinished = hasMatches && summaries.every(s => s.state === 'finished');
-
-              const status = hasLive ? 'live' : allFinished ? 'finished' : 'upcoming';
-
-              return (
-                <View key={sectionKey} style={{
-                  backgroundColor: isDark ? '#1e293b' : '#ffffff',
-                  borderRadius: Radius.xl,
-                  borderWidth: 1,
-                  borderColor: 'rgba(13,143,242,0.1)',
-                  overflow: 'hidden',
-                  elevation: 2,
-                  ...(Platform.OS !== 'web' ? {
-                    shadowColor: '#000',
-                    shadowOffset: { width: 0, height: 1 },
-                    shadowOpacity: 0.08,
-                    shadowRadius: 4,
-                  } : {
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.08)'
-                  })
-                }}>
-                  <TouchableOpacity
-                    activeOpacity={0.8}
-                    onPress={() => {
-                      setSelectedJornadaIndex(i);
-                      navigation.navigate('JornadaDetail', {
-                        tableBlock: table,
-                        title: displayTitle,
-                        subtitle: seasonLabel,
-                        calendarUrl: activeCalendarUrl,
-                        jornadaIndex: i,
-                        rankingBlocks: rankingBlocks
-                      });
-                    }}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: 16,
-                      borderLeftWidth: (hasMatches && status === 'live') ? 6 : 0,
-                      borderLeftColor: '#ef4444',
-                      backgroundColor: (hasMatches && status === 'live') ? (isDark ? 'rgba(239, 68, 68, 0.05)' : '#fff5f5') : 'transparent',
-                    }}
-                  >
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                      <View>
-                        <Text style={{ color: isDark ? Colors.textPrimary : Colors.primary, fontSize: 16, fontWeight: 'bold' }}>
-                          {displayTitle}
-                        </Text>
-                        <Text style={{ color: Colors.textMuted, fontSize: 12, marginTop: 2 }}>
-                          {!hasMatches ? 'Sin información' : status === 'live' ? 'Esta semana' : status === 'finished' ? 'Finalizada' : 'Próxima'}
-                        </Text>
-                      </View>
-                      <MaterialIcons
-                        name="chevron-right"
-                        size={24}
-                        color={isDark ? Colors.textMuted : 'rgba(15, 23, 42, 0.3)'}
-                      />
-                    </View>
-                  </TouchableOpacity>
-                </View>
-              );
-            })}
-          </View>
-        </View>
-      </View>
-    );
-  }, [calendarTables, calendarBlocks, calendarLoading, isSwitchingSubgroup, fetchCalendarUrl, expandedCalendar, Colors, isDark, openMatchModal, toggleCalendarSection, seasonLabel, styles.emptyWrap, styles.emptyText]);
-
-  const renderSearchResults = useCallback(() => {
-    if (filteredMatches.length === 0) {
-      return (
-        <View style={styles.emptySearch}>
-          <MaterialIcons name="search-off" size={64} color={Colors.textMuted} style={{ opacity: 0.3, marginBottom: Spacing.md }} />
-          <Text style={[styles.emptySearchTitle, { color: Colors.textPrimary }]}>No hay resultados</Text>
-          <Text style={[styles.emptySearchText, { color: Colors.textMuted }]}>
-            No se han encontrado partidos que coincidan con los filtros seleccionados.
-          </Text>
-          <TouchableOpacity
-            style={[styles.clearBtn, { backgroundColor: Colors.primary }]}
-            onPress={() => {
-              setSearchTeams([]);
-              setSearchDate(null);
-              setSearchLocations([]);
-            }}
-          >
-            <Text style={styles.clearBtnText}>Limpiar filtros</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    return (
-      <View style={{ padding: Spacing.md }}>
-        <View style={styles.searchResultsHeader}>
-          <Text style={[styles.searchResultsTitle, { color: Colors.textSecondary }]}>
-            {filteredMatches.length} {filteredMatches.length === 1 ? 'partido encontrado' : 'partidos encontrados'}
-          </Text>
-          <TouchableOpacity onPress={() => {
-            setSearchTeams([]);
-            setSearchDate(null);
-            setSearchLocations([]);
-          }}>
-            <Text style={{ color: Colors.primary, fontWeight: 'bold', fontSize: 13 }}>Limpiar</Text>
-          </TouchableOpacity>
-        </View>
-        <MatchList
-          matches={filteredMatches}
-          onPressMatch={openMatchModal}
-          onTeamPress={(name) => handlePressTeam(name, null, null, null)}
-          calendarUrl={resolvedCalendarUrl}
-          compact={true}
-        />
-      </View>
-    );
-  }, [filteredMatches, Colors, hasActiveFilters, openMatchModal, handlePressTeam]);
-
-
-  // Manejo de temporada en configuración
-  const isConfiguring = rankingError === 'SEASON_CONFIGURING' || calendarError === 'SEASON_CONFIGURING';
-
-  if (rankingError && !isConfiguring) return <ErrorView message={rankingError} onRetry={refreshRanking} />;
-
-  const isCalendarPending = !fetchCalendarUrl && !selectedSubgroupIsBracket && !isFlatLeague && !isChampionship && rankingBlocks !== null && !rankingLoading && !championshipLoading;
-  const isGlobalLoading = (urlIsPending || rankingLoading || isCalendarPending || (fetchCalendarUrl && calendarLoading)) && !isConfiguring;
-  const loadingHeaderTopFix = Platform.OS === 'android' && isGlobalLoading && (insets.top || 0) === 0
-    ? (StatusBar.currentHeight || 0)
-    : 0;
-  const hasNoData = !rankingLoading && (isChampionship || !calendarLoading) && !isConfiguring &&
-    rankingTables.length === 0 && rankingBrackets.length === 0 && (isChampionship || calendarTables.length === 0);
+  const isPageLoading = loading || (!error && !tournamentTable);
 
   return (
-    <View style={[styles.safe, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
+    <View style={{ flex: 1, backgroundColor: Colors.background }}>
+      {/* --- Content: always rendered so CompetitionList mounts and starts fetching rankings --- */}
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <StatusBar barStyle="light-content" backgroundColor={Colors.background} />
 
-      {/* Modal de Temporada en Configuración */}
-      <Modal
-        visible={isConfiguring}
-        transparent={true}
-        animationType="fade"
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.configModal, { backgroundColor: Colors.surface }]}>
-            <LinearGradient
-              colors={['#001f3d', '#004a8f']}
-              style={styles.configModalHeader}
-            >
-              <MaterialIcons name="settings" size={48} color="#ffffff" />
-            </LinearGradient>
-
-            <View style={styles.configModalBody}>
-              <Text style={[styles.configModalTitle, { color: Colors.textPrimary }]}>
-                Temporada en Configuración
-              </Text>
-              <Text style={[styles.configModalText, { color: Colors.textSecondary }]}>
-                Esta temporada se está configurando actualmente por la federación.
-              </Text>
-              <Text style={[styles.configModalSubtext, { color: Colors.textMuted }]}>
-                Vuelve a intentarlo en unos días para ver los calendarios y clasificaciones actualizados.
-              </Text>
-
-              <TouchableOpacity
-                style={[styles.configModalBtn, { backgroundColor: Colors.primary }]}
-                activeOpacity={0.9}
-                onPress={() => navigation.goBack()}
-              >
-                <Text style={styles.configModalBtnText}>ENTENDIDO</Text>
-              </TouchableOpacity>
+        <View style={styles.headerWrap}>
+          <View style={styles.topRow}>
+            <View style={styles.leftGroup}>
+              <Text style={styles.headerTitle}><Text style={{ fontWeight: 'bold' }}>Ligas</Text></Text>
             </View>
+
+            <TouchableOpacity style={styles.calendarBtn} activeOpacity={0.8} onPress={() => setShowSeasons(!showSeasons)}>
+              <MaterialIcons name="calendar-month" size={24} color={isDark ? '#e2e8f0' : Colors.primary} />
+            </TouchableOpacity>
           </View>
+
+          {dynamicFilters.length > 1 && (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsScroll}>
+              {dynamicFilters.map((f) => (
+                <TouchableOpacity
+                  key={f.key}
+                  style={[styles.chip, activeFilter === f.key && styles.chipActive]}
+                  activeOpacity={0.85}
+                  onPress={() => setActiveFilter(f.key)}
+                >
+                  <Text style={[styles.chipText, activeFilter === f.key && styles.chipTextActive]}>{f.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          )}
         </View>
-      </Modal>
 
-      {/* Header with back + title */}
-      <View style={[styles.header, loadingHeaderTopFix ? { paddingTop: Spacing.sm + loadingHeaderTopFix } : null]}>
-        <TouchableOpacity
-          style={[styles.backBtn, { padding: 10 }]}
-          onPress={() => { if (navigation.canGoBack()) navigation.goBack(); }}
-          activeOpacity={0.7}
-          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-        >
-          <MaterialIcons name="arrow-back" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, alignSelf: 'stretch', paddingHorizontal: 10 }}
-          onPress={() => setIsSubgroupModalVisible(true)}
-          disabled={isGlobalLoading || (!isFetchingSubgroups && availableSubgroups.length <= 1)}
-          activeOpacity={0.7}
-        >
-          <Text
-            style={[styles.headerTitle, { flexShrink: 1 }]}
-            numberOfLines={1}
-            ellipsizeMode="tail"
+        {error ? (
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xxl }}>
+            <ErrorView message={error} onRetry={handleRefresh} />
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.scroll}
+            refreshControl={
+              <RefreshControl
+                refreshing={false}
+                onRefresh={handleRefresh}
+                colors={[Colors.primary]}
+                tintColor={Colors.primary}
+              />
+            }
+            showsVerticalScrollIndicator={false}
           >
-            {(title || 'Liga').toUpperCase()}
-          </Text>
-          {!isGlobalLoading && (isFetchingSubgroups || availableSubgroups.length > 1) && (
-            <MaterialIcons name="keyboard-arrow-down" size={22} color={isDark ? Colors.textPrimary : Colors.primary} />
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.backBtn, { padding: 10 }]}
-          onPress={handleToggleLeagueFav}
-          activeOpacity={0.7}
-          hitSlop={{ top: 14, bottom: 14, left: 14, right: 14 }}
-        >
-          <MaterialIcons
-            name={isLeagueFav ? 'favorite' : 'favorite-border'}
-            size={22}
-            color={isLeagueFav ? Colors.error : (isDark ? Colors.textPrimary : Colors.primary)}
-          />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={activeTab === 'calendar' ? () => setIsSearchModalVisible(true) : handleOpenInfo}
-          disabled={isGlobalLoading}
-          activeOpacity={0.7}
-        >
-          {!isGlobalLoading && (
-            <View style={{ width: 24, height: 24, justifyContent: 'center', alignItems: 'center' }}>
-              {activeTab === 'ranking' ? (
-                <MaterialIcons name="info-outline" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-              ) : (
-                <MaterialIcons name="search" size={24} color={isDark ? Colors.textPrimary : Colors.primary} />
-              )}
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {isGlobalLoading ? (
-        <LoadingView />
-      ) : hasNoData ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: Spacing.xxl }}>
-          <MaterialIcons name="sports-volleyball" size={64} color={Colors.textMuted} style={{ opacity: 0.35, marginBottom: Spacing.lg }} />
-          <Text style={{ color: Colors.textPrimary, fontSize: Typography.size.lg, fontWeight: Typography.weight.bold, textAlign: 'center', marginBottom: Spacing.sm }}>
-            Sin información disponible
-          </Text>
-          <Text style={{ color: Colors.textMuted, fontSize: Typography.size.md, textAlign: 'center', lineHeight: 22 }}>
-            No se encontró información acerca de esta competición.
-          </Text>
-        </View>
-      ) : (
-        <>
-          {/* Tab bar */}
-          <View style={styles.tabBar}>
-            {TABS.map((tab) => (
-              <TouchableOpacity
-                key={tab.key}
-                style={[styles.tabItem, activeTab === tab.key && styles.tabItemActive]}
-                onPress={() => switchTab(tab.key)}
-                activeOpacity={0.8}
-              >
-                <Text style={[styles.tabLabel, { color: activeTab === tab.key ? (isDark ? Colors.textOnPrimary : Colors.primary) : Colors.textMuted }]}>
-                  {tab.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-            <View style={[styles.tabIndicator, {
-              width: (screenWidth - Spacing.md * 2) / 2,
-              transform: [{ translateX: activeTab === 'ranking' ? Spacing.md : Spacing.md + (screenWidth - Spacing.md * 2) / 2 }]
-            }]} />
-          </View>
-
-          {/* Premium Search Modal */}
-          <Modal visible={isSearchModalVisible} transparent animationType="fade">
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsSearchModalVisible(false)} activeOpacity={1} />
-            </View>
-            <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-              <View style={[styles.premiumSearchCard, { backgroundColor: Colors.surface }]}>
-                <View style={styles.searchModalHeader}>
-                  <Text style={[styles.searchModalTitle, { color: Colors.textPrimary }]}>Buscar Partidos</Text>
-                  <TouchableOpacity onPress={() => setIsSearchModalVisible(false)}>
-                    <MaterialIcons name="close" size={24} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
-
-                <ScrollView style={styles.searchModalBody} showsVerticalScrollIndicator={false}>
-                  {/* Equipo Select */}
-                  <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Equipos ({searchTeams.length})</Text>
-                  <TouchableOpacity
-                    onPress={() => setIsTeamPickerVisible(true)}
-                    style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}
-                  >
-                    <MaterialIcons name="sports-volleyball" size={20} color={searchTeams.length > 0 ? Colors.primary : Colors.textMuted} />
-                    <Text style={{ flex: 1, fontSize: 14, color: searchTeams.length > 0 ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }} numberOfLines={1}>
-                      {searchTeams.length === 0 ? 'Todos los equipos'
-                        : searchTeams.length === 1 ? searchTeams[0]
-                          : `${searchTeams.length} seleccionados`}
-                    </Text>
-                    {searchTeams.length > 0 && (
-                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchTeams([]); }} style={{ padding: 4 }}>
-                        <MaterialIcons name="close" size={16} color={Colors.textMuted} />
-                      </TouchableOpacity>
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Fecha Select */}
-                  <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Fecha</Text>
-                  <TouchableOpacity
-                    onPress={() => setIsDatePickerVisible(true)}
-                    style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}
-                  >
-                    <MaterialIcons name="event" size={20} color={searchDate ? Colors.primary : Colors.textMuted} />
-                    <Text style={{ flex: 1, fontSize: 14, color: searchDate ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }}>
-                      {searchDate || 'Cualquier fecha'}
-                    </Text>
-                    {searchDate && (
-                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchDate(null); }} style={{ padding: 4 }}>
-                        <MaterialIcons name="close" size={16} color={Colors.textMuted} />
-                      </TouchableOpacity>
-                    )}
-                  </TouchableOpacity>
-
-                  {/* Ubicación Select */}
-                  <Text style={[styles.searchLabel, { color: Colors.textSecondary }]}>Sedes ({searchLocations.length})</Text>
-                  <TouchableOpacity
-                    onPress={() => setIsLocationPickerVisible(true)}
-                    style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.xl }]}
-                  >
-                    <MaterialIcons name="location-on" size={20} color={searchLocations.length > 0 ? Colors.primary : Colors.textMuted} />
-                    <Text style={{ flex: 1, fontSize: 14, color: searchLocations.length > 0 ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }} numberOfLines={1}>
-                      {searchLocations.length === 0 ? 'Todas las sedes'
-                        : searchLocations.length === 1 ? searchLocations[0]
-                          : `${searchLocations.length} seleccionadas`}
-                    </Text>
-                    {searchLocations.length > 0 && (
-                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchLocations([]); }} style={{ padding: 4 }}>
-                        <MaterialIcons name="close" size={16} color={Colors.textMuted} />
-                      </TouchableOpacity>
-                    )}
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={[styles.searchModalBtn, { backgroundColor: Colors.primary }]}
-                    activeOpacity={0.9}
-                    onPress={() => setIsSearchModalVisible(false)}
-                  >
-                    <Text style={styles.searchModalBtnText}>VER RESULTADOS</Text>
-                  </TouchableOpacity>
-                </ScrollView>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal visible={isTeamPickerVisible} transparent animationType="fade">
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsTeamPickerVisible(false)} activeOpacity={1} />
-            </View>
-            <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-              <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 400 }]}>
-                <ScrollView style={{ maxHeight: screenHeight * 0.6 }}>
-                  {allAvailableTeams.map((team) => {
-                    const isSelected = searchTeams.includes(team);
-                    return (
-                      <TouchableOpacity
-                        key={team}
-                        style={styles.selectionItem}
-                        onPress={() => {
-                          if (isSelected) {
-                            setSearchTeams(searchTeams.filter(t => t !== team));
-                          } else {
-                            setSearchTeams([...searchTeams, team]);
-                          }
-                        }}
-                      >
-                        <MaterialIcons
-                          name={isSelected ? "check-box" : "check-box-outline-blank"}
-                          size={24}
-                          color={isSelected ? Colors.primary : Colors.textMuted}
-                        />
-                        <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isSelected && { fontWeight: 'bold' }]}>
-                          {team}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                <TouchableOpacity
-                  style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]}
-                  activeOpacity={0.9}
-                  onPress={() => setIsTeamPickerVisible(false)}
-                >
-                  <Text style={styles.modalFooterBtnText}>LISTO</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal visible={isSubgroupModalVisible} transparent animationType="fade">
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.65)' }]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsSubgroupModalVisible(false)} activeOpacity={1} />
-            </View>
-            <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-              <View style={{ width: '90%', maxWidth: 400 }} pointerEvents="box-none">
-                <View style={[
-                  {
-                    backgroundColor: isDark ? '#0f172a' : '#ffffff', borderRadius: 20, overflow: 'hidden',
-                    maxHeight: screenHeight * 0.72,
-                    ...(Platform.OS !== 'web' ? {
-                      shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.3, shadowRadius: 24, elevation: 16
-                    } : { boxShadow: '0 8px 32px rgba(0,0,0,0.3)' })
-                  }
-                ]}>
-                  {/* Modal header — theme-aware */}
-                  <View style={{
-                    paddingHorizontal: 20,
-                    paddingTop: 20,
-                    paddingBottom: 16,
-                    borderBottomWidth: 1,
-                    borderBottomColor: Colors.border,
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                  }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{
-                        fontSize: 11,
-                        fontWeight: '700',
-                        color: Colors.primary,
-                        textTransform: 'uppercase',
-                        letterSpacing: 1.2,
-                        marginBottom: 4,
-                      }}>
-                        {isFetchingSubgroups ? 'Buscando grupos...' : 'Competición'}
-                      </Text>
-                      <Text style={{
-                        fontSize: 18,
-                        fontWeight: '800',
-                        color: Colors.textPrimary,
-                        letterSpacing: -0.3,
-                      }}>
-                        {isSwitchingSubgroup ? 'Cargando...' : 'Seleccionar Grupo'}
-                      </Text>
-                    </View>
-                    {!isSwitchingSubgroup ? (
-                      <TouchableOpacity
-                        onPress={() => setIsSubgroupModalVisible(false)}
-                        style={{
-                          width: 32, height: 32, borderRadius: 16,
-                          backgroundColor: Colors.surfaceAlt,
-                          alignItems: 'center', justifyContent: 'center',
-                        }}
-                      >
-                        <MaterialIcons name="close" size={18} color={Colors.textMuted} />
-                      </TouchableOpacity>
-                    ) : (
-                      <View style={{ padding: 8 }}>
-                        <MaterialIcons name="hourglass-empty" size={20} color={Colors.primary} />
-                      </View>
-                    )}
-                  </View>
-
-                  {/* Items */}
-                  <ScrollView
-                    style={{ padding: 12 }}
-                    showsVerticalScrollIndicator={false}
-                    contentContainerStyle={{ paddingBottom: 8 }}
-                  >
-                    {availableSubgroups.map((sub, idx) => {
-                      const isFlatDefaultActive = isFlatLeague && selectedGroupIndex === 0 && idx === 0 && !sub.isTorneo;
-                      const isActive = rankingUrl === sub.href || isFlatDefaultActive;
-                      const isBracketType = sub.isBracket || isTournament(sub.title || '');
-                      const displaySubgroupTitle = getSubgroupLabel(sub.title);
-                      return (
-                        <TouchableOpacity
-                          key={`phase-${idx}`}
-                          style={[{
-                            flexDirection: 'row', alignItems: 'center',
-                            paddingHorizontal: 14, paddingVertical: 13,
-                            borderRadius: Radius.lg,
-                            marginVertical: 3,
-                            borderWidth: 1,
-                            borderColor: isActive ? Colors.primary : Colors.border,
-                            backgroundColor: isActive ? Colors.primaryAlpha10 : Colors.surfaceAlt,
-                          }]}
-                          onPress={() => {
-                            if (!isActive && !isSwitchingSubgroup) {
-                              if ((sub.isTorneo || isTournament(sub.title)) && !sub.href.includes('#phase-')) {
-                                const leagueModalSubgroups = (availableSubgroups || []).filter(
-                                  (sg) => String(sg?.href || '').trim().length > 0
-                                );
-                                setIsSubgroupModalVisible(false);
-                                navigation.replace('Tournament', {
-                                  url: sub.href,
-                                  title: sub.title,
-                                  season,
-                                  leagueSubgroups: leagueModalSubgroups,
-                                  autoOpenGroupModal: true,
-                                });
-                              } else {
-                                setIsSwitchingSubgroup(true);
-                                setCurrentRankingUrl(sub.href);
-                                setIsSubgroupModalVisible(false);
-                              }
-                            }
-                          }}
-                          disabled={isSwitchingSubgroup}
-                          activeOpacity={0.7}
-                        >
-                          {/* Type icon */}
-                          <View style={{
-                            width: 34, height: 34, borderRadius: Radius.md,
-                            backgroundColor: isActive ? Colors.primary : (isBracketType ? Colors.warningSoft : Colors.primaryAlpha10),
-                            alignItems: 'center', justifyContent: 'center', marginRight: 12
-                          }}>
-                            <MaterialIcons
-                              name={isBracketType ? 'emoji-events' : 'table-chart'}
-                              size={18}
-                              color={isActive ? Colors.textOnPrimary : (isBracketType ? Colors.warning : Colors.primary)}
-                            />
-                          </View>
-
-                          {/* Title + type label */}
-                          <View style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 15, fontWeight: isActive ? 'bold' : '600', color: Colors.textPrimary }} numberOfLines={2}>
-                              {displaySubgroupTitle}
-                            </Text>
-                            <Text style={{ fontSize: 11, color: Colors.textMuted, marginTop: 2 }}>
-                              {isBracketType ? 'Eliminatoria / Bracket' : 'Clasificación + Calendario'}
-                            </Text>
-                          </View>
-
-                          {/* Active indicator */}
-                          {isActive && (
-                            <MaterialIcons name="check-circle" size={22} color={Colors.primary} />
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </ScrollView>
-                </View>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal visible={isLocationPickerVisible} transparent animationType="fade">
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsLocationPickerVisible(false)} activeOpacity={1} />
-            </View>
-            <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-              <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 400 }]}>
-                <Text style={[styles.selectionModalTitle, { color: Colors.textPrimary }]}>Seleccionar Sedes</Text>
-                <ScrollView style={{ maxHeight: screenHeight * 0.5 }}>
-                  {allAvailableLocations.map((loc) => {
-                    const isSelected = searchLocations.includes(loc);
-                    return (
-                      <TouchableOpacity
-                        key={loc}
-                        style={styles.selectionItem}
-                        onPress={() => {
-                          if (isSelected) {
-                            setSearchLocations(searchLocations.filter(l => l !== loc));
-                          } else {
-                            setSearchLocations([...searchLocations, loc]);
-                          }
-                        }}
-                      >
-                        <MaterialIcons
-                          name={isSelected ? "check-box" : "check-box-outline-blank"}
-                          size={24}
-                          color={isSelected ? Colors.primary : Colors.textMuted}
-                        />
-                        <Text style={[styles.selectionItemText, { color: Colors.textPrimary, marginLeft: 12 }, isSelected && { fontWeight: 'bold' }]}>
-                          {loc}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-                <TouchableOpacity
-                  style={[styles.modalFooterBtn, { backgroundColor: Colors.primary, marginTop: Spacing.md }]}
-                  activeOpacity={0.9}
-                  onPress={() => setIsLocationPickerVisible(false)}
-                >
-                  <Text style={styles.modalFooterBtnText}>LISTO</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal visible={isDatePickerVisible} transparent animationType="fade">
-            <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.6)' }]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => setIsDatePickerVisible(false)} activeOpacity={1} />
-            </View>
-            <View style={styles.centeredModalWrapper} pointerEvents="box-none">
-              <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 450 }]}>
-                <View style={styles.calendarHeader}>
-                  <TouchableOpacity onPress={() => {
-                    if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(calendarYear - 1); }
-                    else setCalendarMonth(calendarMonth - 1);
-                  }}>
-                    <MaterialIcons name="chevron-left" size={28} color={Colors.primary} />
-                  </TouchableOpacity>
-                  <Text style={[styles.calendarMonthTitle, { color: Colors.textPrimary }]}>
-                    {MONTHS[calendarMonth]} {calendarYear}
-                  </Text>
-                  <TouchableOpacity onPress={() => {
-                    if (calendarMonth === 11) { setCalendarMonth(0); setCalendarYear(calendarYear + 1); }
-                    else setCalendarMonth(calendarMonth + 1);
-                  }}>
-                    <MaterialIcons name="chevron-right" size={28} color={Colors.primary} />
-                  </TouchableOpacity>
-                </View>
-
-                <View style={styles.calendarDaysHeader}>
-                  {DAYS.map(d => <Text key={d} style={[styles.calendarDayLabel, { color: Colors.textMuted }]}>{d}</Text>)}
-                </View>
-
-                <View style={styles.calendarGrid}>
-                  {getMonthDays(calendarYear, calendarMonth).map((day, idx) => {
-                    if (!day) return <View key={`empty-${idx}`} style={styles.calendarDayCell} />;
-
-                    // Check if this date has matches
-                    const formattedDate = `${day} de ${MONTHS[calendarMonth].toLowerCase()}`;
-                    const hasMatch = allAvailableDates.some(d => d.toLowerCase().startsWith(formattedDate));
-                    const isSelected = searchDate && searchDate.toLowerCase().startsWith(formattedDate);
-
-                    return (
-                      <TouchableOpacity
-                        key={day}
-                        style={[
-                          styles.calendarDayCell,
-                          hasMatch && { backgroundColor: isDark ? 'rgba(13,143,242,0.1)' : 'rgba(13,143,242,0.05)' },
-                          isSelected && { backgroundColor: Colors.primary, borderRadius: 8 }
-                        ]}
-                        disabled={!hasMatch}
-                        onPress={() => {
-                          const actualDate = allAvailableDates.find(d => d.toLowerCase().startsWith(formattedDate));
-                          setSearchDate(actualDate);
-                          setIsDatePickerVisible(false);
-                        }}
-                      >
-                        <Text style={[
-                          styles.calendarDayText,
-                          { color: hasMatch ? Colors.textPrimary : Colors.textMuted },
-                          isSelected && { color: '#fff', fontWeight: 'bold' }
-                        ]}>
-                          {day}
-                        </Text>
-                        {hasMatch && !isSelected && <View style={[styles.matchDot, { backgroundColor: Colors.primary }]} />}
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-
-                <TouchableOpacity
-                  style={[styles.modalFooterBtn, { backgroundColor: Colors.surfaceAlt, marginTop: Spacing.xl }]}
-                  activeOpacity={0.9}
-                  onPress={() => { setSearchDate(null); setIsDatePickerVisible(false); }}
-                >
-                  <Text style={[styles.modalFooterBtnText, { color: Colors.textPrimary }]}>TODAS LAS FECHAS</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </Modal>
-          <View style={{ flex: 1 }}>
-            {activeTab === 'ranking' ? (
-              <ScrollView
-                style={styles.scroll}
-                contentContainerStyle={{ flexGrow: 1 }}
-                refreshControl={
-                  <RefreshControl
-                    refreshing={rankingLoading}
-                    onRefresh={refreshRanking}
-                    colors={[Colors.primary]}
-                    tintColor={Colors.primary}
-                  />
-                }
-              >
-                {rankingContent}
-              </ScrollView>
+            {filteredTable ? (
+              <CompetitionList
+                loadGeneration={loadGeneration}
+                tableBlock={filteredTable}
+                onOpenTournament={handleOpenLeague}
+              />
             ) : (
-              <ScrollView
-                style={styles.scroll}
-                contentContainerStyle={{ flexGrow: 1 }}
-                refreshControl={
-                  <RefreshControl
-                    refreshing={calendarLoading}
-                    onRefresh={refreshCalendar}
-                    colors={[Colors.primary]}
-                    tintColor={Colors.primary}
-                  />
-                }
-              >
-                {calendarLoading ? (
-                  <LoadingView variant="clean" message="Cargando calendario..." />
-                ) : calendarError ? (
-                  <View style={styles.emptyWrap}>
-                    <Text style={styles.emptyText}>{calendarError}</Text>
-                    <TouchableOpacity style={styles.retryBtn} onPress={refreshCalendar}>
-                      <Text style={styles.retryText}>Reintentar</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : hasActiveFilters ? (
-                  renderSearchResults()
-                ) : (
-                  calendarContent
-                )}
-              </ScrollView>
+              <View style={styles.emptyWrap}>
+                <MaterialIcons name="search-off" size={44} color={Colors.textMuted} />
+                <Text style={styles.emptyText}>
+                  {search ? 'Sin resultados para tu búsqueda.' : 'No se encontraron ligas.'}
+                </Text>
+              </View>
             )}
-          </View>
-        </>
+            <View style={{ height: Spacing.xxxl }} />
+          </ScrollView>
+        )}
+      </SafeAreaView>
+
+      {/* --- Overlay: visible solo mientras cargan los datos de red --- */}
+      {isPageLoading && (
+        <View style={[StyleSheet.absoluteFill, { backgroundColor: isDark ? '#0f1923' : '#f5f7f9' }]}>
+          <LoadingView message="Cargando ligas y torneos..." />
+        </View>
       )}
 
-      <StatusModal
-        visible={statusModal.visible}
-        title={statusModal.title}
-        message={statusModal.message}
-        type={statusModal.type}
-        onClose={() => setStatusModal({ ...statusModal, visible: false })}
-      />
+      {/* Season selector modal */}
+      <Modal visible={showSeasons} transparent animationType="fade" onRequestClose={() => setShowSeasons(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={StyleSheet.absoluteFill} activeOpacity={1} onPress={() => setShowSeasons(false)} />
+          <Animated.View style={[styles.modalContent, { transform: [{ translateY: slideAnim }] }]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Seleccionar Temporada</Text>
+              <TouchableOpacity onPress={() => setShowSeasons(false)} style={styles.modalCloseBtn}>
+                <MaterialIcons name="close" size={20} color={isDark ? '#cbd5e1' : '#64748b'} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 350 }} showsVerticalScrollIndicator={false}>
+              {availableSeasons.map(s => {
+                const isSelected = selectedSeason === s.value;
+                return (
+                  <TouchableOpacity key={s.value} onPress={() => {
+                    userChangedSeasonRef.current = true;
+                    setSelectedSeason(s.value);
+                    setShowSeasons(false);
+                  }} activeOpacity={0.8}
+                    style={[
+                      styles.seasonBtn,
+                      isSelected ? styles.seasonBtnActive : {}
+                    ]}>
+                    <Text style={[styles.seasonText, isSelected ? styles.seasonTextActive : {}]}>{s.label}</Text>
+                    {isSelected ? (
+                      <View style={styles.seasonRadioActive}>
+                        <MaterialIcons name="check" size={14} color="#ffffff" />
+                      </View>
+                    ) : (
+                      <View style={styles.seasonRadio} />
+                    )}
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </Modal>
     </View>
   );
 }

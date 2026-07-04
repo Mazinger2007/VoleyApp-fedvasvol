@@ -17,17 +17,18 @@ function groupIntoRows(items) {
     const merged = [];
     let cell = null;
     for (const it of row.items) {
-      const gapFromEnd = cell ? it.x - cell.x : Infinity;
+      const gapFromEnd = cell ? it.x - cell.endX : Infinity;
       const shouldMerge = cell && (
         gapFromEnd <= X_CELL_GAP ||
         (cell.text.endsWith('/') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text)) ||
         (cell.text.endsWith('/ ') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text))
       );
       if (!cell || !shouldMerge) {
-        cell = { x: it.x, text: it.text };
+        cell = { x: it.x, endX: it.x + (it.w || 0), text: it.text };
         merged.push(cell);
       } else {
         cell.text += ' ' + it.text;
+        cell.endX = Math.max(cell.endX, it.x + (it.w || 0));
       }
     }
     row.cells = merged;
@@ -42,16 +43,17 @@ function mergeItems(arr) {
   const m = [];
   let c = null;
   for (const it of sorted) {
-    const gapFromEnd = c ? it.x - c.x : Infinity;
+    const gapFromEnd = c ? it.x - c.endX : Infinity;
     const shouldMerge = c && (
       gapFromEnd <= X_CELL_GAP ||
       (c.text.endsWith('/') && /^[A-ZÑÁÉÍÓÚ]/.test(it.text))
     );
     if (!c || !shouldMerge) {
-      c = { x: it.x, text: it.text };
+      c = { x: it.x, endX: it.x + (it.w || 0), text: it.text };
       m.push(c);
     } else {
       c.text += ' ' + it.text;
+      c.endX = Math.max(c.endX, it.x + (it.w || 0));
     }
   }
   return m.map(x => x.text.trim()).filter(Boolean);
@@ -150,6 +152,10 @@ function splitRankingRows(rows) {
         const gap = items[i].x - items[i - 1].x - items[i - 1].w;
         if (gap > 25) {
           const after = items.slice(i);
+          if (after.length === 1 && parseRankingNumber(after[0].text)) {
+            splitIdx = i;
+            break;
+          }
           if (after.length >= 2) {
             if (parseRankingNumber(after[0].text) && isNameText(after[1].text)) {
               splitIdx = i;
@@ -429,7 +435,35 @@ function extractMatchFromRow(row) {
           set1: null, set2: null, set3: null,
         };
       }
-      return null;
+      // Sin resultados (calendario/torneo sin sets): extraer equipos igualmente
+      const noScorePairTexts = texts.slice(h).filter(t => !/^\d{1,2}$/.test(t));
+      let parejaA = '', parejaB = '';
+      if (noScorePairTexts.length === 2) {
+        parejaA = noScorePairTexts[0]; parejaB = noScorePairTexts[1];
+      } else if (noScorePairTexts.length === 1) {
+        const t = noScorePairTexts[0];
+        const parts = t.split(/\s{2,}/);
+        if (parts.length >= 2) { parejaA = parts[0]; parejaB = parts.slice(1).join(' '); }
+        else { parejaA = t; parejaB = ''; }
+      } else if (noScorePairTexts.length > 2) {
+        const merged = []; let cur = '';
+        for (const pt of noScorePairTexts) {
+          if (cur && (cur.endsWith('/') || pt.startsWith('/') || /^[A-ZÑÁÉÍÓÚ][a-záéíóú]/.test(pt))) {
+            cur += ' ' + pt;
+          } else {
+            if (cur) merged.push(cur);
+            cur = pt;
+          }
+        }
+        if (cur) merged.push(cur);
+        parejaA = merged[0] || ''; parejaB = merged.slice(1).join(' ') || '';
+      }
+      return {
+        partido, hora, pista, fase, referencia,
+        parejaA: parejaA.replace(/\s*\/\s*/g, '/').trim(),
+        parejaB: parejaB.replace(/\s*\/\s*/g, '/').trim(),
+        setsA: 0, setsB: 0, set1: null, set2: null, set3: null,
+      };
     }
 
     const pairTexts = texts.slice(h, scoreStart);

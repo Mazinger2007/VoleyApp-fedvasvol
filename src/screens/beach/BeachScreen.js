@@ -48,7 +48,9 @@ export default function BeachScreen({ navigation }) {
         if (!cancelled) setLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [setIsAppReady]);
 
   const filteredFiles = useMemo(() => {

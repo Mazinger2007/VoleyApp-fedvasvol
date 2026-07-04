@@ -30,7 +30,6 @@ function buildBorderHistogram(rgba, width, height) {
     const blue = rgba[index + 2];
     const alpha = rgba[index + 3];
     if (alpha < 120) return;
-    // Skip white/near-white pixels so they don't dominate the histogram
     if (isTooLight(red, green, blue)) return;
 
     const key = `${quantize(red)}-${quantize(green)}-${quantize(blue)}`;
@@ -47,6 +46,56 @@ function buildBorderHistogram(rgba, width, height) {
     }
   }
 
+  return histogram;
+}
+
+function buildBorderHistogramNoSkip(rgba, width, height) {
+  const histogram = new Map();
+  const borderThickness = Math.max(1, Math.round(Math.min(width, height) * 0.12));
+  const step = Math.max(1, Math.round(Math.min(width, height) / 80));
+
+  for (let y = 0; y < height; y += step) {
+    for (let x = 0; x < width; x += step) {
+      const isTop = y < borderThickness;
+      const isBottom = y >= height - borderThickness;
+      const isLeft = x < borderThickness;
+      const isRight = x >= width - borderThickness;
+      if (!(isTop || isBottom || isLeft || isRight)) continue;
+
+      const index = (y * width + x) * 4;
+      const alpha = rgba[index + 3];
+      if (alpha < 120) continue;
+
+      const red = rgba[index];
+      const green = rgba[index + 1];
+      const blue = rgba[index + 2];
+
+      const key = `${quantize(red)}-${quantize(green)}-${quantize(blue)}`;
+      histogram.set(key, (histogram.get(key) || 0) + 1);
+    }
+  }
+  return histogram;
+}
+
+function buildInnerHistogram(rgba, width, height) {
+  const histogram = new Map();
+  const step = Math.max(1, Math.round(Math.min(width, height) / 80));
+  const trim = Math.round(Math.min(width, height) * 0.12);
+
+  for (let y = trim; y < height - trim; y += step) {
+    for (let x = trim; x < width - trim; x += step) {
+      const index = (y * width + x) * 4;
+      const alpha = rgba[index + 3];
+      if (alpha < 120) continue;
+
+      const red = rgba[index];
+      const green = rgba[index + 1];
+      const blue = rgba[index + 2];
+
+      const key = `${quantize(red)}-${quantize(green)}-${quantize(blue)}`;
+      histogram.set(key, (histogram.get(key) || 0) + 1);
+    }
+  }
   return histogram;
 }
 
@@ -119,6 +168,62 @@ export async function getDominantBorderColor(imageUrl) {
     return color;
   } catch (_) {
     colorCache.set(imageUrl, null);
+    return null;
+  }
+}
+
+function pickDominantNoLightFilter(histogram) {
+  let winningKey = null;
+  let winningCount = -1;
+
+  for (const [key, count] of histogram.entries()) {
+    if (count > winningCount) {
+      winningCount = count;
+      winningKey = key;
+    }
+  }
+
+  if (!winningKey) return null;
+
+  const [red, green, blue] = winningKey.split('-').map(Number);
+  return rgbToHex(red, green, blue);
+}
+
+function getLuminance(hex) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+export async function getDominantColor(imageUrl) {
+  if (!imageUrl) return null;
+
+  try {
+    const response = await fetch(imageUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    const uint8 = new Uint8Array(arrayBuffer);
+    const decoded = decodeToRgba(uint8);
+    if (!decoded) return null;
+
+    // Analyze both border and inner region
+    const borderHist = buildBorderHistogramNoSkip(decoded.rgba, decoded.width, decoded.height);
+    const innerHist = buildInnerHistogram(decoded.rgba, decoded.width, decoded.height);
+
+    const borderColor = pickDominantNoLightFilter(borderHist);
+    const innerColor = pickDominantNoLightFilter(innerHist);
+
+    if (borderColor && innerColor) {
+      if (borderColor === innerColor) return borderColor;
+      // Disagreement: prefer the darker color — it's more likely the actual
+      // background vs. white padding (border) or a light foreground (inner).
+      return getLuminance(borderColor) < getLuminance(innerColor) ? borderColor : innerColor;
+    }
+
+    if (innerColor) return innerColor;
+    if (borderColor) return borderColor;
+    return null;
+  } catch (_) {
     return null;
   }
 }

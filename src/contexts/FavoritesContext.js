@@ -20,8 +20,44 @@ export function FavoritesProvider({ children }) {
   const [favorites, setFavorites] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadFavorites();
+  const readDbFavorites = useCallback(async () => {
+    if (!user) return { data: null, error: null };
+
+    const withName = await supabase
+      .from('favorites')
+      .select('entity_type, entity_id, entity_name, sort_order, created_at, updated_at')
+      .eq('user_id', user.id)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+
+    if (!withName.error) return withName;
+
+    // Backward compatibility for databases that have not run the entity_name migration yet.
+    return supabase
+      .from('favorites')
+      .select('entity_type, entity_id, sort_order, created_at')
+      .eq('user_id', user.id)
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true });
+  }, [user]);
+
+  const writeDbFavorite = useCallback(async (payload, exists) => {
+    const runWrite = (nextPayload) => {
+      if (!exists) {
+        return supabase.from('favorites').upsert(nextPayload, { onConflict: 'user_id,entity_type,entity_id' });
+      }
+      return supabase.from('favorites').update(nextPayload)
+        .eq('user_id', user.id)
+        .eq('entity_type', nextPayload.entity_type)
+        .eq('entity_id', nextPayload.entity_id);
+    };
+
+    const first = await runWrite(payload);
+    if (!first.error) return first;
+
+    // Same migration guard as reads: keep favorites syncing even before DB schema is updated.
+    const { entity_name: _entityName, updated_at: _updatedAt, ...fallbackPayload } = payload;
+    return runWrite(fallbackPayload);
   }, [user]);
 
   async function loadFavorites() {
@@ -31,25 +67,30 @@ export function FavoritesProvider({ children }) {
       const localFavs = raw ? JSON.parse(raw) : [];
 
       if (user) {
-        const { data: dbFavs, error } = await supabase
-          .from('favorites')
-          .select('entity_type, entity_id, sort_order, created_at')
-          .eq('user_id', user.id)
-          .order('sort_order', { ascending: true })
-          .order('created_at', { ascending: true });
+        const { data: dbFavs, error } = await readDbFavorites();
 
         if (!error && dbFavs) {
           const mapped = dbFavs.map((f, i) => ({
             entityType: f.entity_type,
             entityId: f.entity_id,
+            entityName: f.entity_name,
             sortOrder: f.sort_order ?? i,
             createdAt: new Date(f.created_at).getTime(),
+            updatedAt: f.updated_at ? new Date(f.updated_at).getTime() : undefined,
           }));
 
           const localMap = new Map(localFavs.map(f => [`${f.entityType}:${f.entityId}`, f]));
           mapped.forEach(f => {
-            if (!localMap.has(`${f.entityType}:${f.entityId}`)) {
-              localMap.set(`${f.entityType}:${f.entityId}`, f);
+            const key = `${f.entityType}:${f.entityId}`;
+            const local = localMap.get(key);
+            if (!local) {
+              localMap.set(key, f);
+            } else {
+              localMap.set(key, {
+                ...local,
+                ...f,
+                entityName: f.entityName || local.entityName,
+              });
             }
           });
 
@@ -68,12 +109,13 @@ export function FavoritesProvider({ children }) {
           for (const fav of localFavs) {
             const exists = dbFavs.some(f => f.entity_type === fav.entityType && f.entity_id === fav.entityId);
             if (!exists) {
-              await supabase.from('favorites').upsert({
+              await writeDbFavorite({
                 user_id: user.id,
                 entity_type: fav.entityType,
                 entity_id: fav.entityId,
+                entity_name: fav.entityName || null,
                 sort_order: fav.sortOrder ?? 0,
-              }, { onConflict: 'user_id,entity_type,entity_id' });
+              }, false);
             }
           }
           return;
@@ -93,6 +135,10 @@ export function FavoritesProvider({ children }) {
     }
   }
 
+  useEffect(() => {
+    loadFavorites();
+  }, [user]);
+
   async function persist(newFavorites) {
     // Reindex: leagues/competitions first, then teams — so sort_order
     // in the database matches the visual order (ligas arriba, equipos abajo).
@@ -107,10 +153,7 @@ export function FavoritesProvider({ children }) {
 
     if (user) {
       try {
-        const { data: dbFavs } = await supabase
-          .from('favorites')
-          .select('entity_type, entity_id')
-          .eq('user_id', user.id);
+        const { data: dbFavs } = await readDbFavorites();
 
         const dbSet = new Set((dbFavs || []).map(f => `${f.entity_type}:${f.entity_id}`));
         const localSet = new Set(reindexed.map(f => `${f.entityType}:${f.entityId}`));
@@ -121,16 +164,11 @@ export function FavoritesProvider({ children }) {
             user_id: user.id,
             entity_type: fav.entityType,
             entity_id: fav.entityId,
+            entity_name: fav.entityName || null,
             sort_order: fav.sortOrder ?? i,
+            updated_at: new Date().toISOString(),
           };
-          if (!dbSet.has(key)) {
-            await supabase.from('favorites').upsert(payload, { onConflict: 'user_id,entity_type,entity_id' });
-          } else {
-            await supabase.from('favorites').update(payload)
-              .eq('user_id', user.id)
-              .eq('entity_type', fav.entityType)
-              .eq('entity_id', fav.entityId);
-          }
+          await writeDbFavorite(payload, dbSet.has(key));
         }
 
         for (const dbFav of (dbFavs || [])) {
@@ -157,7 +195,7 @@ export function FavoritesProvider({ children }) {
   const addFavorite = useCallback(async (entityType, entityId, entityName) => {
     if (isFavorite(entityType, entityId)) return;
     const sortOrder = favorites.length;
-    const newFav = { entityType, entityId, entityName, sortOrder, createdAt: Date.now() };
+    const newFav = { entityType, entityId, entityName: entityName || entityId, sortOrder, createdAt: Date.now(), updatedAt: Date.now() };
     await persist([...favorites, newFav]);
   }, [favorites, isFavorite]);
 

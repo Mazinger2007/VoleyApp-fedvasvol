@@ -10,9 +10,7 @@ import {
   Platform,
   RefreshControl,
   ActivityIndicator,
-  InteractionManager,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -20,52 +18,7 @@ import { Radius, Spacing, Typography } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { getMatchSummary, formatMatchDisplayDate, rowToMatch } from '../../components/MatchList';
 import { fetchAndParse } from '../../utils/htmlParser';
-import {
-  getCachedLogoColorSync,
-  requestLogoColorExtraction,
-  subscribeToLogoColor
-} from '../../utils/logoColorCache';
-import { getDominantBorderColor } from '../../utils/imageColor';
-
-function TeamLogo({ uri, name, isDark, colors }) {
-  const [bgColor, setBgColor] = useState(getCachedLogoColorSync(uri) || (isDark ? '#0f172a' : '#f8fafc'));
-
-  useEffect(() => {
-    if (!uri) return;
-
-    // Check cache again in case it hydrated since component mount
-    const cached = getCachedLogoColorSync(uri);
-    if (cached) setBgColor(cached);
-
-    // Request extraction (queue system)
-    requestLogoColorExtraction(uri, getDominantBorderColor);
-
-    // Subscribe to updates
-    const unsubscribe = subscribeToLogoColor(uri, (newColor) => {
-      if (newColor) setBgColor(newColor);
-    });
-
-    return unsubscribe;
-  }, [uri]);
-
-  return (
-    <View style={[styles.logoWrap, { backgroundColor: bgColor }]}>
-      {uri ? (
-        <Image
-          source={uri}
-          style={{ width: '95%', height: '95%' }}
-          contentFit="contain"
-          transition={300}
-          cachePolicy="memory-disk"
-        />
-      ) : (
-        <View style={[styles.logoPlaceholder, { backgroundColor: colors.surfaceAlt }]}>
-          <Text style={[styles.logoInitial, { color: colors.textMuted }]}>{name?.[0] || '?'}</Text>
-        </View>
-      )}
-    </View>
-  );
-}
+import BaseTeamLogo from '../../components/base/TeamLogo';
 
 function MatchCard({ match, isDark, colors, onPress }) {
   const navigation = useNavigation();
@@ -119,7 +72,7 @@ function MatchCard({ match, isDark, colors, onPress }) {
 
         <View style={styles.teamsRow}>
           <View style={styles.teamCol}>
-            <TeamLogo uri={homeLogo} name={homeTeam} isDark={isDark} colors={colors} />
+            <BaseTeamLogo uri={homeLogo} name={homeTeam} size={64} style={{ borderWidth: 1, borderColor: colors.border }} />
             <Text style={[styles.teamName, { color: isDark ? colors.textPrimary : '#0f172a' }]} numberOfLines={2}>{homeTeam}</Text>
           </View>
 
@@ -141,7 +94,7 @@ function MatchCard({ match, isDark, colors, onPress }) {
           </View>
 
           <View style={styles.teamCol}>
-            <TeamLogo uri={awayLogo} name={awayTeam} isDark={isDark} colors={colors} />
+            <BaseTeamLogo uri={awayLogo} name={awayTeam} size={64} style={{ borderWidth: 1, borderColor: colors.border }} />
             <Text style={[styles.teamName, { color: isDark ? colors.textPrimary : '#0f172a' }]} numberOfLines={2}>{awayTeam}</Text>
           </View>
         </View>
@@ -168,10 +121,10 @@ export default function JornadaDetailScreen({ route, navigation }) {
   const [renderReady, setRenderReady] = useState(false);
 
   useEffect(() => {
-    const task = InteractionManager.runAfterInteractions(() => {
+    const id = setTimeout(() => {
       setRenderReady(true);
-    });
-    return () => task.cancel();
+    }, 100);
+    return () => clearTimeout(id);
   }, []);
 
   const onRefresh = useCallback(async () => {

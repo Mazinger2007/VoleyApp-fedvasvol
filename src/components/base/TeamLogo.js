@@ -1,26 +1,51 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Image, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
+import { getCachedLogoColorSync, requestLogoColorExtraction, subscribeToLogoColor } from '../../utils/logoColorCache';
+import { getDominantColor } from '../../utils/imageColor';
 
 export default function TeamLogo({ uri, name, size = 36, style }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const fontSize = Math.round(size * 0.4);
+  const [bgColor, setBgColor] = useState(() => getCachedLogoColorSync(uri) || colors.surfaceAlt);
+
+  useEffect(() => {
+    if (!uri) { setBgColor(colors.surfaceAlt); return; }
+    const cached = getCachedLogoColorSync(uri);
+    if (cached) setBgColor(cached);
+
+    requestLogoColorExtraction(uri, getDominantColor);
+
+    let mounted = true;
+    const unsubscribe = subscribeToLogoColor(uri, (newColor) => {
+      if (mounted && newColor) setBgColor(newColor);
+    });
+    return () => { mounted = false; unsubscribe(); };
+  }, [uri, colors.surfaceAlt]);
 
   if (uri) {
     return (
-      <Image
-        source={{ uri }}
+      <View
         style={[
           {
             width: size,
             height: size,
             borderRadius: size / 2,
+            backgroundColor: bgColor,
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
           },
           style,
         ]}
-        resizeMode="contain"
-      />
+      >
+        <Image
+          source={{ uri }}
+          style={{ width: '82%', height: '82%' }}
+          resizeMode="contain"
+        />
+      </View>
     );
   }
 

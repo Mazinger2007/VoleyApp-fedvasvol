@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react';
 import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, TextInput, Animated, Dimensions, ActivityIndicator } from 'react-native';
+import { Text, StatusBar, StyleSheet, View, ScrollView, TouchableOpacity, TextInput, Animated, Dimensions, ActivityIndicator, Linking } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import PagerView from '../../components/PagerViewWrapper';
 import { downloadPdfBase64 } from '../../utils/pdfExtractor';
@@ -290,16 +290,12 @@ export default function BeachListScreen({ route, navigation }) {
 
   const pagerScrollJS = useRef(new Animated.Value(0)).current;
 
-  const onPageScrollHandler = useMemo(() => Animated.event(
-    [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
-    {
-      useNativeDriver: true,
-      listener: (e) => {
-        const { position, offset } = e.nativeEvent;
-        pagerScrollJS.setValue(position + offset);
-      }
-    }
-  ), [positionAnim, offsetAnim, pagerScrollJS]);
+  const onPageScrollHandler = useCallback((e) => {
+    const { position, offset } = e.nativeEvent;
+    positionAnim.setValue(position);
+    offsetAnim.setValue(offset);
+    pagerScrollJS.setValue(position + offset);
+  }, [positionAnim, offsetAnim, pagerScrollJS]);
 
   useEffect(() => {
     StatusBar.setBarStyle(isDark ? 'light-content' : 'dark-content');
@@ -311,13 +307,17 @@ export default function BeachListScreen({ route, navigation }) {
     outputRange: [0, tabWidth],
   });
 
-  const getTabColor = (index) => {
-    return pagerScrollJS.interpolate({
-      inputRange: [index - 1, index, index + 1],
-      outputRange: [Colors.textMuted, Colors.primary, Colors.textMuted],
-      extrapolate: 'clamp',
-    });
-  };
+  const rankingTabColor = useMemo(() => pagerScrollJS.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.primary, Colors.textMuted],
+    extrapolate: 'clamp',
+  }), [pagerScrollJS, Colors.primary, Colors.textMuted]);
+
+  const matchesTabColor = useMemo(() => pagerScrollJS.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Colors.textMuted, Colors.primary],
+    extrapolate: 'clamp',
+  }), [pagerScrollJS, Colors.primary, Colors.textMuted]);
 
   const torneo = data?.torneo || {};
   const ranking = data?.ranking || [];
@@ -339,6 +339,10 @@ export default function BeachListScreen({ route, navigation }) {
       m.parejaB.toLowerCase().includes(searchLower)
     );
   }, [partidos, searchLower, hideUnplayed]);
+
+  const openPDF = useCallback(() => {
+    if (pdfUrl) Linking.openURL(pdfUrl).catch(() => {});
+  }, [pdfUrl]);
 
   const handlePairPress = useCallback((pos, pareja) => {
     navigation.navigate('BeachPair', { pareja, posicion: pos, partidos, ranking, torneo, pdfName });
@@ -440,6 +444,7 @@ export default function BeachListScreen({ route, navigation }) {
         borderBottomColor: Colors.border, borderBottomWidth: 1, paddingHorizontal: 8,
       },
       backBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
+      headerBtn: { width: 44, height: 44, justifyContent: 'center', alignItems: 'center' },
       headerTitle: { fontSize: 15, fontWeight: '900', letterSpacing: -0.5, color: Colors.primary, flex: 1, textAlign: 'center' },
       tabBar: {
         flexDirection: 'row', backgroundColor: Colors.surface,
@@ -456,7 +461,6 @@ export default function BeachListScreen({ route, navigation }) {
         borderRadius: 12, borderWidth: 1, borderColor: Colors.border,
       },
       searchInput: { flex: 1, fontSize: 14, color: Colors.textPrimary, paddingVertical: 10, marginLeft: 8 },
-      pager: { flex: 1 },
       listWrap: {
         backgroundColor: Colors.surface, borderRadius: 16,
         borderWidth: 1, borderColor: Colors.border, overflow: 'hidden',
@@ -508,15 +512,17 @@ export default function BeachListScreen({ route, navigation }) {
         ) : null}
         <SafeAreaView style={styles.safe} edges={['top']}>
           <View style={styles.header}>
-            <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-              <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
-            </TouchableOpacity>
-            <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
-            <View style={{ width: 44 }} />
-          </View>
-          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
-            <ActivityIndicator size="large" color={Colors.primary} />
-            <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textMuted }}>Cargando datos...</Text>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
+        <TouchableOpacity style={styles.headerBtn} onPress={openPDF} activeOpacity={0.7}>
+          <MaterialIcons name="download" size={22} color={Colors.primary} />
+        </TouchableOpacity>
+      </View>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', gap: 16 }}>
+        <ActivityIndicator size="large" color={Colors.primary} />
+        <Text style={{ fontSize: 14, fontWeight: '600', color: Colors.textMuted }}>Cargando datos...</Text>
           </View>
         </SafeAreaView>
       </View>
@@ -527,14 +533,16 @@ export default function BeachListScreen({ route, navigation }) {
     return (
       <SafeAreaView style={styles.safe} edges={['top']}>
         <View style={styles.header}>
-          <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
-            <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
-          <View style={{ width: 44 }} />
-        </View>
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 }}>
-          <MaterialIcons name="error-outline" size={48} color={Colors.textMuted} style={{ opacity: 0.4 }} />
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
+        <TouchableOpacity style={styles.headerBtn} onPress={openPDF} activeOpacity={0.7}>
+          <MaterialIcons name="download" size={22} color={Colors.primary} />
+        </TouchableOpacity>
+      </View>
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 }}>
+        <MaterialIcons name="error-outline" size={48} color={Colors.textMuted} style={{ opacity: 0.4 }} />
           <Text style={{ fontSize: 15, fontWeight: '700', color: Colors.textPrimary, textAlign: 'center' }}>{error}</Text>
           <TouchableOpacity
             onPress={() => navigation.goBack()}
@@ -555,29 +563,36 @@ export default function BeachListScreen({ route, navigation }) {
           <MaterialIcons name="arrow-back" size={24} color={Colors.primary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>{pdfName || 'Voley Playa'}</Text>
-        <View style={{ width: 44 }} />
+        <TouchableOpacity style={styles.headerBtn} onPress={openPDF} activeOpacity={0.7}>
+          <MaterialIcons name="download" size={22} color={Colors.primary} />
+        </TouchableOpacity>
       </View>
 
       <View style={styles.tabBar}>
-        {TABS.map((tab, index) => {
-          const labels = { ranking: 'Clasificación', matches: 'Partidos' };
-          const icons = { ranking: 'emoji-events', matches: 'format-list-bulleted' };
-          return (
-            <TouchableOpacity
-              key={tab}
-              onPress={() => pagerRef.current?.setPage(index)}
-              activeOpacity={0.8}
-              style={styles.tab}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <MaterialIcons name={icons[tab]} size={16} color={getTabColor(index)} />
-                <Animated.Text style={{ fontSize: 14, fontWeight: '800', color: getTabColor(index) }}>
-                  {labels[tab]}
-                </Animated.Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+        <TouchableOpacity
+          onPress={() => { if (activeTab !== 'ranking') pagerRef.current?.setPage(0); }}
+          activeOpacity={0.8}
+          style={styles.tab}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <MaterialIcons name="emoji-events" size={16} color={rankingTabColor} />
+            <Animated.Text style={{ fontSize: 14, fontWeight: '800', color: rankingTabColor }}>
+              Clasificación
+            </Animated.Text>
+          </View>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => { if (activeTab !== 'matches') pagerRef.current?.setPage(1); }}
+          activeOpacity={0.8}
+          style={styles.tab}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <MaterialIcons name="format-list-bulleted" size={16} color={matchesTabColor} />
+            <Animated.Text style={{ fontSize: 14, fontWeight: '800', color: matchesTabColor }}>
+              Partidos
+            </Animated.Text>
+          </View>
+        </TouchableOpacity>
         <Animated.View style={{
           position: 'absolute', bottom: 0, left: 0,
           width: tabWidth, height: 3,
@@ -591,7 +606,7 @@ export default function BeachListScreen({ route, navigation }) {
         <MaterialIcons name="search" size={20} color={Colors.textMuted} />
         <TextInput
           style={styles.searchInput}
-          placeholder={activeTab === 'ranking' ? 'Buscar pareja...' : 'Buscar partido...'}
+          placeholder="Buscar..."
           placeholderTextColor={Colors.textMuted}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -605,30 +620,31 @@ export default function BeachListScreen({ route, navigation }) {
         )}
       </View>
 
-      <View style={styles.pager}>
-        <AnimatedPagerView
-          ref={pagerRef}
-          style={{ flex: 1 }}
-          initialPage={0}
-          onPageSelected={(e) => {
-            const pos = e.nativeEvent.position;
-            if (typeof pos === 'number' && pos >= 0 && pos < TABS.length) {
-              setActiveTab(TABS[pos]);
-              setSearchQuery('');
-              positionAnim.setValue(pos);
-              offsetAnim.setValue(0);
-            }
-          }}
-          onPageScroll={onPageScrollHandler}
-        >
-          <ScrollView key="ranking" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+      <AnimatedPagerView
+        ref={pagerRef}
+        style={{ flex: 1 }}
+        initialPage={0}
+        onPageSelected={(e) => {
+          const pos = e.nativeEvent.position;
+          setActiveTab(TABS[pos]);
+          setSearchQuery('');
+          positionAnim.setValue(pos);
+          offsetAnim.setValue(0);
+          pagerScrollJS.setValue(pos);
+        }}
+        onPageScroll={onPageScrollHandler}
+      >
+        <View key="0" style={{ flex: 1 }}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
             {renderRankingTab()}
           </ScrollView>
-          <ScrollView key="matches" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
+        </View>
+        <View key="1" style={{ flex: 1 }}>
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 20 }}>
             {renderMatchesTab()}
           </ScrollView>
-        </AnimatedPagerView>
-      </View>
+        </View>
+      </AnimatedPagerView>
     </SafeAreaView>
   );
 }

@@ -7,6 +7,7 @@ import { fetchAndParse, URLS } from '../../utils/htmlParser';
 import { Spacing, Radius } from '../../styles/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { checkForNewNews } from '../../services/newsNotificationService';
+import { downloadImage } from '../../utils/imageUtils';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -92,7 +93,7 @@ export default function NewsScreen({ navigation }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [recentSearches, setRecentSearches] = useState([]);
   const [zoomImageUrl, setZoomImageUrl] = useState(null);
@@ -102,11 +103,9 @@ export default function NewsScreen({ navigation }) {
   const panRef = useRef({ x: 0, y: 0 });
   const panBaseRef = useRef({ x: 0, y: 0 });
   const lastTapRef = useRef(0);
-  const lastPinchRef = useRef({ dist: 0, scale: 1 });
-  const pinchTrackingRef = useRef(false);
-  const PAN_SENSITIVITY = 1.8;
+  const pinchTrackRef = useRef({ active: false, dist: 0, baseScale: 1 });
+  const PAN_SENSITIVITY = 1.0;
   const searchInputRef = useRef(null);
-  const searchTimer = useRef(null);
   const [filters, setFilters] = useState({
     date_from: '',
     date_to: '',
@@ -177,9 +176,7 @@ export default function NewsScreen({ navigation }) {
 
   const handleSearchChange = useCallback((text) => {
     setSearchQuery(text);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => applySearch(text), 400);
-  }, [applySearch]);
+  }, []);
 
   const saveRecentSearch = useCallback((query) => {
     if (!query.trim()) return;
@@ -191,10 +188,16 @@ export default function NewsScreen({ navigation }) {
   }, [recentSearches]);
 
   const handleSearchSubmit = useCallback(() => {
-    applySearch(searchQuery);
-    saveRecentSearch(searchQuery);
+    const query = searchQuery.trim();
+    if (!query) {
+      Keyboard.dismiss();
+      setShowSearch(false);
+      return;
+    }
+    applySearch(query);
+    saveRecentSearch(query);
     Keyboard.dismiss();
-    setShowSearchModal(false);
+    setShowSearch(false);
   }, [applySearch, saveRecentSearch, searchQuery]);
 
   const handleClearSearch = useCallback(() => {
@@ -202,18 +205,19 @@ export default function NewsScreen({ navigation }) {
     applySearch('');
   }, [applySearch]);
 
-  const handleRecentPress = useCallback((query) => {
-    setSearchQuery(query);
-    applySearch(query);
-    Keyboard.dismiss();
-    setShowSearchModal(false);
-  }, [applySearch]);
-
   const getDistance = useCallback((touches) => {
     if (!touches || touches.length < 2) return 0;
     const dx = touches[0].pageX - touches[1].pageX;
     const dy = touches[0].pageY - touches[1].pageY;
     return Math.sqrt(dx * dx + dy * dy);
+  }, []);
+
+  const getTouchCenter = useCallback((touches) => {
+    if (!touches || touches.length < 2) return { x: 0, y: 0 };
+    return {
+      x: (touches[0].pageX + touches[1].pageX) / 2,
+      y: (touches[0].pageY + touches[1].pageY) / 2,
+    };
   }, []);
 
   const zoomPanResponder = useRef(PanResponder.create({
@@ -225,57 +229,89 @@ export default function NewsScreen({ navigation }) {
     onMoveShouldSetPanResponderCapture: (e, g) => {
       return scaleRef.current > 1 || e.nativeEvent.touches?.length >= 2 || g.numberActiveTouches >= 2;
     },
-    onPanResponderGrant: (e, _g) => {
+    onPanResponderGrant: (e) => {
+      const touches = e.nativeEvent.touches;
+      if (touches && touches.length >= 2) {
+        const dist = getDistance(touches);
+        const center = getTouchCenter(touches);
+        pinchTrackRef.current = { active: true, dist, baseScale: scaleRef.current, center };
+      } else {
+        pinchTrackRef.current.active = false;
+      }
       panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
-      pinchTrackingRef.current = false;
     },
     onPanResponderMove: (e, gestureState) => {
       const touches = e.nativeEvent.touches;
       const multi = (touches?.length >= 2) || gestureState.numberActiveTouches >= 2;
+      
       if (multi) {
-        let dist = 0;
-        if (touches?.length >= 2) dist = getDistance(touches);
-        if (dist > 0) {
-          if (!pinchTrackingRef.current) {
-            pinchTrackingRef.current = true;
-            lastPinchRef.current = { dist, scale: scaleRef.current };
-          } else {
-            const ratio = dist / lastPinchRef.current.dist;
-            const damped = 1 + (ratio - 1) * 0.5;
-            const newScale = Math.max(1, Math.min(4, lastPinchRef.current.scale * damped));
-            scaleRef.current = newScale;
-            zoomAnim.setValue(newScale);
-            lastPinchRef.current = { dist, scale: newScale };
+        if (touches && touches.length >= 2) {
+          const dist = getDistance(touches);
+          if (dist > 0) {
+            if (!pinchTrackRef.current.active) {
+              const center = getTouchCenter(touches);
+              pinchTrackRef.current = { active: true, dist, baseScale: scaleRef.current, center };
+              panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
+            } else {
+              const ratio = dist / pinchTrackRef.current.dist;
+              const newScale = Math.max(1, Math.min(6, pinchTrackRef.current.baseScale * ratio));
+              scaleRef.current = newScale;
+              zoomAnim.setValue(newScale);
+
+              const center = getTouchCenter(touches);
+              const dx = center.x - pinchTrackRef.current.center.x;
+              const dy = center.y - pinchTrackRef.current.center.y;
+
+              const maxPx = (SCREEN_WIDTH * (newScale - 1)) / 2;
+              const maxPy = Math.max(0, (SCREEN_HEIGHT * 0.8 * newScale - SCREEN_HEIGHT) / 2);
+              let tx = panBaseRef.current.x + dx;
+              let ty = panBaseRef.current.y + dy;
+              tx = Math.max(-maxPx, Math.min(maxPx, tx));
+              ty = Math.max(-maxPy, Math.min(maxPy, ty));
+
+              panRef.current = { x: tx, y: ty };
+              panAnim.setValue({ x: tx, y: ty });
+            }
           }
         }
       } else {
-        pinchTrackingRef.current = false;
+        if (pinchTrackRef.current.active) {
+          pinchTrackRef.current.active = false;
+          panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
+        }
+        
         if (scaleRef.current > 1) {
           const s = scaleRef.current;
           const maxPx = (SCREEN_WIDTH * (s - 1)) / 2;
           const maxPy = Math.max(0, (SCREEN_HEIGHT * 0.8 * s - SCREEN_HEIGHT) / 2);
-          let tx = Math.max(-maxPx, Math.min(maxPx, panBaseRef.current.x + PAN_SENSITIVITY * gestureState.dx / s));
-          let ty = Math.max(-maxPy, Math.min(maxPy, panBaseRef.current.y + PAN_SENSITIVITY * gestureState.dy / s));
+          
+          let tx = panBaseRef.current.x + gestureState.dx;
+          let ty = panBaseRef.current.y + gestureState.dy;
+          tx = Math.max(-maxPx, Math.min(maxPx, tx));
+          ty = Math.max(-maxPy, Math.min(maxPy, ty));
+
           panRef.current = { x: tx, y: ty };
-          panAnim.x.setValue(tx);
-          panAnim.y.setValue(ty);
+          panAnim.setValue({ x: tx, y: ty });
         }
       }
     },
     onPanResponderRelease: () => {
-      pinchTrackingRef.current = false;
+      pinchTrackRef.current.active = false;
       const s = scaleRef.current;
-      if (s < 1) {
+      if (s < 1.05) {
         scaleRef.current = 1;
         panRef.current = { x: 0, y: 0 };
         panBaseRef.current = { x: 0, y: 0 };
         Animated.parallel([
-          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, bounciness: 4 }),
-          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 4 }),
+          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, tension: 60, friction: 8 }),
+          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, tension: 60, friction: 8 }),
         ]).start();
-      } else if (s > 4) {
-        scaleRef.current = 4;
-        Animated.spring(zoomAnim, { toValue: 4, useNativeDriver: true, bounciness: 4 }).start();
+      } else if (s > 6) {
+        scaleRef.current = 6;
+        Animated.spring(zoomAnim, { toValue: 6, useNativeDriver: true, tension: 60, friction: 8 }).start();
+        panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
+      } else {
+        panBaseRef.current = { x: panRef.current.x, y: panRef.current.y };
       }
     },
   })).current;
@@ -288,12 +324,12 @@ export default function NewsScreen({ navigation }) {
         panRef.current = { x: 0, y: 0 };
         panBaseRef.current = { x: 0, y: 0 };
         Animated.parallel([
-          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, bounciness: 6 }),
-          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, bounciness: 6 }),
+          Animated.spring(zoomAnim, { toValue: 1, useNativeDriver: true, tension: 60, friction: 8 }),
+          Animated.spring(panAnim, { toValue: { x: 0, y: 0 }, useNativeDriver: true, tension: 60, friction: 8 }),
         ]).start();
       } else {
         scaleRef.current = 2.5;
-        Animated.spring(zoomAnim, { toValue: 2.5, useNativeDriver: true, bounciness: 6 }).start();
+        Animated.spring(zoomAnim, { toValue: 2.5, useNativeDriver: true, tension: 60, friction: 8 }).start();
       }
     }
     lastTapRef.current = now;
@@ -308,9 +344,9 @@ export default function NewsScreen({ navigation }) {
     setZoomImageUrl(null);
   }, [zoomAnim, panAnim]);
 
-  const openSearchModal = useCallback(() => {
-    setShowSearchModal(true);
-    setTimeout(() => searchInputRef.current?.focus(), 300);
+  const openSearch = useCallback(() => {
+    setShowSearch(true);
+    setTimeout(() => searchInputRef.current?.focus(), 100);
   }, []);
 
   const handlePageChange = useCallback((page) => {
@@ -448,12 +484,13 @@ export default function NewsScreen({ navigation }) {
     searchModalBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold', letterSpacing: 0.5 },
     zoomOverlay: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
     zoomClose: { position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 8 },
+    zoomDownload: { position: 'absolute', top: 50, left: 20, zIndex: 10, padding: 8 },
     zoomBody: { flex: 1, justifyContent: 'center', alignItems: 'center' },
     zoomImage: { width: SCREEN_WIDTH, height: SCREEN_HEIGHT * 0.8 },
 
-    searchOverlay: { flex: 1 },
-    searchOverlayBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.55)' },
     searchKav: { flex: 1, justifyContent: 'center' },
+    searchOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.78)' },
+    searchOverlayBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.94)' },
     searchModalInner: { paddingHorizontal: 20, paddingBottom: 20 },
     searchCard: {
       borderRadius: 24, padding: 20,
@@ -470,23 +507,20 @@ export default function NewsScreen({ navigation }) {
       width: 32, height: 32, borderRadius: 10,
       alignItems: 'center', justifyContent: 'center',
     },
-    searchInputWrap: {
-      flexDirection: 'row', alignItems: 'center',
-      borderRadius: 14, borderWidth: 1, paddingHorizontal: 14, height: 48,
-      marginBottom: 12,
+    headerSearchInput: {
+      flex: 1, flexDirection: 'row', alignItems: 'center',
+      borderRadius: 10, paddingHorizontal: 10, height: 36,
     },
-    searchTextInput: { flex: 1, fontSize: 15, fontWeight: '500' },
-    searchClearBtn: { padding: 4 },
-    searchRecentSection: { marginBottom: 14 },
-    searchRecentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-    searchRecentLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
-    searchClearAll: { fontSize: 12, fontWeight: '600' },
-    searchRecentChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    searchChip: {
+    headerSearchText: { flex: 1, fontSize: 15, fontWeight: '400', paddingVertical: 0 },
+    recentBar: {
+      paddingVertical: 10, borderBottomWidth: 1,
+    },
+    recentChip: {
       flexDirection: 'row', alignItems: 'center', gap: 4,
-      borderRadius: 20, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 7,
+      borderRadius: 18, paddingHorizontal: 14, paddingVertical: 7,
     },
-    searchChipText: { fontSize: 13, fontWeight: '500' },
+    recentChipText: { fontSize: 13, fontWeight: '500' },
+    searchClearBtn: { padding: 4 },
     searchSubmitBtn: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
       borderRadius: 14, height: 50, marginTop: 4,
@@ -549,26 +583,80 @@ export default function NewsScreen({ navigation }) {
     <SafeAreaView style={styles.safe} edges={['top']}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} backgroundColor={Colors.background} />
       <View style={styles.header}>
-        <TouchableOpacity
-          style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
-          onPress={() => setShowFilters(true)}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons name="filter-list" size={22} color={hasActiveFilters ? Colors.primary : Colors.textMuted} />
-          {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <MaterialIcons name="newspaper" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
-          <Text style={styles.headerTitleText}>NOTICIAS</Text>
-        </View>
-        <TouchableOpacity
-          style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
-          onPress={openSearchModal}
-          activeOpacity={0.7}
-        >
-          <MaterialIcons name="search" size={22} color={Colors.textMuted} />
-        </TouchableOpacity>
+        {showSearch ? (
+          <>
+            <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 4 }}>
+              <View style={[styles.headerSearchInput, { backgroundColor: Colors.surfaceAlt }]}>
+                <MaterialIcons name="search" size={18} color={Colors.textMuted} style={{ marginRight: 6 }} />
+                <TextInput
+                  ref={searchInputRef}
+                  style={[styles.headerSearchText, { color: Colors.textPrimary }]}
+                  placeholder="Buscar noticias..."
+                  placeholderTextColor={Colors.textMuted}
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  onSubmitEditing={handleSearchSubmit}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                />
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity onPress={handleClearSearch} style={{ padding: 4 }}>
+                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
+                  </TouchableOpacity>
+                )}
+              </View>
+              <TouchableOpacity
+                onPress={() => { setShowSearch(false); handleClearSearch(); }}
+                style={{ paddingLeft: 8, paddingRight: 4 }}
+                activeOpacity={0.7}
+              >
+                <Text style={{ color: Colors.primary, fontWeight: '600', fontSize: 15 }}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        ) : (
+          <>
+            <TouchableOpacity
+              style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
+              onPress={() => setShowFilters(true)}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="filter-list" size={22} color={hasActiveFilters ? Colors.primary : Colors.textMuted} />
+              {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
+            </TouchableOpacity>
+            <View style={styles.headerTitleContainer}>
+              <MaterialIcons name="newspaper" size={20} color={Colors.primary} style={{ marginRight: 8 }} />
+              <Text style={styles.headerTitleText}>NOTICIAS</Text>
+            </View>
+            <TouchableOpacity
+              style={{ width: 44, height: 44, justifyContent: 'center', alignItems: 'center' }}
+              onPress={openSearch}
+              activeOpacity={0.7}
+            >
+              <MaterialIcons name="search" size={22} color={Colors.textMuted} />
+            </TouchableOpacity>
+          </>
+        )}
       </View>
+
+      {showSearch && !searchQuery && recentSearches.length > 0 ? (
+        <View style={[styles.recentBar, { backgroundColor: Colors.surface, borderBottomColor: Colors.border }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
+            {recentSearches.map((s, i) => (
+              <TouchableOpacity
+                key={i}
+                style={[styles.recentChip, { backgroundColor: Colors.surfaceAlt }]}
+                onPress={() => { setSearchQuery(s); applySearch(s); saveRecentSearch(s); Keyboard.dismiss(); setShowSearch(false); }}
+                activeOpacity={0.7}
+              >
+                <MaterialIcons name="history" size={14} color={Colors.textMuted} />
+                <Text style={[styles.recentChipText, { color: Colors.textSecondary }]}>{s}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
       {loading ? (
         <View style={styles.loadingWrap}>
           <ActivityIndicator size="large" color={Colors.primary} />
@@ -588,11 +676,11 @@ export default function NewsScreen({ navigation }) {
         </>
       ) : (
         <View style={styles.emptyWrap}>
-          <MaterialIcons name="article" size={64} color={Colors.textMuted} style={{ opacity: 0.3 }} />
+          <MaterialIcons name="newspaper" size={64} color={Colors.textMuted} style={{ opacity: 0.3 }} />
           <Text style={styles.emptyText}>No hay publicaciones</Text>
         </View>
       )}
-      <Modal visible={showFilters} transparent animationType="fade" onRequestClose={() => setShowFilters(false)}>
+      <Modal visible={showFilters} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setShowFilters(false)}>
         <View style={styles.searchOverlay}>
           <TouchableOpacity style={styles.searchOverlayBg} onPress={() => setShowFilters(false)} activeOpacity={1} />
           <KeyboardAvoidingView
@@ -673,98 +761,27 @@ export default function NewsScreen({ navigation }) {
           </KeyboardAvoidingView>
         </View>
       </Modal>
-      <Modal visible={showSearchModal} transparent animationType="fade" onRequestClose={() => setShowSearchModal(false)}>
-        <View style={styles.searchOverlay}>
-          <TouchableOpacity style={styles.searchOverlayBg} onPress={() => setShowSearchModal(false)} activeOpacity={1} />
-          <KeyboardAvoidingView
-            style={styles.searchKav}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            keyboardVerticalOffset={0}
-          >
-            <View style={styles.searchModalInner}>
-              <View style={[styles.searchCard, { backgroundColor: Colors.surface }]}>
-                <View style={styles.searchCardHeader}>
-                  <View style={[styles.searchCardHeaderIcon, { backgroundColor: Colors.primaryAlpha15 }]}>
-                    <MaterialIcons name="search" size={20} color={Colors.primary} />
-                  </View>
-                  <Text style={[styles.searchCardTitle, { color: Colors.textPrimary }]}>Buscar noticias</Text>
-                  <TouchableOpacity onPress={() => setShowSearchModal(false)} style={[styles.searchCardClose, { backgroundColor: Colors.surfaceAlt }]}>
-                    <MaterialIcons name="close" size={18} color={Colors.textMuted} />
-                  </TouchableOpacity>
-                </View>
 
-                <View style={[styles.searchInputWrap, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border }]}>
-                  <TextInput
-                    ref={searchInputRef}
-                    style={[styles.searchTextInput, { color: Colors.textPrimary }]}
-                    placeholder="Escribe para buscar..."
-                    placeholderTextColor={Colors.textMuted}
-                    value={searchQuery}
-                    onChangeText={handleSearchChange}
-                    onSubmitEditing={handleSearchSubmit}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    returnKeyType="search"
-                  />
-                  {searchQuery.length > 0 && (
-                    <TouchableOpacity onPress={handleClearSearch} style={styles.searchClearBtn}>
-                      <MaterialIcons name="close-circle" size={18} color={Colors.textMuted} />
-                    </TouchableOpacity>
-                  )}
-                </View>
-
-                {recentSearches.length > 0 && (
-                  <View style={styles.searchRecentSection}>
-                    <View style={styles.searchRecentHeader}>
-                      <Text style={[styles.searchRecentLabel, { color: Colors.textMuted }]}>Recientes</Text>
-                      <TouchableOpacity onPress={() => { setRecentSearches([]); try { AsyncStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify([])); } catch {} }}>
-                        <Text style={[styles.searchClearAll, { color: Colors.primary }]}>Limpiar</Text>
-                      </TouchableOpacity>
-                    </View>
-                    <View style={styles.searchRecentChips}>
-                      {recentSearches.map((s, i) => (
-                        <TouchableOpacity
-                          key={i}
-                          style={[styles.searchChip, { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border }]}
-                          onPress={() => handleRecentPress(s)}
-                          activeOpacity={0.7}
-                        >
-                          <MaterialIcons name="history" size={14} color={Colors.textMuted} />
-                          <Text style={[styles.searchChipText, { color: Colors.textSecondary }]}>{s}</Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
-                  </View>
-                )}
-
-                <TouchableOpacity
-                  style={[styles.searchSubmitBtn, { backgroundColor: Colors.primary }]}
-                  activeOpacity={0.85}
-                  onPress={handleSearchSubmit}
-                >
-                  <MaterialIcons name="search" size={18} color="#fff" />
-                  <Text style={styles.searchSubmitText}>BUSCAR</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
-        </View>
-      </Modal>
       <Modal visible={zoomImageUrl !== null} transparent animationType="fade" statusBarTranslucent onRequestClose={closeZoom}>
         <View style={styles.zoomOverlay} {...zoomPanResponder.panHandlers}>
           <TouchableOpacity style={styles.zoomClose} onPress={closeZoom} activeOpacity={0.7}>
             <MaterialIcons name="close" size={28} color="#fff" />
           </TouchableOpacity>
+          <TouchableOpacity style={styles.zoomDownload} onPress={() => downloadImage(zoomImageUrl)} activeOpacity={0.7}>
+            <MaterialIcons name="file-download" size={24} color="#fff" />
+          </TouchableOpacity>
           <TouchableOpacity activeOpacity={1} onPress={handleImageDoubleTap} style={styles.zoomBody}>
-            <Animated.View style={{ transform: [
-              { translateX: panAnim.x },
-              { translateY: panAnim.y },
-              { scale: zoomAnim },
-            ]}}>
-              {zoomImageUrl ? (
-                <Image source={{ uri: zoomImageUrl }} style={styles.zoomImage} resizeMode="contain" />
-              ) : null}
-            </Animated.View>
+            <Animated.Image
+              source={{ uri: zoomImageUrl }}
+              style={[styles.zoomImage, {
+                transform: [
+                  { translateX: panAnim.x },
+                  { translateY: panAnim.y },
+                  { scale: zoomAnim },
+                ],
+              }]}
+              resizeMode="contain"
+            />
           </TouchableOpacity>
         </View>
       </Modal>
