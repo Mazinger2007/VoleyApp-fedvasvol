@@ -3,7 +3,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Text, StatusBar, StyleSheet, View, FlatList, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
-import { fetchAndParse, URLS } from '../../utils/htmlParser';
+import { fetchAndParseCached, URLS } from '../../utils/htmlParser';
 import { Spacing } from '../../styles/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -39,7 +39,7 @@ export default function BeachScreen({ navigation }) {
     })();
     (async () => {
       try {
-        const blocks = await fetchAndParse(URLS.beachVolleyball);
+        const blocks = await fetchAndParseCached(URLS.beachVolleyball);
         if (cancelled) return;
         setAllFiles((blocks || []).find(b => b.type === 'files')?.files || []);
       } catch (e) {

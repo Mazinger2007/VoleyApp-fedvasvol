@@ -54,7 +54,7 @@ export default function MatchesScreen({ navigation }) {
     return `${URLS.home}?season=${selectedSeason}`;
   }, [selectedSeason]);
 
-  const { blocks, loading, error, refresh } = useFetch(fetchUrl);
+  const { blocks, loading, refreshing, error, refresh } = useFetch(fetchUrl);
 
   // Inicializar temporadas desde los metadatos (solo una vez)
   useEffect(() => {
@@ -319,7 +319,7 @@ export default function MatchesScreen({ navigation }) {
         style={styles.scroll}
         refreshControl={
           <RefreshControl
-            refreshing={loading}
+            refreshing={refreshing}
             onRefresh={refresh}
             colors={[Colors.primary]}
             tintColor={Colors.primary}

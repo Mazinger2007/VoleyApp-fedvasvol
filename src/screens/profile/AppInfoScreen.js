@@ -80,7 +80,7 @@ export default function AppInfoScreen({ navigation }) {
       >
         <View style={[styles.heroCard, { backgroundColor: colors.primary }]}>
           <Text style={styles.heroEmoji}>🏐</Text>
-          <Text style={styles.heroTitle}>Voleibol Vizcaya</Text>
+          <Text style={styles.heroTitle}>Voleibol Euskadi</Text>
           <Text style={styles.heroSubtitle}>
             Resultados, clasificaciones y calendarios del voleibol vasco, en un solo lugar.
           </Text>
@@ -184,7 +184,7 @@ export default function AppInfoScreen({ navigation }) {
 
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: colors.textMuted }]}>
-            Voleibol Vizcaya · v{APP_VERSION}
+            Voleibol Euskadi · v{APP_VERSION}
           </Text>
           <Text style={[styles.footerSubtext, { color: colors.textMuted }]}>
             Hecho con cariño para la comunidad del voleibol vasco

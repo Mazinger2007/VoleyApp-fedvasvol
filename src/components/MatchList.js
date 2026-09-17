@@ -253,7 +253,7 @@ export function formatMatchTime(rawDate, timeStr) {
 
 export function getMatchSummary(match = {}) {
   try {
-    if (!match) return { homeTeam: 'Local', awayTeam: 'Visitante', homeScore: null, awayScore: null, time: '--:--', sets: [], venue: 'Sede desconocida' };
+    if (!match) return { homeTeam: 'Local', awayTeam: 'Visitante', homeLogo: null, awayLogo: null, homeScore: null, awayScore: null, time: '--:--', sets: [], venue: 'Sede desconocida' };
 
     // Si ya es un resumen (tiene dateLabel), devolverlo pero asegurar tipos sin mutar el original
     if (match.dateLabel !== undefined && match.state !== undefined) {
@@ -319,6 +319,8 @@ export function getMatchSummary(match = {}) {
     return {
       homeTeam: String(match?.homeTeam || 'Local'),
       awayTeam: String(match?.awayTeam || 'Visitante'),
+      homeLogo: null,
+      awayLogo: null,
       homeScore: typeof match?.homeScore === 'number' ? match.homeScore : null,
       awayScore: typeof match?.awayScore === 'number' ? match.awayScore : null,
       time: '--:--',
@@ -336,7 +338,7 @@ export function MatchCard({ match, headers, onPress, calendarUrl, rankingBlocks 
   const navigation = useNavigation();
   const { colors: Colors, isDark } = useTheme();
   const summary = getMatchSummary(match);
-  const { state } = summary;
+  const { state, homeLogo, awayLogo, homeTeam, awayTeam } = summary;
 
   const pillStyle = state === 'live'
     ? { bg: 'rgba(239,68,68,0.12)', text: '#ef4444', border: 'rgba(239,68,68,0.30)' }

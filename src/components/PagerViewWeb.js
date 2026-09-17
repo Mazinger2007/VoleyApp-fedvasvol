@@ -21,6 +21,13 @@ const PagerViewWeb = forwardRef(function PagerViewWeb(
       setPage(index);
       onPageSelected?.({ nativeEvent: { position: index } });
     },
+    setPageWithoutAnimation(index) {
+      if (scrollRef.current && width > 0) {
+        scrollRef.current.scrollTo({ x: index * width, animated: false });
+      }
+      setPage(index);
+      onPageSelected?.({ nativeEvent: { position: index } });
+    },
   }));
 
   const handleScroll = (e) => {

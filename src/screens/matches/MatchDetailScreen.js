@@ -78,26 +78,11 @@ export default function MatchDetailScreen({ route, navigation }) {
   const positionAnim = useRef(new Animated.Value(0)).current;
   const offsetAnim = useRef(new Animated.Value(0)).current;
   const pagerScrollNative = useMemo(() => Animated.add(positionAnim, offsetAnim), [positionAnim, offsetAnim]);
-  const pagerScrollJS = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    const id = pagerScrollNative.addListener(({ value }) => {
-      pagerScrollJS.setValue(value);
-    });
-    return () => pagerScrollNative.removeListener(id);
-  }, [pagerScrollNative, pagerScrollJS]);
-
-  const onPageScrollHandler = useCallback((e) => {
-    try {
-      const { position, offset } = e.nativeEvent;
-      if (typeof position === 'number' && typeof offset === 'number') {
-        positionAnim.setValue(position);
-        offsetAnim.setValue(offset);
-      }
-    } catch (err) {
-      // Ignorar errores en scroll animado
-    }
-  }, [positionAnim, offsetAnim]);
+  const onPageScrollHandler = useMemo(() => Animated.event(
+    [{ nativeEvent: { position: positionAnim, offset: offsetAnim } }],
+    { useNativeDriver: true }
+  ), [positionAnim, offsetAnim]);
 
   const TAB_COUNT = 3;
   const tabWidth = SCREEN_WIDTH / TAB_COUNT;
@@ -115,7 +100,7 @@ export default function MatchDetailScreen({ route, navigation }) {
     } catch (e) {
       console.warn('[MatchDetail] Error in getMatchSummary:', e.message);
       return {
-        homeTeam: 'Local', awayTeam: 'Visitante', sets: [],
+        homeTeam: 'Local', awayTeam: 'Visitante', homeLogo: null, awayLogo: null, sets: [],
         homeScore: null, awayScore: null, venue: 'Sede desconocida', time: '--:--'
       };
     }
@@ -1187,29 +1172,36 @@ export default function MatchDetailScreen({ route, navigation }) {
         case 'repeticion':
           return (
             <View style={{ gap: Spacing.xl }}>
-              <View style={[styles.videoPlayer, { backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' }]}>
+              <View style={styles.videoPlayer}>
                 {youtubeLoading || (!hasSearched && !youtubeVideoId) ? (
-                  <View style={{ alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-                    <ActivityIndicator size="large" color={Colors.primary} />
-                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 }}>BUSCANDO VÍDEO...</Text>
+                  <View style={styles.videoOverlay}>
+                    <View style={styles.videoOverlayContent}>
+                      <ActivityIndicator size="large" color={Colors.primary} />
+                      <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '600', letterSpacing: 0.5 }}>BUSCANDO VÍDEO...</Text>
+                    </View>
                   </View>
                 ) : youtubeVideoId ? (
                   <TouchableOpacity
-                    style={{ width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center' }}
+                    style={styles.videoLink}
                     onPress={() => Linking.openURL(`https://www.youtube.com/watch?v=${youtubeVideoId}`)}
                     activeOpacity={0.9}
                   >
                     <Image
                       source={{ uri: `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg` }}
-                      style={{ width: '100%', height: '100%' }}
-                      resizeMode="cover"
+                      style={styles.videoThumb}
+                      contentFit="cover"
+                      contentPosition="center"
+                      cachePolicy="memory-disk"
                     />
-                    <View style={{ ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
-                      <MaterialIcons name="play-circle" size={72} color="rgba(255,255,255,0.7)" />
+                    <View pointerEvents="none" style={styles.videoShade} />
+                    <View pointerEvents="none" style={styles.playBtnWrap}>
+                      <View style={styles.playButton}>
+                        <MaterialIcons name="play-arrow" size={42} color="#ffffff" />
+                      </View>
                     </View>
                   </TouchableOpacity>
                 ) : (
-                  <View style={{ alignItems: 'center', justifyContent: 'center', gap: 12, paddingHorizontal: 32 }}>
+                  <View style={styles.videoOverlay}>
                     <MaterialIcons name="videocam-off" size={48} color="rgba(255,255,255,0.2)" />
                     <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, textAlign: 'center', lineHeight: 20 }}>
                       No hemos encontrado el partido en los canales oficiales.
@@ -1232,13 +1224,11 @@ export default function MatchDetailScreen({ route, navigation }) {
     }
   };
 
-  const getTabColor = (index) => {
-    return pagerScrollJS.interpolate({
-      inputRange: [index - 1, index, index + 1],
-      outputRange: [Colors.textMuted, Colors.primary, Colors.textMuted],
-      extrapolate: 'clamp',
-    });
-  };
+  const getTabColor = (index) => pagerScrollNative.interpolate({
+    inputRange: [index - 1, index, index + 1],
+    outputRange: [Colors.textMuted, Colors.primary, Colors.textMuted],
+    extrapolate: 'clamp',
+  });
 
   const badgeText = summary.state === 'live' ? 'EN CURSO' : (summary.state === 'finished' ? 'FINALIZADO' : 'PRÓXIMO');
 
@@ -1362,7 +1352,10 @@ export default function MatchDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                   key={tab}
                   onPress={() => {
-                    pagerRef.current?.setPage(index);
+                    setActiveTab(TABS[index]);
+                    if (typeof pagerRef.current?.setPage === 'function') {
+                      pagerRef.current?.setPage(index);
+                    }
                   }}
                   activeOpacity={0.8}
                   style={{
@@ -1394,14 +1387,14 @@ export default function MatchDetailScreen({ route, navigation }) {
         <View style={styles.mainContent}>
           <PagerView
             ref={pagerRef}
-            style={{ height: activeTab === 'detalles' ? 600 : (activeTab === 'mapa' ? 500 : 800) }}
+            style={styles.matchPager}
             initialPage={0}
+            offscreenPageLimit={1}
+            overScrollMode="never"
             onPageSelected={(e) => {
               const pos = e.nativeEvent.position;
               if (typeof pos === 'number' && pos >= 0 && pos < TABS.length) {
                 setActiveTab(TABS[pos]);
-                positionAnim.setValue(pos);
-                offsetAnim.setValue(0);
               }
             }}
             onPageScroll={onPageScrollHandler}
@@ -1503,10 +1496,15 @@ const styles = StyleSheet.create({
   actionBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   actionBtnOutline: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, height: 52, borderRadius: Radius.lg, borderWidth: 2 },
   actionBtnTextOutline: { fontSize: 15, fontWeight: '700' },
-  videoPlayer: { aspectRatio: 16 / 9, borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', ...Shadow.lg },
-  videoThumb: { width: '100%', height: '100%', opacity: 0.8 },
-  playBtnWrap: { ...StyleSheet.absoluteFillObject, justifyContent: 'center', alignItems: 'center' },
-  playBtn: { width: 80, height: 80, borderRadius: 40, justifyContent: 'center', alignItems: 'center' },
+  videoPlayer: { width: '100%', aspectRatio: 16 / 9, borderRadius: Radius.xl, overflow: 'hidden', position: 'relative', backgroundColor: '#000', ...Shadow.lg },
+  matchPager: { height: 800 },
+  videoLink: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', zIndex: 1 },
+  videoOverlay: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  videoOverlayContent: { flex: 1, width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', gap: Spacing.md },
+  videoThumb: { width: '100%', height: '100%', backgroundColor: '#17212b' },
+  videoShade: { ...StyleSheet.absoluteFillObject, zIndex: 1, backgroundColor: 'rgba(0,0,0,0.30)' },
+  playBtnWrap: { ...StyleSheet.absoluteFillObject, zIndex: 2, justifyContent: 'center', alignItems: 'center' },
+  playButton: { width: 76, height: 76, borderRadius: 38, justifyContent: 'center', alignItems: 'center', paddingLeft: 4, backgroundColor: '#0f9f7a', borderWidth: 3, borderColor: '#ffffff', elevation: 6, ...Shadow.lg },
   clipListHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: Spacing.sm },
   sectionTitle: { fontSize: 18, fontWeight: '900' },
   clipCount: { fontSize: 10, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 4, borderRadius: Radius.sm },

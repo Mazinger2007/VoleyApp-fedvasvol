@@ -7,7 +7,31 @@ import { useEffect, useRef, useCallback } from 'react';
 import { AppState } from 'react-native';
 import { fetchAndParse } from '../utils/htmlParser';
 
-const POLL_INTERVAL_MS = 10_000; // 10 seconds between polls
+// Sondeo adaptativo: rápido solo cuando hay partidos en vivo, lento el resto
+// del tiempo. Reduce muchísimo la presión de rate-limit del servidor sin
+// perder la detección temprana de "EN CURSO".
+const FAST_POLL_MS = 10_000;  // con partidos en vivo o próximos a empezar
+const IDLE_POLL_MS = 60_000;  // sin señal de actividad
+
+/** Detecta indicios de actividad en vivo (partido EN CURSO o que empieza ya). */
+function hasLiveIndicators(blocks) {
+  const now = Date.now();
+  return (blocks || []).some((b) => {
+    if (b?.type !== 'table') return false;
+    const matches = b.matches || [];
+    return matches.some((m) => {
+      if (m?.state === 'live' || m?.status === 'live') return true;
+      if (m?.state === 'upcoming' && m?.rawDate) {
+        const t = new Date(String(m.rawDate).replace(/GMT([+-]\d{2}:\d{2})?/, 'UTC$1')).getTime();
+        if (Number.isFinite(t)) {
+          const diffH = (t - now) / 3600000;
+          return diffH > -3 && diffH < 3; // ventana ±3h del horario previsto
+        }
+      }
+      return false;
+    });
+  });
+}
 
 /**
  * Serializes live-relevant data so we can detect changes without deep equal.
@@ -34,7 +58,7 @@ function scoreSnapshot(blocks) {
  * @param {Function}    onResultChange - Optional callback called when any change is detected.
  */
 export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
-  const timerRef = useRef(null);
+  const intervalRef = useRef(FAST_POLL_MS);
   const lastSnapshotRef = useRef('');
   const appStateRef = useRef(AppState.currentState);
   const isFetchingRef = useRef(false);
@@ -43,13 +67,17 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
     if (!url || isFetchingRef.current) return;
     isFetchingRef.current = true;
     try {
-      const newBlocks = await fetchAndParse(url);
+      // force=true: el sondeo debe ver resultados NUEVOS, nunca caché.
+      const newBlocks = await fetchAndParse(url, { force: true });
       const newSnapshot = scoreSnapshot(newBlocks);
       if (newSnapshot !== lastSnapshotRef.current) {
         lastSnapshotRef.current = newSnapshot;
         onUpdate(newBlocks);
         onResultChange?.();
       }
+      // Adaptativo: mientras haya partidos con cambios, sondeo rápido;
+      // si todo está tranquilo, bajamos a 60s para no provocar rate-limits.
+      intervalRef.current = hasLiveIndicators(newBlocks) ? FAST_POLL_MS : IDLE_POLL_MS;
     } catch (_) {
       // Ignore polling errors silently
     } finally {
@@ -61,8 +89,16 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
     if (!url || !currentBlocks?.length) return;
 
     lastSnapshotRef.current = scoreSnapshot(currentBlocks);
+    intervalRef.current = hasLiveIndicators(currentBlocks) ? FAST_POLL_MS : IDLE_POLL_MS;
 
-    timerRef.current = setInterval(poll, POLL_INTERVAL_MS);
+    let timeoutId = null;
+    const scheduleNext = () => {
+      timeoutId = setTimeout(async () => {
+        await poll();
+        scheduleNext();
+      }, intervalRef.current);
+    };
+    scheduleNext();
 
     // Also handle app coming back to foreground
     const sub = AppState.addEventListener('change', (state) => {
@@ -73,7 +109,7 @@ export function useLivePolling(url, currentBlocks, onUpdate, onResultChange) {
     });
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timeoutId) clearTimeout(timeoutId);
       sub.remove();
     };
   }, [url, currentBlocks, poll]);

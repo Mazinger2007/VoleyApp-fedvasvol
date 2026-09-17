@@ -15,6 +15,7 @@ import AuthModal from '../../components/AuthModal';
 import ContactModal from '../../components/ContactModal';
 import StatusModal from '../../components/StatusModal';
 import { clearLogoColorCache } from '../../utils/logoColorCache';
+import { clearPersistentCache } from '../../utils/persistentCache';
 
 const TOGGLE_WIDTH = 51;
 const TOGGLE_HEIGHT = 31;
@@ -83,6 +84,7 @@ export default function ProfileScreen({ navigation }) {
   const { favorites, removeFavorite, reorderFavorites } = useFavorites();
 
   const [avatarUri, setAvatarUri] = useState(null);
+  const avatarOpacity = useRef(new Animated.Value(1)).current;
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showContactModal, setShowContactModal] = useState(false);
@@ -121,12 +123,30 @@ export default function ProfileScreen({ navigation }) {
       if (!result.canceled && result.assets?.[0]?.uri) {
         const uri = result.assets[0].uri;
         setAvatarUri(uri);
+        avatarOpacity.setValue(1);
         await AsyncStorage.setItem(AVATAR_KEY, uri);
       }
     } catch (e) {
       console.warn('[Profile] Image picker error:', e);
     }
   }, []);
+
+  const clearAvatar = useCallback(async () => {
+    try {
+      Animated.timing(avatarOpacity, {
+        toValue: 0,
+        duration: 220,
+        useNativeDriver: true,
+      }).start(async ({ finished }) => {
+        if (!finished) return;
+        setAvatarUri(null);
+        avatarOpacity.setValue(1);
+        await AsyncStorage.removeItem(AVATAR_KEY);
+      });
+    } catch (e) {
+      console.warn('[Profile] Clear avatar error:', e);
+    }
+  }, [avatarOpacity]);
 
   const handleSignOut = useCallback(async () => {
     try { await signOut(); } catch {}
@@ -185,9 +205,15 @@ export default function ProfileScreen({ navigation }) {
         {/* Hero Section */}
         <View style={[styles.hero, { backgroundColor: colors.primary }]}>
           <View style={styles.heroBgCircle} />
-          <TouchableOpacity onPress={pickAvatar} activeOpacity={0.85} style={styles.heroAvatarWrap}>
+          <TouchableOpacity
+            onPress={pickAvatar}
+            onLongPress={clearAvatar}
+            delayLongPress={1000}
+            activeOpacity={0.85}
+            style={styles.heroAvatarWrap}
+          >
             {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={styles.heroAvatar} />
+              <Animated.Image source={{ uri: avatarUri }} style={[styles.heroAvatar, { opacity: avatarOpacity }]} />
             ) : (
               <View style={styles.heroAvatarPlaceholder}>
                 <MaterialIcons name="person" size={44} color={colors.primary} />
@@ -400,13 +426,18 @@ export default function ProfileScreen({ navigation }) {
             onPress={async () => {
               try {
                 await clearLogoColorCache();
+                await clearPersistentCache();
                 const allKeys = await AsyncStorage.getAllKeys();
                 const ytKeys = (allKeys || []).filter(k => k.startsWith('yt_video_'));
                 if (ytKeys.length > 0) {
                   await AsyncStorage.multiRemove(ytKeys);
                 }
-                const total = ytKeys.length;
-                setStatusModal({ visible: true, title: 'Caché borrado', message: `Se han eliminado los colores de escudos y ${total} vídeos en caché.`, type: 'success' });
+                const fedvasKeys = (allKeys || []).filter(k => k.startsWith('@fedvas_'));
+                if (fedvasKeys.length > 0) {
+                  await AsyncStorage.multiRemove(fedvasKeys);
+                }
+                const total = ytKeys.length + fedvasKeys.length;
+                setStatusModal({ visible: true, title: 'Caché borrado', message: `Se han eliminado los colores de escudos, ${total} entradas de datos y vídeos en caché.`, type: 'success' });
               } catch {
                 setStatusModal({ visible: true, title: 'Error', message: 'No se pudo borrar el caché.', type: 'error' });
               }

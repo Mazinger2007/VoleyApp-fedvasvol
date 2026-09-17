@@ -41,7 +41,7 @@ export default function LoginScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.header}>
-            <Text style={[styles.title, { color: colors.textPrimary }]}>Voleibol Vizcaya</Text>
+            <Text style={[styles.title, { color: colors.textPrimary }]}>Voleibol Euskadi</Text>
             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Inicia sesión para continuar</Text>
           </View>
 

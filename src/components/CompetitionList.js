@@ -5,12 +5,28 @@ import { MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { Spacing, Typography, Radius } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useFetch } from '../hooks/useFetch';
+import { resultCache } from '../hooks/useFetch';
 import { toRankingUrl } from '../utils/htmlParser';
+import { loadLeagueShields, saveLeagueShields } from '../utils/teamCache';
+import { getCachedBlocksSync } from '../utils/persistentCache';
 
 
-const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfiguring }) {
+const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfiguring, leagueUrl }) {
   const [imageErrs, setImageErrs] = useState({});
+  const [cachedShields, setCachedShields] = useState(null);
   const isMobile = Platform.OS !== 'web';
+
+  // Cargar escudos guardados de esta liga (evita refetch si el ranking falla o tarda)
+  useEffect(() => {
+    if (!leagueUrl) return;
+    let active = true;
+    loadLeagueShields(leagueUrl).then((list) => {
+      if (active && Array.isArray(list) && list.length > 0) {
+        setCachedShields(list);
+      }
+    });
+    return () => { active = false; };
+  }, [leagueUrl]);
 
   const logosData = useMemo(() => {
     if (!blocks || blocks.length === 0) return [];
@@ -87,17 +103,44 @@ const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfigurin
     return [];
   }, [blocks]);
 
+  // Persistir escudos reales del ranking para no refetchear la próxima vez
+  useEffect(() => {
+    if (!leagueUrl) return;
+    const realLogos = logosData
+      .filter((l) => !l.isPlaceholder && l.url)
+      .map((l) => ({ url: l.url, label: l.label }));
+    if (realLogos.length > 0) {
+      saveLeagueShields(leagueUrl, realLogos);
+    }
+  }, [logosData, leagueUrl]);
+
+  // Priorizar datos frescos; si el ranking aún no carga/fralla, usar los guardados
+  const effectiveLogos = useMemo(() => {
+    if (logosData.some((l) => !l.isPlaceholder && l.url)) return logosData;
+    if (Array.isArray(cachedShields) && cachedShields.length > 0) {
+      return cachedShields.map((c) => ({
+        url: c.url,
+        fallbackUrl: null,
+        isPlaceholder: false,
+        label: c.label || 'EQ',
+      }));
+    }
+    return logosData;
+  }, [logosData, cachedShields]);
+
   if (isConfiguring) {
     return <DefaultShields isDark={isDark} />;
   }
 
-  if (logosData.length > 0) {
+  if (effectiveLogos.length > 0) {
     return (
       <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 12 }}>
-        {logosData.map((logo, idx) => {
+        {effectiveLogos.map((logo, idx) => {
           const initials = logo.fallbackUrl?.match(/name=([^&]+)/)?.[1] || logo.label || '';
           const isGeneric = initials.toLowerCase() === 'se' || initials.toLowerCase() === 'sq' || initials.toLowerCase() === 'eq';
           const shouldUseAvatar = !isMobile && !!logo.fallbackUrl;
+          const useCached = !logo.isPlaceholder && logo.url && !imageErrs[idx];
+          const useCachedAvatar = !useCached && !isMobile && logo.fallbackUrl;
           
           return (
             <View key={idx} style={{
@@ -108,14 +151,14 @@ const LeagueShields = memo(function LeagueShields({ blocks, isDark, isConfigurin
               marginLeft: idx === 0 ? 0 : -12, elevation: 1, overflow: 'hidden',
               zIndex: 10 - idx
             }}>
-              {(!logo.isPlaceholder && !imageErrs[idx] && logo.url) ? (
+              {useCached ? (
                 <Image
                   source={{ uri: logo.url }}
                   onError={() => setImageErrs(p => ({ ...p, [idx]: true }))}
                   style={{ width: '95%', height: '95%' }}
                   resizeMode="contain"
                 />
-              ) : shouldUseAvatar && !isGeneric ? (
+              ) : useCachedAvatar && !isGeneric ? (
                 <Image
                   source={{ uri: logo.fallbackUrl }}
                   style={{ width: '100%', height: '100%' }}
@@ -185,7 +228,7 @@ function isActive(status) {
   return s.includes('curso') || s.includes('activ') || s.includes('en juego');
 }
 
-function CompetitionCard({ item, blocks, onPress, onMainLogoReady }) {
+function CompetitionCard({ item, blocks, onPress, onMainLogoReady, leagueUrl }) {
   const { colors: Colors, isDark } = useTheme();
   const { name, status, season, category, sex, teamCount, organizer, logo } = item;
   const active = isActive(status);
@@ -288,7 +331,7 @@ function CompetitionCard({ item, blocks, onPress, onMainLogoReady }) {
 
         {/* Bottom Section */}
         <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Spacing.md, borderTopWidth: 1, borderTopColor: isDark ? '#334155' : '#f1f5f9', justifyContent: 'space-between' }}>
-          <LeagueShields blocks={blocks} isDark={isDark} isConfiguring={/configurando/i.test(status)} />
+          <LeagueShields blocks={blocks} isDark={isDark} isConfiguring={/configurando/i.test(status)} leagueUrl={leagueUrl} />
           <View style={{ backgroundColor: Colors.primary, paddingHorizontal: 16, paddingVertical: 8, borderRadius: Radius.md, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
             <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '600' }}>
               {/(txapelketa|topaketa|copa|kopa|cup|fase|eliminatoria|final|kanporaketa)/i.test(name || '') ? 'Ver Torneo' : 'Ver Liga'}
@@ -382,9 +425,12 @@ function SkeletonCompetitionCard() {
 }
 
 
-function LeagueCardWrapper({ item, loadGeneration, onPress, onLoaded }) {
+function LeagueCardWrapper({ item, loadGeneration, onPress, onLoaded, enableRankingFetch }) {
   const rankingUrl = (!item.href || /configurando/i.test(item.status)) ? null : toRankingUrl(item.href);
-  const { blocks, loading } = useFetch(rankingUrl);
+  // Solo las primeras cards prefetchean su ranking (escudos de equipos). El resto
+  // usa la caché persistente, evitando decenas de peticiones que ralentizan la UI.
+  const fetchUrl = enableRankingFetch ? rankingUrl : null;
+  const { blocks, loading } = useFetch(fetchUrl);
   const reportedRef = useRef(false);
   const [fetchReady, setFetchReady] = useState(false);
   const [mainLogoReady, setMainLogoReady] = useState(!item.logo);
@@ -403,7 +449,17 @@ function LeagueCardWrapper({ item, loadGeneration, onPress, onLoaded }) {
     setFetchReady(false);
     setMainLogoReady(!item.logo);
     reportedRef.current = false;
-  }, [rankingUrl, item.logo]);
+  }, [fetchUrl, item.logo]);
+
+  // Si esta liga ya tiene ranking en caché (disco), la card cuenta como lista
+  // AL INSTANTE: no bloquea la aparición de la lista esperando red.
+  const hasDiskCache = fetchUrl ? Boolean(getCachedBlocksSync(fetchUrl)) : true;
+  useEffect(() => {
+    if (hasDiskCache && !reportedRef.current) {
+      reportedRef.current = true;
+      onLoaded?.();
+    }
+  }, [hasDiskCache, onLoaded, loadGeneration]);
 
   useEffect(() => {
     if (!loading) {
@@ -423,6 +479,7 @@ function LeagueCardWrapper({ item, loadGeneration, onPress, onLoaded }) {
       item={item}
       onPress={onPress}
       blocks={blocks}
+      leagueUrl={rankingUrl}
       onMainLogoReady={() => setMainLogoReady(true)}
     />
   );
@@ -434,6 +491,8 @@ export default function CompetitionList({
   loadGeneration = 0,
 }) {
   const { colors: Colors, isDark } = useTheme();
+  // Nº de cards con fetch de ranking (escudos); el resto usa caché persistente.
+  const RANKING_PREFETCH_LIMIT = 6;
 
   if (!tableBlock?.rows?.length) {
     return (
@@ -463,56 +522,106 @@ export default function CompetitionList({
   const [loadedCount, setLoadedCount] = useState(0);
   const [forcedReady, setForcedReady] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.92)).current;
   const isReady = forcedReady || loadedCount >= totalCards;
 
   const handleLoaded = useCallback(() => {
     setLoadedCount(prev => prev + 1);
   }, []);
 
+  // ¿Alguna card aún necesita red (sin caché en disco)?
+  const needsNetwork = tournaments.some(
+    (t) => t.href && !/configurando/i.test(t.status) && !getCachedBlocksSync(toRankingUrl(t.href))
+  );
+
   // Reset al cambiar de datos
   useEffect(() => {
     fadeAnim.setValue(0);
+    scaleAnim.setValue(0.92);
     setForcedReady(false);
     setLoadedCount(0);
-    // Safety timeout: si en 8s no han cargado todos, mostramos igualmente
-    const timer = setTimeout(() => setForcedReady(true), 8000);
+    if (!needsNetwork) {
+      // Todo está en caché: mostrar la lista sin esperar safety timeout.
+      setForcedReady(true);
+      return undefined;
+    }
+    // Safety timeout: si tardan demasiado, mostramos igualmente
+    const timer = setTimeout(() => setForcedReady(true), needsNetwork ? 5000 : 1000);
     return () => clearTimeout(timer);
-  }, [tableBlock, loadGeneration]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tableBlock, loadGeneration, needsNetwork]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fade-in cuando todas las cards están listas
+  // Fade-in + scale cuando todas las cards están listas
   useEffect(() => {
     if (isReady) {
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 280,
-        useNativeDriver: true,
-      }).start();
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 280,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 9,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+      ]).start();
     }
   }, [isReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const displayLoaded = Math.min(loadedCount, totalCards);
+
   return (
     <View>
-      {/* Skeletons: visibles mientras !isReady */}
+      {/* Skeletons + Progress bar: visibles mientras !isReady */}
       {!isReady && (
-        <View style={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md }}>
-          {tournaments.map((_, i) => (
-            <SkeletonCompetitionCard key={i} />
-          ))}
+        <View>
+          {/* Barra de progreso */}
+          <View style={{ paddingHorizontal: Spacing.lg, paddingTop: Spacing.md }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <Text style={{ fontSize: 12, color: Colors.textMuted }}>
+                Cargando competiciones...
+              </Text>
+              <Text style={{ fontSize: 12, color: Colors.primary, fontWeight: '700' }}>
+                {displayLoaded}/{totalCards}
+              </Text>
+            </View>
+            <View style={{
+              height: 4,
+              backgroundColor: isDark ? '#334155' : '#e2e8f0',
+              borderRadius: 4,
+              overflow: 'hidden',
+            }}>
+              <View style={{
+                width: totalCards > 0 ? `${(displayLoaded / totalCards) * 100}%` : '0%',
+                height: '100%',
+                backgroundColor: Colors.primary,
+                borderRadius: 4,
+              }} />
+            </View>
+          </View>
+
+          <View style={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md, gap: Spacing.md }}>
+            {tournaments.map((_, i) => (
+              <SkeletonCompetitionCard key={i} />
+            ))}
+          </View>
         </View>
       )}
 
-      {/* Cards reales con fade-in */}
-      <Animated.View style={{ opacity: fadeAnim }}>
+      {/* Cards reales con fade-in + scale */}
+      <Animated.View style={{ opacity: fadeAnim, transform: [{ scale: scaleAnim }] }}>
         <FlatList
           data={tournaments}
           keyExtractor={(item) => item.id}
           extraData={loadGeneration}
           contentContainerStyle={{ paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md }}
           ItemSeparatorComponent={() => <View style={{ height: Spacing.md }} />}
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => (
             <LeagueCardWrapper
               item={item}
               loadGeneration={loadGeneration}
+              enableRankingFetch={index < RANKING_PREFETCH_LIMIT || (item.href ? resultCache.has(toRankingUrl(item.href)) : false)}
               onPress={(tipo) => item.href && onOpenTournament?.(item.href, item.name, tipo)}
               onLoaded={handleLoaded}
             />

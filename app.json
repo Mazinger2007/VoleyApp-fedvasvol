@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Voleibol Vizcaya",
-    "slug": "voleibol-vizcaya",
+    "name": "Voleibol Euskadi",
+    "slug": "voleibol-euskadi",
     "version": "0.3.9",
     "orientation": "portrait",
     "splash": {
@@ -13,10 +13,10 @@
     "icon": "./assets/Logo.png",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.personal.voleibolvizcaya"
+      "bundleIdentifier": "com.voleibol.voleiboleuskadi"
     },
     "android": {
-      "package": "com.personal.voleibolvizcaya",
+      "package": "com.voleibol.voleiboleuskadi",
       "adaptiveIcon": {
         "foregroundImage": "./assets/Logo.png",
         "backgroundColor": "#FFFFFF"
@@ -27,7 +27,7 @@
         "android.permission.NOTIFICATION_SERVICE"
       ]
     },
-    "scheme": "voleibolvizcaya",
+    "scheme": "voleiboleuskadi",
     "web": {
       "favicon": "./assets/Logo.png"
     },

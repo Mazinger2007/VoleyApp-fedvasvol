@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { MaterialIcons } from '@expo/vector-icons';
 import CompetitionTable from '../../components/CompetitionTable';
-import MatchList, { getMatchSummary } from '../../components/MatchList';
+import MatchList, { getMatchSummary, parseMatchDateTime } from '../../components/MatchList';
 import Bracket from '../../components/Bracket';
 import LoadingView from '../../components/LoadingView';
 import ErrorView from '../../components/ErrorView';
@@ -203,7 +203,8 @@ export default function LeagueDetailScreen({ route, navigation }) {
   // Search State
   const [isSearchModalVisible, setIsSearchModalVisible] = useState(false);
   const [searchTeams, setSearchTeams] = useState([]); // Multi-select teams
-  const [searchDate, setSearchDate] = useState(null);
+  const [searchDateFrom, setSearchDateFrom] = useState(null);
+  const [searchDateTo, setSearchDateTo] = useState(null);
   const [searchLocations, setSearchLocations] = useState([]); // Multi-select locations
   const [isTeamPickerVisible, setIsTeamPickerVisible] = useState(false);
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
@@ -211,7 +212,7 @@ export default function LeagueDetailScreen({ route, navigation }) {
   const [calendarYear, setCalendarYear] = useState(new Date().getFullYear());
   const [calendarMonth, setCalendarMonth] = useState(new Date().getMonth());
 
-  const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDate;
+  const hasActiveFilters = searchTeams.length > 0 || searchLocations.length > 0 || !!searchDateFrom || !!searchDateTo;
 
   const positionAnim = useRef(new Animated.Value(defaultTab === 'calendar' ? 1 : 0)).current;
   const offsetAnim = useRef(new Animated.Value(0)).current;
@@ -667,12 +668,22 @@ export default function LeagueDetailScreen({ route, navigation }) {
       result = result.filter(m => searchLocations.includes(m.venue || 'Sede por confirmar'));
     }
 
-    if (searchDate) {
-      result = result.filter(m => (m.rawDate || m.date) === searchDate);
+    if (searchDateFrom || searchDateTo) {
+      const fromMs = searchDateFrom ? parseMatchDateTime(searchDateFrom)?.getTime() : null;
+      const toMs = searchDateTo ? parseMatchDateTime(searchDateTo)?.getTime() : null;
+      result = result.filter(m => {
+        const matchDate = m.rawDate || m.date;
+        if (!matchDate) return false;
+        const matchMs = parseMatchDateTime(matchDate)?.getTime();
+        if (!matchMs) return false;
+        if (fromMs && matchMs < fromMs) return false;
+        if (toMs && matchMs > toMs) return false;
+        return true;
+      });
     }
 
     return result;
-  }, [flattenedMatches, searchTeams, searchLocations, searchDate, hasActiveFilters]);
+  }, [flattenedMatches, searchTeams, searchLocations, searchDateFrom, searchDateTo, hasActiveFilters]);
 
   const allAvailableTeams = useMemo(() => {
     const teams = new Set();
@@ -685,7 +696,11 @@ export default function LeagueDetailScreen({ route, navigation }) {
 
   const allAvailableDates = useMemo(() => {
     const dates = flattenedMatches.map(m => m.rawDate || m.date).filter(Boolean);
-    return [...new Set(dates)].sort();
+    return [...new Set(dates)].sort((a, b) => {
+      const aMs = parseMatchDateTime(a)?.getTime() || 0;
+      const bMs = parseMatchDateTime(b)?.getTime() || 0;
+      return aMs - bMs;
+    });
   }, [flattenedMatches]);
 
   const allAvailableLocations = useMemo(() => {
@@ -694,7 +709,7 @@ export default function LeagueDetailScreen({ route, navigation }) {
   }, [flattenedMatches]);
 
   useEffect(() => {
-    if (isDatePickerVisible && !searchDate && allAvailableDates.length > 0) {
+    if (isDatePickerVisible && !searchDateFrom && !searchDateTo && allAvailableDates.length > 0) {
       const first = allAvailableDates[0];
       const match = first.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
       if (match) {
@@ -703,14 +718,15 @@ export default function LeagueDetailScreen({ route, navigation }) {
           setCalendarMonth(mIdx);
         }
       }
-    } else if (isDatePickerVisible && searchDate) {
-      const match = searchDate.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
+    } else if (isDatePickerVisible && (searchDateFrom || searchDateTo)) {
+      const target = searchDateFrom || searchDateTo;
+      const match = target.toLowerCase().match(/(\d+)\s+de\s+([a-z]+)/);
       if (match) {
         const mIdx = MONTHS.findIndex(m => m.toLowerCase().startsWith(match[2].substring(0, 3)));
         if (mIdx !== -1) setCalendarMonth(mIdx);
       }
     }
-  }, [isDatePickerVisible, searchDate, allAvailableDates]);
+  }, [isDatePickerVisible, searchDateFrom, searchDateTo, allAvailableDates]);
 
   const rankingTeamCount = useMemo(() => {
     if (!rankingTables || rankingTables.length === 0) return 0;
@@ -938,7 +954,7 @@ export default function LeagueDetailScreen({ route, navigation }) {
     calendarDayText: { fontSize: 15 },
     matchDot: { width: 4, height: 4, borderRadius: 2, marginTop: 2 },
     modalFooterBtn: { height: 50, borderRadius: Radius.lg, justifyContent: 'center', alignItems: 'center' },
-    modalFooterBtnText: { fontSize: 14, fontWeight: 'bold', letterSpacing: 0.5 },
+    modalFooterBtnText: { fontSize: 14, fontWeight: 'bold', letterSpacing: 0.5, color: '#fff' },
 
     // ── Season configuration modal ───────────────────────────────────────
     modalOverlay: {
@@ -1249,7 +1265,8 @@ export default function LeagueDetailScreen({ route, navigation }) {
             style={[styles.clearBtn, { backgroundColor: Colors.primary }]}
             onPress={() => {
               setSearchTeams([]);
-              setSearchDate(null);
+              setSearchDateFrom(null);
+              setSearchDateTo(null);
               setSearchLocations([]);
             }}
           >
@@ -1267,7 +1284,8 @@ export default function LeagueDetailScreen({ route, navigation }) {
           </Text>
           <TouchableOpacity onPress={() => {
             setSearchTeams([]);
-            setSearchDate(null);
+            setSearchDateFrom(null);
+            setSearchDateTo(null);
             setSearchLocations([]);
           }}>
             <Text style={{ color: Colors.primary, fontWeight: 'bold', fontSize: 13 }}>Limpiar</Text>
@@ -1486,12 +1504,15 @@ export default function LeagueDetailScreen({ route, navigation }) {
                     onPress={() => setIsDatePickerVisible(true)}
                     style={[styles.searchFilterPill, { backgroundColor: Colors.surfaceAlt, marginBottom: Spacing.md }]}
                   >
-                    <MaterialIcons name="event" size={20} color={searchDate ? Colors.primary : Colors.textMuted} />
-                    <Text style={{ flex: 1, fontSize: 14, color: searchDate ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }}>
-                      {searchDate || 'Cualquier fecha'}
+                    <MaterialIcons name="event" size={20} color={searchDateFrom || searchDateTo ? Colors.primary : Colors.textMuted} />
+                    <Text style={{ flex: 1, fontSize: 14, color: searchDateFrom || searchDateTo ? Colors.textPrimary : Colors.textMuted, marginLeft: 10 }}>
+                      {searchDateFrom && searchDateTo ? `${searchDateFrom} - ${searchDateTo}`
+                        : searchDateFrom ? `Desde ${searchDateFrom}`
+                          : searchDateTo ? `Hasta ${searchDateTo}`
+                            : 'Cualquier fecha'}
                     </Text>
-                    {searchDate && (
-                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchDate(null); }} style={{ padding: 4 }}>
+                    {(searchDateFrom || searchDateTo) && (
+                      <TouchableOpacity onPress={(e) => { e.stopPropagation(); setSearchDateFrom(null); setSearchDateTo(null); }} style={{ padding: 4 }}>
                         <MaterialIcons name="close" size={16} color={Colors.textMuted} />
                       </TouchableOpacity>
                     )}
@@ -1770,6 +1791,13 @@ export default function LeagueDetailScreen({ route, navigation }) {
             </View>
             <View style={styles.centeredModalWrapper} pointerEvents="box-none">
               <View style={[styles.selectionModal, { backgroundColor: Colors.surface, width: '100%', maxWidth: 450 }]}>
+                <View style={{ paddingHorizontal: Spacing.sm, marginBottom: Spacing.sm }}>
+                  <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center' }}>
+                    {searchDateFrom && !searchDateTo
+                      ? 'Selecciona la fecha fin'
+                      : 'Selecciona la fecha inicio'}
+                  </Text>
+                </View>
                 <View style={styles.calendarHeader}>
                   <TouchableOpacity onPress={() => {
                     if (calendarMonth === 0) { setCalendarMonth(11); setCalendarYear(calendarYear - 1); }
@@ -1796,10 +1824,11 @@ export default function LeagueDetailScreen({ route, navigation }) {
                   {getMonthDays(calendarYear, calendarMonth).map((day, idx) => {
                     if (!day) return <View key={`empty-${idx}`} style={styles.calendarDayCell} />;
 
-                    // Check if this date has matches
                     const formattedDate = `${day} de ${MONTHS[calendarMonth].toLowerCase()}`;
                     const hasMatch = allAvailableDates.some(d => d.toLowerCase().startsWith(formattedDate));
-                    const isSelected = searchDate && searchDate.toLowerCase().startsWith(formattedDate);
+                    const isFrom = searchDateFrom && searchDateFrom.toLowerCase().startsWith(formattedDate);
+                    const isTo = searchDateTo && searchDateTo.toLowerCase().startsWith(formattedDate);
+                    const isSelected = isFrom || isTo;
 
                     return (
                       <TouchableOpacity
@@ -1812,8 +1841,23 @@ export default function LeagueDetailScreen({ route, navigation }) {
                         disabled={!hasMatch}
                         onPress={() => {
                           const actualDate = allAvailableDates.find(d => d.toLowerCase().startsWith(formattedDate));
-                          setSearchDate(actualDate);
-                          setIsDatePickerVisible(false);
+                          if (!actualDate) return;
+                          if (!searchDateFrom) {
+                            setSearchDateFrom(actualDate);
+                          } else if (!searchDateTo) {
+                            const fromMs = parseMatchDateTime(searchDateFrom)?.getTime();
+                            const currentMs = parseMatchDateTime(actualDate)?.getTime();
+                            if (fromMs && currentMs && currentMs < fromMs) {
+                              setSearchDateTo(searchDateFrom);
+                              setSearchDateFrom(actualDate);
+                            } else {
+                              setSearchDateTo(actualDate);
+                            }
+                            setIsDatePickerVisible(false);
+                          } else {
+                            setSearchDateFrom(actualDate);
+                            setSearchDateTo(null);
+                          }
                         }}
                       >
                         <Text style={[
@@ -1832,7 +1876,7 @@ export default function LeagueDetailScreen({ route, navigation }) {
                 <TouchableOpacity
                   style={[styles.modalFooterBtn, { backgroundColor: Colors.surfaceAlt, marginTop: Spacing.xl }]}
                   activeOpacity={0.9}
-                  onPress={() => { setSearchDate(null); setIsDatePickerVisible(false); }}
+                  onPress={() => { setSearchDateFrom(null); setSearchDateTo(null); setIsDatePickerVisible(false); }}
                 >
                   <Text style={[styles.modalFooterBtnText, { color: Colors.textPrimary }]}>TODAS LAS FECHAS</Text>
                 </TouchableOpacity>

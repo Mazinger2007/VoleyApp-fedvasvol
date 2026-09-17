@@ -16,12 +16,6 @@ function parseTournamentMatchDetail(html) {
     if (cellMatches.length > 0) {
       tdRaw = row[1].match(/<td[^>]*>.*?<\/td>/is)?.[0] || '';
     }
-    // Loguear el HTML crudo del primer <td>
-    if (typeof window !== 'undefined' && window.console) {
-      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
-    } else {
-      console.log(`[parseTournamentMatchDetail] Fila ${idx}: primer <td>:`, tdRaw);
-    }
     // Buscar el primer <td ... data-original-title="NOMBRE" ...> o title="NOMBRE"
     let tdMatch = tdRaw.match(/data-original-title=["']([^"']*)["']/i);
     if (tdMatch && tdMatch[1] && tdMatch[1].trim().length > 0) {
@@ -36,11 +30,6 @@ function parseTournamentMatchDetail(html) {
     }
     // Los sets están en las celdas a partir de la segunda
     const setValues = cellMatches.slice(1).map(m => parseInt(m[1].replace(/<[^>]+>/g, '').trim(), 10) || 0);
-    if (typeof window !== 'undefined' && window.console) {
-      window.console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
-    } else {
-      console.log(`[parseTournamentMatchDetail] Fila ${idx}: teamName="${teamName}"`);
-    }
     return { teamName, setValues };
   });
 
@@ -50,22 +39,75 @@ function parseTournamentMatchDetail(html) {
     // Calcular sets ganados
     const homeScore = home.setValues.filter((h, i) => h > (away.setValues[i] || 0)).length;
     const awayScore = away.setValues.filter((a, i) => a > (home.setValues[i] || 0)).length;
-    if (typeof window !== 'undefined' && window.console) {
-      window.console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
-    } else {
-      console.log(`[parseTournamentMatchDetail] Equipos extraídos: "${home.teamName}" vs "${away.teamName}"`);
-    }
+    const matchDate = extractTournamentMatchDate(html);
     return [{
       homeTeam: home.teamName,
       awayTeam: away.teamName,
+      homeLogo: null,
+      awayLogo: null,
+      date: matchDate,
+      rawDate: matchDate,
       sets: home.setValues.map((h, i) => ({ home: h, away: away.setValues[i] || 0 })),
       homeScore,
       awayScore,
       scoreText: `${homeScore} - ${awayScore}`,
     }];
   }
-  console.log('[parseTournamentMatchDetail] No se pudieron extraer ambos equipos y sets correctamente:', JSON.stringify(teamRows));
   return [];
+}
+
+const MONTHS_ES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+const MONTHS_ES_SHORT = MONTHS_ES.map(m => m.slice(0, 3).toLowerCase());
+const MONTHS_PAT = MONTHS_ES_SHORT.map((m, i) => m + '(?:' + MONTHS_ES[i].slice(3) + ')?').join('|');
+
+function normalizeDateToText(day, monthNum, year) {
+  const m = parseInt(monthNum, 10);
+  const y = year || new Date().getFullYear();
+  return `${parseInt(day, 10)} de ${MONTHS_ES[m - 1]} ${y}`;
+}
+
+function parseMonthName(monthStr) {
+  const lower = monthStr.toLowerCase().slice(0, 3);
+  const idx = MONTHS_ES_SHORT.indexOf(lower);
+  return idx !== -1 ? idx + 1 : null;
+}
+
+function extractTournamentMatchDate(html) {
+  if (!html) return null;
+  const s = String(html);
+  // 1. Buscar "Fecha" en estructura <div><div>Fecha</div><div>VALOR</div></div>
+  const fechaDiv = s.match(/<div[^>]*>\s*<div[^>]*>Fecha\s*<\/div>\s*<div[^>]*>([^<]*(?:\d{1,2}[^<]*){1,})<\/div>/i);
+  if (fechaDiv && fechaDiv[1]) {
+    const val = fechaDiv[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    if (val) {
+      // Try to extract structured date from the raw value
+      const dm = val.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(\d{4})/);
+      if (dm) return normalizeDateToText(dm[1], dm[2], dm[3]);
+      return val;
+    }
+  }
+  // 2. Buscar fecha genérica DD/MM/YYYY cerca de "Fecha" o "Día"
+  const fechaNear = s.match(/(?:Fecha|Día)[^<]*?(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(\d{4})/i);
+  if (fechaNear) return normalizeDateToText(fechaNear[1], fechaNear[2], fechaNear[3]);
+  // 3. Buscar fecha texto: "DD de Mes (de) AAAA" cerca de "Fecha" o "Día"
+  const mesesPat = MONTHS_PAT;
+  const fechaTexto = s.match(new RegExp('(?:Fecha|Día)\\s*[:\\.]?\\s*([^<]*?)(\\d{1,2})\\s+de\\s+(' + mesesPat + ')\\s*(?:de\\s*)?(\\d{4})?', 'i'));
+  if (fechaTexto) {
+    const monthNum = parseMonthName(fechaTexto[3]);
+    if (monthNum) return normalizeDateToText(fechaTexto[2], monthNum, fechaTexto[4]);
+    return `${fechaTexto[2]} ${fechaTexto[3]} ${fechaTexto[4] || new Date().getFullYear()}`;
+  }
+  // 4. Buscar fecha texto sin label: "DD de Mes AAAA"
+  const fechaSimple = s.match(new RegExp('(\\d{1,2})\\s+de\\s+(' + mesesPat + ')\\s*(?:de\\s*)?(\\d{4})', 'i'));
+  if (fechaSimple) {
+    const monthNum = parseMonthName(fechaSimple[2]);
+    if (monthNum) return normalizeDateToText(fechaSimple[1], monthNum, fechaSimple[3]);
+    return `${fechaSimple[1]} ${fechaSimple[2]} ${fechaSimple[3]}`;
+  }
+  // 5. Buscar fecha genérica DD/MM/YYYY en toda la página
+  const fechaAny = s.match(/(\d{1,2})\s*[\/\-]\s*(\d{1,2})\s*[\/\-]\s*(\d{4})/);
+  if (fechaAny) return normalizeDateToText(fechaAny[1], fechaAny[2], fechaAny[3]);
+  return null;
 }
 
 function extractMatchCoordinates(html) {
@@ -91,8 +133,10 @@ function extractMatchCoordinates(html) {
 // Usa htmlparser2 + domutils para recorrer el DOM sin ningún CSS original.
 
 import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as htmlparser2 from 'htmlparser2';
 import * as DomUtils from 'domutils';
+import { isChallengePage, extractChallenge, solveNonce, validateChallenge } from './fedvasChallenge';
 
 /** Helper para comprobar si un nodo es ancestro de otro en el DOM de htmlparser2 */
 const isAncestorNode = (p, n) => {
@@ -132,6 +176,48 @@ const championshipDataCache = new Map();
 const CHAMPIONSHIP_CACHE_TTL_MS = Infinity;
 
 let globalSessionCookie = '';
+
+// ─── Persistencia de la sesión anti-bot ──────────────────────────────────────
+// La cookie que valida el challenge (proof-of-work) se guarda en disco: al
+// reabrir la app NO hay que volver a resolver el reto (que en móvil puede
+// costar varios segundos de CPU). Solo se resuelve de nuevo si la cookie
+// caduca en el servidor.
+const SESSION_COOKIE_STORAGE_KEY = '@fedvas_session_cookie';
+const SESSION_COOKIE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000; // 90 días (caduca antes en el server)
+let sessionCookieSaveTimer = null;
+
+function persistSessionCookie() {
+  if (!globalSessionCookie) return;
+  if (sessionCookieSaveTimer) return;
+  sessionCookieSaveTimer = setTimeout(() => {
+    sessionCookieSaveTimer = null;
+    AsyncStorage.setItem(
+      SESSION_COOKIE_STORAGE_KEY,
+      JSON.stringify({ cookie: globalSessionCookie, t: Date.now() })
+    ).catch(() => {});
+  }, 500);
+}
+
+// Restaura la cookie de sesión al arrancar (llamado desde App.js).
+export async function hydrateSessionFromDisk() {
+  try {
+    if (globalSessionCookie) return; // ya hay sesión válida en memoria
+    const raw = await AsyncStorage.getItem(SESSION_COOKIE_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed?.cookie && Date.now() - (parsed.t || 0) < SESSION_COOKIE_MAX_AGE_MS) {
+      globalSessionCookie = parsed.cookie;
+    } else {
+      AsyncStorage.removeItem(SESSION_COOKIE_STORAGE_KEY).catch(() => {});
+    }
+  } catch (_) {
+    // ignore
+  }
+}
+
+function clearPersistedSessionCookie() {
+  AsyncStorage.removeItem(SESSION_COOKIE_STORAGE_KEY).catch(() => {});
+}
 
 // ─── Helpers de URL ─────────────────────────────────────────────────────────
 export function toAbsoluteUrl(href = '') {
@@ -214,8 +300,270 @@ function defaultRequestHeaders() {
   };
 }
 
+// ─── Protección anti rate-limit (HTTP 429) para fedvasvol.com ───────────────
+// Fedvasvol devuelve 429 "Too Many Requests" cuando recibe ráfagas de peticiones
+// desde la misma IP. Aquí serializamos las peticiones (gap mínimo entre ellas)
+// y, si aún así obtenemos 429, reintentamos con backoff respetando Retry-After.
+// El servidor soporta ráfagas paralelas sin quejarse (probado con 4-5 peticiones
+// simultáneas): el gap solo evita la ráfaga que dispara el challenge.
+const FEDVAS_MIN_GAP_MS = 120;
+const FEDVAS_MAX_RETRIES = 3;
+const FEDVAS_MAX_RETRY_AFTER_MS = 15000;
+
+let lastFedvasRequestAt = 0;
+let fedvasQueue = Promise.resolve();
+
+function wait(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error('Request aborted'));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new Error('Request aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener?.('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener?.('abort', onAbort);
+  });
+}
+
+// Espera a que la petición anterior a fedvasvol.com termine y a que se cumpla
+// el intervalo mínimo entre peticiones, para no lanzar ráfagas.
+async function fedvasGate(signal) {
+  const prev = fedvasQueue;
+  let release;
+  fedvasQueue = new Promise((resolve) => { release = resolve; });
+  await prev.catch(() => {});
+  try {
+    const elapsedSinceLast = Date.now() - lastFedvasRequestAt;
+    const waitMs = Math.max(0, FEDVAS_MIN_GAP_MS - elapsedSinceLast);
+    await wait(waitMs, signal);
+    lastFedvasRequestAt = Date.now();
+  } finally {
+    release();
+  }
+}
+
+// Wrapper de axios para peticiones a fedvasvol.com con reintento ante 429/timeouts.
+let challengeSolving = null;
+
+async function resolveFedvasChallenge(requestUrl, challenge) {
+  if (challengeSolving) return challengeSolving;
+  challengeSolving = (async () => {
+    const baseUrl = String(requestUrl || '').split('?')[0];
+    const nonce = await solveNonce(challenge.semilla, challenge.bits);
+    const { cookieHeader } = await validateChallenge(baseUrl, {
+      reto: challenge.reto,
+      firma: challenge.firma,
+      nonce,
+    });
+    if (cookieHeader) {
+      globalSessionCookie = cookieHeader;
+      persistSessionCookie();
+    }
+  })().finally(() => {
+    challengeSolving = null;
+  });
+  return challengeSolving;
+}
+
+// Revalida la sesión anti-bot cuando la cookie ha caducado (403): pide una
+// página ligera, resuelve el challenge que devuelva y guarda la cookie nueva.
+let sessionRevalidation = null;
+function revalidateSession() {
+  if (sessionRevalidation) return sessionRevalidation;
+  sessionRevalidation = (async () => {
+    try {
+      const probeUrl = `${BASE_URL}/es/tournaments`;
+      const res = await axios.request({
+        method: 'get',
+        url: probeUrl,
+        timeout: 15000,
+        headers: defaultRequestHeaders(),
+        validateStatus: () => true,
+      });
+      const body = typeof res.data === 'string' ? res.data : '';
+      if (res.status === 200 && !isChallengePage(body)) {
+        const cookieHeader = (res.headers?.['set-cookie'] || []).
+          map((item) => String(item || '').split(';')[0].trim())
+          .filter(Boolean)
+          .join('; ');
+        if (cookieHeader) {
+          globalSessionCookie = cookieHeader;
+          persistSessionCookie();
+        }
+        return;
+      }
+      if ((res.status === 429 || res.status === 403) && isChallengePage(body)) {
+        const challenge = extractChallenge(body);
+        if (challenge) {
+          await resolveFedvasChallenge(probeUrl, challenge);
+          return;
+        }
+      }
+      throw new Error('No se pudo revalidar la sesión de fedvasvol');
+    } finally {
+      sessionRevalidation = null;
+    }
+  })();
+  return sessionRevalidation;
+}
+
+async function fedvasRequest(config, { retries = FEDVAS_MAX_RETRIES } = {}) {
+  let attempt = 0;
+  let challengeResolutions = 0;
+  let staleCookieRetries = 0;
+  while (true) {
+    // Adjuntar la cookie de sesión (validada por PoW o restaurada de disco) a
+    // TODAS las peticiones: sin esto, /ranking y /calendar volverían a pagar
+    // el challenge tras reiniciar la app aunque la cookie siga vigente.
+    // Si la petición ya trae su propia Cookie, esa tiene prioridad.
+    if (globalSessionCookie && !(config.headers && config.headers.Cookie)) {
+      config.headers = { ...(config.headers || {}), Cookie: globalSessionCookie };
+    }
+    await fedvasGate(config.signal);
+    if (config.signal?.aborted) {
+      const e = new Error('Request aborted');
+      e.isAborted = true;
+      throw e;
+    }
+    try {
+      return await axios.request(config);
+    } catch (error) {
+      const status = error?.response?.status;
+      const timedOut =
+        error?.code === 'ECONNABORTED' ||
+        error?.code === 'ETIMEDOUT' ||
+        /timeout/i.test(error?.message || '');
+
+      // El servidor exige resolver su reto anti-bot (proof-of-work) antes de servir
+      // rutas como /ranking o /calendar. Lo resolvemos y reintentamos.
+      // También puede llegar como 403 con el mismo challenge, o como 403/429 sin
+      // challenge cuando la cookie de sesión ha caducado o fue rechazada.
+      if ((status === 429 || status === 403) && isChallengePage(error?.response?.data)) {
+        if (challengeResolutions >= 3) throw error;
+        const challenge = extractChallenge(error?.response?.data);
+        if (!challenge) throw error;
+        challengeResolutions += 1;
+        await resolveFedvasChallenge(config.url, challenge);
+        if (config.signal?.aborted) throw error;
+        continue;
+      }
+
+      // 403 sin challenge: cookie de sesión caducada/inválida. La descartamos
+      // (memoria y disco) y revalidamos la sesión resolviendo un challenge
+      // nuevo contra una página ligera; después reintentamos la original.
+      if (status === 403) {
+        if (globalSessionCookie) {
+          globalSessionCookie = '';
+          clearPersistedSessionCookie();
+        }
+        if (staleCookieRetries === 0 && !config._isSessionProbe) {
+          staleCookieRetries += 1;
+          await revalidateSession();
+          if (config.signal?.aborted) throw error;
+          continue;
+        }
+        if (staleCookieRetries >= 2) throw error;
+        staleCookieRetries += 1;
+        await wait(500 * staleCookieRetries, config.signal);
+        if (config.signal?.aborted) throw error;
+        continue;
+      }
+
+      if ((status === 429 || timedOut) && attempt < retries) {
+        if (config.signal?.aborted) throw error;
+        let retryAfterMs = 0;
+        if (status === 429) {
+          const raw = error?.response?.headers?.['retry-after'];
+          const seconds = Number.parseInt(raw || '', 10);
+          if (Number.isFinite(seconds) && seconds > 0) {
+            retryAfterMs = Math.min(seconds * 1000, FEDVAS_MAX_RETRY_AFTER_MS);
+          }
+        }
+        const waitMs = retryAfterMs > 0 ? retryAfterMs : Math.min(1500 * 2 ** attempt, 12000);
+        attempt += 1;
+        await wait(waitMs, config.signal);
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 function normalizeUrlForCache(url = '') {
   return String(url || '').trim();
+}
+
+// ─── Persistencia de contextos de torneo (fases, urls, temporada) ───────────
+// El contexto (inputs de ranking, url de calendario, etiqueta de temporada)
+// casi nunca cambia: se guarda en disco y se revalida en segundo plano.
+const CONTEXT_DISK_PREFIX = '@fedvas_ctx_v1:';
+const CONTEXT_DISK_TTL_MS = 24 * 60 * 60 * 1000;
+
+function persistTournamentContext(cacheKey, context) {
+  try {
+    const slim = { ...context, html: '', t: Date.now() };
+    AsyncStorage.setItem(CONTEXT_DISK_PREFIX + cacheKey, JSON.stringify(slim)).catch(() => {});
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function hydrateTournamentContext(cacheKey) {
+  try {
+    const raw = await AsyncStorage.getItem(CONTEXT_DISK_PREFIX + cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.blocks) || Date.now() - (parsed.t || 0) > CONTEXT_DISK_TTL_MS) {
+      AsyncStorage.removeItem(CONTEXT_DISK_PREFIX + cacheKey).catch(() => {});
+      return null;
+    }
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Auxiliar: cuenta tablas/brackets de un array de bloques (para logs compactos)
+function countDataBlocks(blocks = []) {
+  return blocks.filter((b) => b?.type === 'table' || b?.type === 'bracket').length;
+}
+
+// ─── Disco genérico para resultados completos (calendario, etc.) ────────────
+const CALENDAR_DISK_PREFIX = '@fedvas_cal_v1:';
+const FETCH_DISK_PREFIX = '@fedvas_fetch_v1:';
+const DISK_RESULT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// TTL en memoria para el calendario: balance entre navegación instantánea y
+// que el polling de partidos en vivo detecte resultados nuevos.
+const CALENDAR_MEM_TTL_MS = 30 * 1000;
+
+async function hydrateDisk(cacheKey, prefix, maxAgeMs = DISK_RESULT_TTL_MS) {
+  try {
+    const raw = await AsyncStorage.getItem(prefix + cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.b) || Date.now() - (parsed.t || 0) > maxAgeMs) {
+      AsyncStorage.removeItem(prefix + cacheKey).catch(() => {});
+      return null;
+    }
+    return parsed.b;
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveDisk(prefix, cacheKey, blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return;
+  try {
+    AsyncStorage.setItem(prefix + cacheKey, JSON.stringify({ b: blocks, t: Date.now() })).catch(() => {});
+  } catch (_) {
+    // ignore
+  }
 }
 
 function extractCsrfToken(html = '') {
@@ -380,7 +728,9 @@ async function fetchAjaxTableHtml(params = {}, referer = '') {
   const start = Date.now();
 
   try {
-    const response = await axios.get(AJAX_URLS.tableSearch, {
+    const response = await fedvasRequest({
+      method: 'get',
+      url: AJAX_URLS.tableSearch,
       timeout: 15000,
       params: {
         ...params,
@@ -431,6 +781,43 @@ async function fetchTournamentContext(inputUrl = '', { signal } = {}) {
     return pending;
   }
 
+  // Disco: contexto instantáneo (sin HTML) + revalidación en segundo plano.
+  const diskContext = await hydrateTournamentContext(cacheKey);
+  if (diskContext) {
+    tournamentContextCache.set(cacheKey, diskContext);
+    if (diskContext.calendarUrl) {
+      prefetchCalendarContext(diskContext.calendarUrl).catch(() => { });
+    }
+    // Revalidar en background: la próxima visita ya tendrá datos frescos.
+    (async () => {
+      try {
+        const rankingBaseUrl = `${baseUrl}/ranking`;
+        const html = await fetchHTML(rankingBaseUrl);
+        const blocks = parseBlocksFromHtml(html);
+        const secondaryInputs = findSecondaryInputSets(html);
+        const rankingInputs = secondaryInputs.find((fields) => fields.type === '12') || null;
+        const freshContext = {
+          baseUrl,
+          rankingBaseUrl,
+          html,
+          blocks,
+          seasonLabel: extractSeasonLabelFromBlocks(blocks) || extractSelectedSeasonLabel(html),
+          calendarUrl: discoverCalendarUrlFromHtml(html, rankingBaseUrl),
+          rankingInputs,
+          rankingGroupId: rankingInputs?.id || null,
+        };
+        tournamentContextCache.set(cacheKey, freshContext);
+        persistTournamentContext(cacheKey, freshContext);
+        if (freshContext.calendarUrl) {
+          prefetchCalendarContext(freshContext.calendarUrl).catch(() => { });
+        }
+      } catch (_) {
+        // silencioso
+      }
+    })();
+    return diskContext;
+  }
+
   const start = Date.now();
 
   const loadContextPromise = (async () => {
@@ -457,6 +844,7 @@ async function fetchTournamentContext(inputUrl = '', { signal } = {}) {
     const elapsed = Date.now() - start;
 
     tournamentContextCache.set(cacheKey, context);
+    persistTournamentContext(cacheKey, context);
 
     // Pre-warm calendar context in the background so clicking Calendar tab
     // is fast (only the AJAX call needed, ~400ms instead of ~1800ms).
@@ -758,32 +1146,37 @@ async function fetchRankingBlocksViaAjax(inputUrl = '') {
   }
 }
 
-async function fetchCalendarBlocksViaAjax(inputUrl = '', { signal } = {}) {
+async function fetchCalendarBlocksViaAjax(inputUrl = '', { signal, force = false } = {}) {
   const t0 = Date.now();
   const currentUrl = ensureCalendarCurrentUrl(inputUrl); // appends /all
   const cacheKey = normalizeUrlForCache(currentUrl);
 
-  // Full-result cache (not just inputs — the whole block array)
+  // Full-result cache (not just inputs — the whole block array).
+  // TTL corto en memoria: permite que el sondeo "en vivo" vea cambios de
+  // resultado, sin renunciar a la instantaneidad entre navegaciones.
   const cached = calendarAjaxContextCache.get(cacheKey);
-  if (cached?.fullBlocks) {
+  if (!force && cached?.fullBlocks && Date.now() - (cached.cachedAt || 0) < CALENDAR_MEM_TTL_MS) {
     return cached.fullBlocks;
   }
 
+  // Disco: resultados completos del calendario persistidos → carga instantánea
+  if (!force) {
+    const disk = await hydrateDisk(cacheKey, CALENDAR_DISK_PREFIX);
+    if (disk) {
+      calendarAjaxContextCache.set(cacheKey, { fullBlocks: disk, cachedAt: Date.now() });
+      return disk;
+    }
+  }
+
   // Fetch the /all page which already contains every matchday in HTML
-  console.log('\n\n[DEBUG CALENDAR] 1. Requesting URL:', currentUrl);
   const allHtml = await fetchHTML(currentUrl, { signal });
-  console.log('[DEBUG CALENDAR] 2. Received HTML length:', allHtml?.length);
   const allBlocks = parseBlocksFromHtml(allHtml);
 
   // The /all page has inline tables for every matchday — use them directly.
-  // No AJAX needed; we already have the full data.
   const tableBlocks = allBlocks.filter((b) => b.type === 'table');
   const metadataBlocks = allBlocks.filter((b) => b.type !== 'table');
-  console.log('[DEBUG CALENDAR] 3. Initial tables found:', tableBlocks.length);
-
 
   if (tableBlocks.length > 1) {
-    console.log('[DEBUG CALENDAR] 4. Success! Multiple tables found inline. Returning', tableBlocks.length, 'tables.');
     // Great: multiple matchdays already parsed from HTML.
     // We assign titles from previous headings to tables before returning.
     let lastHeading = '';
@@ -792,38 +1185,103 @@ async function fetchCalendarBlocksViaAjax(inputUrl = '', { signal } = {}) {
       else if (b.type === 'table' && lastHeading) b.title = lastHeading;
     }
 
-    calendarAjaxContextCache.set(cacheKey, { fullBlocks: allBlocks });
+    calendarAjaxContextCache.set(cacheKey, { fullBlocks: allBlocks, cachedAt: Date.now() });
+    saveDisk(CALENDAR_DISK_PREFIX, cacheKey, allBlocks);
     return allBlocks;
   }
 
   // Fallback: The /all page returned only 1 table. Try the type=9 AJAX endpoint.
-  console.log('[DEBUG CALENDAR] 5. Only 1 table found. Attempting AJAX fallback...');
   const secondarySets = findSecondaryInputSets(allHtml);
   const calendarInputs = secondarySets.find((f) => f.type === '9') || null;
 
   if (!calendarInputs?.id) {
-    console.log('[DEBUG CALENDAR] 6. NO inputs found for AJAX fallback! Returning the single table.');
     const fullBlocks = allBlocks;
-    calendarAjaxContextCache.set(cacheKey, { fullBlocks });
+    calendarAjaxContextCache.set(cacheKey, { fullBlocks, cachedAt: Date.now() });
+    saveDisk(CALENDAR_DISK_PREFIX, cacheKey, fullBlocks);
     return fullBlocks;
   }
 
   try {
-    console.log('[DEBUG CALENDAR] 7. Executing fetchAjaxTableHtml with global Cookie:', !!globalSessionCookie);
     const ajaxHtml = await fetchAjaxTableHtml({ ...calendarInputs, input: '' }, currentUrl);
-    console.log('[DEBUG CALENDAR] 8. AJAX response length:', ajaxHtml?.length);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
-    const ajaxTables = ajaxBlocks.filter(b => b.type === 'table');
-    console.log('[DEBUG CALENDAR] 9. Tables parsed from AJAX:', ajaxTables.length);
     const fullBlocks = [...metadataBlocks, ...ajaxBlocks];
-    calendarAjaxContextCache.set(cacheKey, { fullBlocks });
+    calendarAjaxContextCache.set(cacheKey, { fullBlocks, cachedAt: Date.now() });
+    saveDisk(CALENDAR_DISK_PREFIX, cacheKey, fullBlocks);
     return fullBlocks;
   } catch (error) {
-    console.error('[CALENDAR] ⚠ AJAX fallback failed:', error.message);
+    console.warn('[CALENDAR] AJAX fallback failed:', error?.message);
     const fullBlocks = allBlocks;
-    calendarAjaxContextCache.set(cacheKey, { fullBlocks });
+    calendarAjaxContextCache.set(cacheKey, { fullBlocks, cachedAt: Date.now() });
+    saveDisk(CALENDAR_DISK_PREFIX, cacheKey, fullBlocks);
     return fullBlocks;
   }
+}
+
+// ─── Contexto de /tournaments (select de temporadas, csrf, campos ocultos) ──
+// Casi nunca cambia: se persiste para que cambiar de temporada (o reiniciar la
+// app) NO repita el GET de la página base. Con solo el POST del AJAX, el cambio
+// de temporada pasa de ~3-4 peticiones encadenadas a 1, lo que evita que el
+// servidor responda 403/429 al saturar la cola y elimina la mayor parte del delay.
+const TOURNAMENTS_CTX_DISK_PREFIX = '@fedvas_tournaments_ctx_v1:';
+
+function persistTournamentsContext(cacheKey, context) {
+  try {
+    const slim = {
+      csrfToken: context.csrfToken,
+      season: context.season,
+      allSeasons: context.allSeasons,
+      secondaryInputs: context.secondaryInputs,
+      // La cookie de sesión se gestiona globalmente y puede haber caducado:
+      // no persistimos contextBlocks (se regeneran) ni cookieHeader.
+      t: Date.now(),
+    };
+    AsyncStorage.setItem(TOURNAMENTS_CTX_DISK_PREFIX + cacheKey, JSON.stringify(slim)).catch(() => {});
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function hydrateTournamentsContext(cacheKey) {
+  try {
+    const raw = await AsyncStorage.getItem(TOURNAMENTS_CTX_DISK_PREFIX + cacheKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.csrfToken || Date.now() - (parsed.t || 0) > CONTEXT_DISK_TTL_MS) {
+      AsyncStorage.removeItem(TOURNAMENTS_CTX_DISK_PREFIX + cacheKey).catch(() => {});
+      return null;
+    }
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function buildFreshTournamentsContext(tournamentsUrl, signal) {
+  const response = await fedvasRequest({
+    method: 'get',
+    url: tournamentsUrl,
+    timeout: 15000,
+    headers: defaultRequestHeaders(),
+    signal,
+  });
+  const html = typeof response.data === 'string' ? response.data : String(response.data || '');
+  const cookieHeader = (response.headers?.['set-cookie'] || []).
+    map((item) => String(item || '').split(';')[0].trim())
+    .filter(Boolean)
+    .join('; ');
+
+  const secondaryInputs = findSecondaryInputSets(html)?.[0] || {};
+  return {
+    csrfToken: extractCsrfToken(html),
+    // Importante: la temporada por defecto del select de la página, NO la
+    // pedida por URL; así las cargas posteriores sin ?season usan la actual.
+    season: extractSelectedSeason(html),
+    allSeasons: extractAllSeasons(html),
+    contextBlocks: parseBlocksFromHtml(html),
+    cookieHeader,
+    secondaryInputs,
+    _fresh: true,
+  };
 }
 
 async function fetchTournamentsBlocksViaAjax(inputUrl = '', { signal } = {}) {
@@ -834,57 +1292,45 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '', { signal } = {}) {
   const urlObj = new URL(tournamentsUrl);
   const requestedSeason = urlObj.searchParams.get('season');
 
-  const cacheKey = normalizeUrlForCache(tournamentsUrl);
-
-  let context = tournamentsAjaxContextCache.get(cacheKey) || null;
+  // El contexto base NO depende de la temporada: se cachea siempre por la URL
+  // raíz de /tournaments para que cualquier variante ?season=X lo reutilice.
+  const baseKey = normalizeUrlForCache(URLS.home);
+  let context = tournamentsAjaxContextCache.get(baseKey) || null;
   if (!context) {
-    const response = await axios.get(tournamentsUrl, {
-      timeout: 15000,
-      headers: defaultRequestHeaders(),
-      signal,
-    });
-    const html = typeof response.data === 'string' ? response.data : String(response.data || '');
-    const cookieHeader = (response.headers?.['set-cookie'] || [])
-      .map((item) => String(item || '').split(';')[0].trim())
-      .filter(Boolean)
-      .join('; ');
-
-    const secondaryInputs = findSecondaryInputSets(html)?.[0] || {};
-    context = {
-      csrfToken: extractCsrfToken(html),
-      season: requestedSeason || extractSelectedSeason(html),
-      allSeasons: extractAllSeasons(html),
-      contextBlocks: parseBlocksFromHtml(html),
-      cookieHeader,
-      secondaryInputs,
-    };
-    tournamentsAjaxContextCache.set(cacheKey, context);
+    const diskCtx = await hydrateTournamentsContext(baseKey);
+    if (diskCtx) {
+      context = diskCtx;
+      tournamentsAjaxContextCache.set(baseKey, diskCtx);
+    }
+  }
+  if (!context) {
+    context = await buildFreshTournamentsContext(tournamentsUrl, signal);
+    tournamentsAjaxContextCache.set(baseKey, context);
+    persistTournamentsContext(baseKey, context);
   }
 
   if (!context?.csrfToken) {
     return context?.contextBlocks || [];
   }
 
-  const payload = new URLSearchParams();
-  payload.append('csrf_token', context.csrfToken);
-  // Priority: 1. URL search param, 2. context default
-  const seasonToFetch = requestedSeason || context.season;
-  if (seasonToFetch) payload.append('season', seasonToFetch);
-  // Include hidden fields the website sends with every AJAX request
-  if (context.secondaryInputs) {
-    for (const [key, value] of Object.entries(context.secondaryInputs)) {
-      if (key !== 'csrf_token' && key !== 'season') {
-        payload.append(key, value);
+  const runSeasonAjax = async (ctx, seasonToFetch) => {
+    const payload = new URLSearchParams();
+    payload.append('csrf_token', ctx.csrfToken);
+    // Priority: 1. URL search param, 2. context default
+    if (seasonToFetch) payload.append('season', seasonToFetch);
+    // Include hidden fields the website sends with every AJAX request
+    if (ctx.secondaryInputs) {
+      for (const [key, value] of Object.entries(ctx.secondaryInputs)) {
+        if (key !== 'csrf_token' && key !== 'season') {
+          payload.append(key, value);
+        }
       }
     }
-  }
 
-  const seasonMetadata = context.allSeasons?.length > 0
-    ? [{ type: 'seasons', items: context.allSeasons, current: seasonToFetch }]
-    : [];
-
-  try {
-    const response = await axios.post(AJAX_URLS.tournaments, payload.toString(), {
+    const response = await fedvasRequest({
+      method: 'post',
+      url: AJAX_URLS.tournaments,
+      data: payload.toString(),
       timeout: 15000,
       headers: {
         ...defaultRequestHeaders(),
@@ -892,19 +1338,40 @@ async function fetchTournamentsBlocksViaAjax(inputUrl = '', { signal } = {}) {
         'X-Requested-With': 'XMLHttpRequest',
         Referer: tournamentsUrl,
         Origin: BASE_URL,
-        ...(context.cookieHeader ? { Cookie: context.cookieHeader } : {}),
+        ...(ctx.cookieHeader ? { Cookie: ctx.cookieHeader } : {}),
       },
       signal,
     });
 
     const ajaxHtml = extractHtmlFromAjaxData(response.data);
     const ajaxBlocks = parseBlocksFromHtml(ajaxHtml);
-    const metadataBlocks = (context.contextBlocks || []).filter((block) => block.type !== 'table');
-
+    const metadataBlocks = (ctx.contextBlocks || []).filter((block) => block.type !== 'table');
+    const seasonMetadata = ctx.allSeasons?.length > 0
+      ? [{ type: 'seasons', items: ctx.allSeasons, current: seasonToFetch }]
+      : [];
     return [...seasonMetadata, ...metadataBlocks, ...ajaxBlocks];
+  };
+
+  try {
+    return await runSeasonAjax(context, requestedSeason || context.season);
   } catch (error) {
+    // Si el contexto venía de memoria/disco puede estar caducado (p. ej. csrf
+    // rotado por el servidor): lo refrescamos desde la red y reintentamos UNA vez.
+    if (!context._fresh) {
+      tournamentsAjaxContextCache.delete(baseKey);
+      AsyncStorage.removeItem(TOURNAMENTS_CTX_DISK_PREFIX + baseKey).catch(() => {});
+      try {
+        const freshCtx = await buildFreshTournamentsContext(tournamentsUrl, signal);
+        return await runSeasonAjax(freshCtx, requestedSeason || freshCtx.season);
+      } catch (_) {
+        // cae al fallback inferior
+      }
+    }
     // Incluso si falla el AJAX, devolvemos metadatos y bloques del HTML inicial
     const metadataBlocks = (context.contextBlocks || []).filter((block) => block.type !== 'table');
+    const seasonMetadata = context.allSeasons?.length > 0
+      ? [{ type: 'seasons', items: context.allSeasons, current: requestedSeason || context.season }]
+      : [];
     return [...seasonMetadata, ...metadataBlocks];
   }
 }
@@ -972,7 +1439,9 @@ export async function fetchHTML(url, { signal } = {}) {
   const start = Date.now();
 
   try {
-    const response = await axios.get(url, {
+    const response = await fedvasRequest({
+      method: 'get',
+      url,
       timeout: 15000,
       headers: defaultRequestHeaders(),
       signal,
@@ -989,12 +1458,18 @@ export async function fetchHTML(url, { signal } = {}) {
       throw new Error('SEASON_CONFIGURING');
     }
 
-    const cookieHeader = (response.headers?.['set-cookie'] || [])
-      .map((item) => String(item || '').split(';')[0].trim())
-      .filter(Boolean)
-      .join('; ');
-    if (cookieHeader) {
-      globalSessionCookie = cookieHeader;
+    // Nota: aquí NO sobrescribimos la cookie de sesión validada por PoW.
+    // Solo adoptamos una cookie nueva si aún no tenemos ninguna: adoptar la
+    // anónima de una respuesta cualquiera invalidaría la sesión del challenge.
+    if (!globalSessionCookie) {
+      const cookieHeader = (response.headers?.['set-cookie'] || []).
+        map((item) => String(item || '').split(';')[0].trim())
+        .filter(Boolean)
+        .join('; ');
+      if (cookieHeader) {
+        globalSessionCookie = cookieHeader;
+        persistSessionCookie();
+      }
     }
 
     const elapsed = Date.now() - start;
@@ -1803,7 +2278,9 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
   let cookieHeader = '';
 
   try {
-    const response = await axios.get(currentUrl, {
+    const response = await fedvasRequest({
+      method: 'get',
+      url: currentUrl,
       timeout: 15000,
       headers: defaultRequestHeaders(),
       signal,
@@ -1837,10 +2314,11 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
 
   const extraHtmlPromises = tabsToFetch.map(async (tab) => {
     try {
-      const resp = await axios.post(
-        `${siteBase}/${lang}/ajax/team/${mId}/change-tab`,
-        `csrf_token=${csrf}&tab=${tab}`,
+      const resp = await fedvasRequest(
         {
+          method: 'post',
+          url: `${siteBase}/${lang}/ajax/team/${mId}/change-tab`,
+          data: `csrf_token=${csrf}&tab=${tab}`,
           headers: {
             ...defaultRequestHeaders(),
             'X-Requested-With': 'XMLHttpRequest',
@@ -1849,7 +2327,8 @@ async function fetchTeamContextViaAjax(teamUrl, { signal } = {}) {
           },
           timeout: 10000,
           signal,
-        }
+        },
+        { retries: 2 }
       );
       return resp.data?.content || resp.data?.html || '';
     } catch (err) {
@@ -2101,7 +2580,7 @@ function parsePostDetail(html) {
 }
 
 // ─── Función principal: URL → array de bloques listos para renderizar ─────────
-export async function fetchAndParse(url, { signal } = {}) {
+export async function fetchAndParse(url, { signal, force = false } = {}) {
   const t0 = Date.now();
   const absoluteUrl = toAbsoluteUrl(url);
   let blocks;
@@ -2113,9 +2592,9 @@ export async function fetchAndParse(url, { signal } = {}) {
     const baseUrl = getTournamentBaseUrl(absoluteUrl);
     const cacheKey = baseUrl ? normalizeUrlForCache(baseUrl) : null;
     const cached = cacheKey ? tournamentContextCache.get(cacheKey) : null;
-    if (cached?.blocks) {
+    if (cached?.blocks && !force) {
       blocks = cached.blocks;
-    } else if (cacheKey && tournamentContextInFlight.has(cacheKey)) {
+    } else if (cacheKey && !force && tournamentContextInFlight.has(cacheKey)) {
       // Otra llamada ya está fetcheando la misma página, esperamos
       const context = await tournamentContextInFlight.get(cacheKey);
       blocks = context.blocks;
@@ -2125,7 +2604,7 @@ export async function fetchAndParse(url, { signal } = {}) {
       blocks = parseBlocksFromHtml(html);
     }
   } else if (/\/tournament\/\d+\/calendar\/\d+/i.test(absoluteUrl)) {
-    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl, { signal });
+    blocks = await fetchCalendarBlocksViaAjax(absoluteUrl, { signal, force });
   } else if (/\/team\/\d+/i.test(absoluteUrl)) {
     blocks = await fetchTeamContextViaAjax(absoluteUrl, { signal });
   } else if (/\/posts\/news\/\d+/i.test(absoluteUrl)) {
@@ -2161,10 +2640,7 @@ export async function fetchAndParse(url, { signal } = {}) {
     if (!hasValidMatch) {
       const matches = parseTournamentMatchDetail(html);
       if (matches.length > 0) {
-        console.log('[fetchAndParse] Parser torneo devolvió:', JSON.stringify(matches));
         blocks.push({ type: 'table', matches });
-      } else {
-        console.log('[fetchAndParse] Parser torneo no devolvió ningún partido válido');
       }
     }
     const coords = extractMatchCoordinates(html);
@@ -2179,8 +2655,20 @@ export async function fetchAndParse(url, { signal } = {}) {
     if (block.type === block.type && block.content === prev.content && block.content !== undefined) return false;
     return true;
   });
+  // Persistir todo resultado parseado: la próxima visita (o el próximo arranque  // de la app) parte de estos bloques sin esperar la red.  saveDisk(FETCH_DISK_PREFIX, normalizeUrlForCache(absoluteUrl), result);  return result;}
 
-  return result;
+// Versión con caché en disco para pantallas que llaman a fetchAndParse
+// directamente (Home, Playa, Noticias, Jornada, Detalle de partido). Primero
+// mira en disco (instantáneo tras reiniciar) y revalida en segundo plano.
+export async function fetchAndParseCached(url, { signal } = {}) {
+  const key = normalizeUrlForCache(toAbsoluteUrl(url));
+  const disk = await hydrateDisk(key, FETCH_DISK_PREFIX);
+  if (Array.isArray(disk) && disk.length > 0) {
+    // Revalidar en background sin bloquear: la próxima carga será fresca.
+    fetchAndParse(url, { signal, force: true }).catch(() => {});
+    return disk;
+  }
+  return fetchAndParse(url, { signal });
 }
 
 // ─── UTILS PARA CAMPEONATOS (TXAPELKETAS) ───────────────────────────────────

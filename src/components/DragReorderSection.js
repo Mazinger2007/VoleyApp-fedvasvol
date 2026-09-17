@@ -31,6 +31,11 @@ export default function DragReorderSection({
     targetIdx: -1,
   });
   const [activeIdx, setActiveIdx] = useState(-1);
+  const [renderItems, setRenderItems] = useState(items);
+
+  useEffect(() => {
+    if (!dragState.current.active) setRenderItems(items);
+  }, [items]);
 
   if (animValues.current.length !== items.length) {
     animValues.current = items.map((_, i) => animValues.current[i] || new Animated.Value(0));
@@ -96,10 +101,17 @@ export default function DragReorderSection({
 
   const resetAll = useCallback(() => {
     for (let i = 0; i < animValues.current.length; i++) {
+      animValues.current[i].stopAnimation();
       currentShift.current[i] = 0;
       animValues.current[i].setValue(0);
     }
   }, []);
+
+  useEffect(() => {
+    if (!dragState.current.active) {
+      resetAll();
+    }
+  }, [items, resetAll]);
 
   const startDrag = useCallback((idx, pageY) => {
     calcPosY();
@@ -140,6 +152,9 @@ export default function DragReorderSection({
 
     const h = heights.current;
     const anims = animValues.current;
+    const reorderedItems = [...items];
+    const [reorderedItem] = reorderedItems.splice(fromIdx, 1);
+    reorderedItems.splice(targetIdx, 0, reorderedItem);
 
     const calcFinal = (i) => {
       if (i === fromIdx) {
@@ -167,14 +182,16 @@ export default function DragReorderSection({
     }
 
     Animated.parallel(animations).start(() => {
-      onReorder(fromIdx, targetIdx);
+      setRenderItems(reorderedItems);
+      resetAll();
       ds.fromIdx = -1;
       ds.targetIdx = -1;
       ds.currentDy = 0;
       setActiveIdx(-1);
       if (onDragStateChange) onDragStateChange(true);
+      onReorder(fromIdx, targetIdx);
     });
-  }, [items.length, onReorder, onDragStateChange]);
+  }, [items, onReorder, onDragStateChange, resetAll]);
 
   const handleItemLayout = useCallback((i, evt) => {
     heights.current[i] = evt.nativeEvent.layout.height;
@@ -182,7 +199,7 @@ export default function DragReorderSection({
 
   return (
     <View>
-      {items.map((item, i) => {
+      {renderItems.map((item, i) => {
         const isDragging = i === activeIdx;
         const transform = showTranslateY
           ? [{ translateY: animValues.current[i] }, { scale: isDragging ? 1.04 : 1 }]

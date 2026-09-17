@@ -18,7 +18,10 @@ import { AuthProvider, useAuth } from './src/contexts/AuthContext';
 import { FavoritesProvider } from './src/contexts/FavoritesContext';
 
 import { hydrateLogoColorCache as hydrateLogoColors } from './src/utils/logoColorCache';
+import { hydratePersistentCache } from './src/utils/persistentCache';
+import { hydrateSessionFromDisk } from './src/utils/htmlParser';
 import { initTeamsData } from './src/constants/teamColors';
+import { seedResultCache } from './src/hooks/useFetch';
 
 import { checkForNewNews } from './src/services/newsNotificationService';
 import NotificationBanner from './src/components/NotificationBanner';
@@ -190,6 +193,11 @@ function MainStack() {
         headerShown: false,
         contentStyle: { backgroundColor: 'transparent' },
         animation: 'slide_from_right',
+        animationDuration: 220,
+        // Responder al primer toque al instante: la animación de entrada no
+        // bloquea el render de la pantalla que llega.
+        animationTypeForReplace: 'push',
+        detachPreviousScreen: false,
       }}
     >
       <Stack.Screen name="Tabs" component={TabNavigator} />
@@ -276,6 +284,8 @@ export default function App() {
       try {
         hydrateLogoColors();
         initTeamsData();
+        hydratePersistentCache().catch(() => { });
+        hydrateSessionFromDisk().catch(() => { });
         if (ScreenOrientation?.lockAsync) {
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
         }
@@ -322,7 +332,8 @@ function AppContent() {
     return () => sub.remove();
   }, []);
 
-  // Prefetch data for all tabs into shared cache so transitions feel instant
+  // Revalidar home/playa/noticias en segundo plano nada más abrir: si hay
+  // caché, el usuario ve datos al instante y la red los actualiza sin skeletons.
   useEffect(() => {
     if (prefetchedRef.current) return;
     prefetchedRef.current = true;
@@ -330,7 +341,7 @@ function AppContent() {
     urls.forEach((url) => {
       if (!resultCache.has(url)) {
         fetchAndParse(url)
-          .then((blocks) => { resultCache.set(url, blocks); })
+          .then((blocks) => { seedResultCache(url, blocks); })
           .catch(() => {});
       }
     });

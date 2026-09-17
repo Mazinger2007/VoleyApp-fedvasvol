@@ -45,3 +45,29 @@ export function cacheTeamsFromRanking(_rankingUrl, tableBlocks) {
     });
   }
 }
+
+// ─── Caché persistente de escudos por liga ─────────────────────────────────
+// Guarda los logos (escudos) de los equipos de una liga para no tener que
+// volver a descargar su ranking cada vez que se muestra la lista de ligas.
+const LEAGUE_SHIELDS_PREFIX = '@league_shields:';
+
+export async function saveLeagueShields(leagueUrl, shields) {
+  if (!leagueUrl) return;
+  try {
+    await AsyncStorage.setItem(
+      `${LEAGUE_SHIELDS_PREFIX}${leagueUrl}`,
+      JSON.stringify(shields)
+    );
+  } catch (_) {}
+}
+
+export async function loadLeagueShields(leagueUrl) {
+  if (!leagueUrl) return [];
+  try {
+    const raw = await AsyncStorage.getItem(`${LEAGUE_SHIELDS_PREFIX}${leagueUrl}`);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}

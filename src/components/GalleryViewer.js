@@ -461,7 +461,7 @@ export default function GalleryViewer({ visible, images = [], initialIndex = 0, 
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
           <View style={styles.closeBtnInner}>
-            <MaterialIcons name="file-download" size={20} color="#fff" />
+            <MaterialIcons name="share" size={20} color="#fff" />
           </View>
         </TouchableOpacity>
 

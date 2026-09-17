@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, Animated, StyleSheet } from 'react-native';
+import { View, Animated, StyleSheet, Easing } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export default function SkeletonLoader({ width, height, borderRadius, style }) {
@@ -9,15 +9,15 @@ export default function SkeletonLoader({ width, height, borderRadius, style }) {
   useEffect(() => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(shimmer, { toValue: 1, duration: 1000, useNativeDriver: true }),
-        Animated.timing(shimmer, { toValue: 0, duration: 1000, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 1, duration: 800, easing: Easing.ease, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 800, easing: Easing.ease, useNativeDriver: true }),
       ]),
     ).start();
   }, [shimmer]);
 
   const opacity = shimmer.interpolate({
     inputRange: [0, 1],
-    outputRange: [0.3, 0.6],
+    outputRange: [0.25, 0.65],
   });
 
   return (

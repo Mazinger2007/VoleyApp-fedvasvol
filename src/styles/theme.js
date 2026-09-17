@@ -1,29 +1,7 @@
 // src/styles/theme.js
-// Compatibility shim — provides Spacing, Radius, Typography, Shadow, Colors
-// for existing screens/components. New code should use useTheme() from ThemeContext.
+// Static design tokens. Dynamic colors and theme state live in ThemeContext.
 
 import { Platform } from 'react-native';
-
-export const Colors = {
-  primary: '#0f9f7a',
-  primaryDark: '#08795e',
-  primaryAlpha20: 'rgba(15,159,122,0.20)',
-  primaryAlpha15: 'rgba(15,159,122,0.15)',
-  primaryAlpha10: 'rgba(15,159,122,0.10)',
-  background: '#0b1117',
-  surface: '#121b24',
-  surfaceAlt: '#1b2630',
-  textPrimary: '#f1f5f9',
-  textSecondary: '#cbd5e1',
-  textMuted: '#94a3b8',
-  textOnPrimary: '#ffffff',
-  success: '#10b981',
-  warning: '#f59e0b',
-  error: '#ef4444',
-  info: '#0d8ff2',
-  border: 'rgba(71,85,105,0.55)',
-  divider: '#263444',
-};
 
 export const Spacing = {
   xs: 4,

@@ -17,6 +17,13 @@ export function subscribeColors(cb) {
  * Inicializa y carga los datos de equipos desde Supabase,
  * con caché en AsyncStorage para un inicio rápido.
  */
+async function fetchTeamsFromSupabase() {
+  const { data: teamsData, error } = await supabase
+    .from('teams_data')
+    .select('*');
+  return { teamsData, error };
+}
+
 export async function initTeamsData() {
   try {
     const cachedData = await AsyncStorage.getItem('teams_data_cache');
@@ -28,13 +35,20 @@ export async function initTeamsData() {
     }
 
     // Intentar con el nombre exacto de la tabla: teams_data
-    const { data: teamsData, error } = await supabase
-      .from('teams_data')
-      .select('*');
+    let { teamsData, error } = await fetchTeamsFromSupabase();
+
+    // Al arrancar en frío la red del móvil puede no estar lista aún
+    // (DNS "Unable to resolve host"). Reintentamos una vez tras unos segundos.
+    const isNetworkError = /Unable to resolve host|UnknownHost|Network request failed/i.test(error?.message || '');
+    if (isNetworkError) {
+      console.warn('[TeamsData] Red aún no lista, reintentando en 5s...');
+      await new Promise((r) => setTimeout(r, 5000));
+      ({ teamsData, error } = await fetchTeamsFromSupabase());
+    }
 
     if (error) {
       LAST_TEAMS_ERROR = { code: error.code, message: error.message, details: error.details, hint: error.hint };
-      console.log('[TeamsData] ⚠️ Error:', JSON.stringify(LAST_TEAMS_ERROR));
+      console.warn('[TeamsData] Error:', JSON.stringify(LAST_TEAMS_ERROR));
       // Si la tabla no se encontró, limpiar caché para reintentar
       if (error.code === '42P01' || error.message?.includes('does not exist')) {
         await AsyncStorage.removeItem('teams_data_cache');

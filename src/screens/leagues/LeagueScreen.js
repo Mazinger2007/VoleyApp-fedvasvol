@@ -18,8 +18,9 @@ import { MaterialIcons } from '@expo/vector-icons';
 import CompetitionList from '../../components/CompetitionList';
 import LoadingView from '../../components/LoadingView';
 import ErrorView from '../../components/ErrorView';
-import { useFetch } from '../../hooks/useFetch';
-import { URLS } from '../../utils/htmlParser';
+import { useFetch, resultCache, seedResultCache } from '../../hooks/useFetch';
+import { URLS, fetchAndParse } from '../../utils/htmlParser';
+import { getCachedBlocksSync } from '../../utils/persistentCache';
 import { openTournamentDetail } from '../../utils/navigationHelper';
 import { Spacing, Typography, Radius } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -60,7 +61,7 @@ export default function LeagueScreen({ route, navigation }) {
     loadGenerationRef.current += 1;
   }
 
-  const { blocks, loading, error, refresh } = useFetch(fetchUrl);
+  const { blocks, loading, refreshing, error, refresh } = useFetch(fetchUrl);
 
   useEffect(() => {
     return () => {
@@ -76,6 +77,42 @@ export default function LeagueScreen({ route, navigation }) {
       if (!selectedSeason) setSelectedSeason(seasonsBlock.current);
     }
   }, [blocks, availableSeasons.length, selectedSeason]);
+
+  // Precacheo de temporadas: una vez conocida la lista, descargamos cada
+  // temporada en segundo plano (1 POST AJAX por temporada, el contexto de
+  // /tournaments ya está en caché). Así cambiar de temporada pinta AL INSTANTE
+  // desde resultCache/persistentCache en vez de esperar la red.
+  // Secuencial y con pausa entre peticiones para no saturar la cola del
+  // servidor (un burst aquí retrasaría el POST del cambio real de temporada).
+  const seasonPrefetchRef = useRef(new Set());
+  useEffect(() => {
+    if (availableSeasons.length === 0) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      for (const s of availableSeasons) {
+        if (cancelled) return;
+        const url = `${URLS.home}?season=${s.value}`;
+        if (seasonPrefetchRef.current.has(s.value)) continue;
+        if (resultCache.has(url) || getCachedBlocksSync(url)) continue;
+        seasonPrefetchRef.current.add(s.value);
+        try {
+          const bs = await fetchAndParse(url);
+          if (Array.isArray(bs) && bs.length > 0) {
+            seedResultCache(url, bs);
+          } else {
+            seasonPrefetchRef.current.delete(s.value);
+          }
+        } catch (_) {
+          seasonPrefetchRef.current.delete(s.value);
+        }
+        await new Promise((r) => setTimeout(r, 600));
+      }
+    }, 2000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [availableSeasons]);
 
   const tournamentTable = useMemo(() => {
     const tables = blocks.filter((b) => b.type === 'table');
@@ -344,7 +381,7 @@ export default function LeagueScreen({ route, navigation }) {
             style={styles.scroll}
             refreshControl={
               <RefreshControl
-                refreshing={false}
+                refreshing={refreshing}
                 onRefresh={handleRefresh}
                 colors={[Colors.primary]}
                 tintColor={Colors.primary}

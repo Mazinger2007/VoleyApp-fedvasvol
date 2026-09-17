@@ -12,13 +12,13 @@ import { CardSection } from '../../components/base/Card';
 import TeamLogo from '../../components/base/TeamLogo';
 import { SkeletonCard } from '../../components/base/SkeletonLoader';
 import EmptyState from '../../components/base/EmptyState';
-import { fetchAndParse, URLS, toRankingUrl } from '../../utils/htmlParser';
+import { fetchAndParse, fetchAndParseCached, URLS, toRankingUrl } from '../../utils/htmlParser';
 import { getTeamFromCache, cacheTeamsFromRanking } from '../../utils/teamCache';
 import {
   loadRankingCache, getAllCachedStandings,
   saveLeagueStandings,
 } from '../../utils/rankingCache';
-import { resultCache } from '../../hooks/useFetch';
+import { resultCache, markUrlFailed, clearUrlFailure } from '../../hooks/useFetch';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CARD_HORIZONTAL_PADDING = 16;
@@ -176,6 +176,9 @@ export default function HomeScreen({ navigation }) {
   const { favorites } = useFavorites();
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const contentAnim = useRef(new Animated.Value(0)).current;
+  const scaleContent = useRef(new Animated.Value(0.92)).current;
+  const prevLoading = useRef(true);
 
   const [leagueIdx, setLeagueIdx] = useState(0);
   const [teamIdx, setTeamIdx] = useState(0);
@@ -219,22 +222,37 @@ export default function HomeScreen({ navigation }) {
     loadCached();
   }, []);
 
+  // Serie de peticiones de favoritos: fetches en paralelo saturan la cola de
+  // fedvasvol y el servidor responde 403 "Request failed with status code 403".
+  // De uno en uno (la cola de htmlParser ya serializa, aquí evitamos además el
+  // apilado) y con backoff tras un error para no reintentar en bucle.
+  const rankFetchFailedAtRef = useRef(new Map());
+
   useEffect(() => {
     if (!standingsReady || favLeagues.length === 0) return;
 
     const toFetch = favLeagues.filter(fav => !fetchedRef.current.has(fav.entityId));
     if (toFetch.length === 0) return;
 
-    toFetch.forEach(fav => {
-      const leagueId = fav.entityId;
-      fetchedRef.current.add(leagueId);
+    let cancelled = false;
 
-      (async () => {
+    (async () => {
+      for (const fav of toFetch) {
+        if (cancelled) return;
+        const leagueId = fav.entityId;
+        fetchedRef.current.add(leagueId);
+
         try {
           const rankingUrl = toRankingUrl(leagueId);
-          if (!rankingUrl) return;
+          if (!rankingUrl) continue;
+
+          const failedAt = rankFetchFailedAtRef.current.get(rankingUrl) || 0;
+          if (Date.now() - failedAt < 60 * 1000) continue; // error reciente: esperamos
+
           const blocks = await fetchAndParse(rankingUrl);
+          if (cancelled) return;
           resultCache.set(rankingUrl, blocks);
+          clearUrlFailure(rankingUrl);
           const tableBlock = blocks?.find(b => b.type === 'table' && b.rows?.length > 0);
           if (tableBlock) {
             const standings = extractStandings(tableBlock);
@@ -242,22 +260,29 @@ export default function HomeScreen({ navigation }) {
               setLeagueStandings(prev => ({ ...prev, [leagueId]: standings }));
               saveLeagueStandings(leagueId, standings);
               cacheTeamsFromRanking(rankingUrl, [tableBlock]);
-              return;
+              continue;
             }
           }
           setLeagueStandings(prev => ({ ...prev, [leagueId]: null }));
         } catch (e) {
-          console.warn('[Home] Rank fetch:', leagueId, e.message);
+          const rankingUrl = toRankingUrl(fav.entityId);
+          if (rankingUrl) {
+            markUrlFailed(rankingUrl);
+            rankFetchFailedAtRef.current.set(rankingUrl, Date.now());
+          }
+          console.warn('[Home] Rank fetch:', fav.entityId, e.message);
         }
-      })();
-    });
+      }
+    })();
+
+    return () => { cancelled = true; };
   }, [favLeagues, standingsReady]);
 
   const loadData = useCallback(async () => {
     try {
       const [compBlocks, newsBlocks] = await Promise.allSettled([
-        fetchAndParse(URLS.competitions),
-        fetchAndParse(URLS.posts),
+        fetchAndParseCached(URLS.competitions),
+        fetchAndParseCached(URLS.posts),
       ]);
 
       if (compBlocks.status === 'fulfilled' && compBlocks.value) {
@@ -298,12 +323,24 @@ export default function HomeScreen({ navigation }) {
   }, []);
 
   useEffect(() => {
+    if (!loading && prevLoading.current) {
+      contentAnim.setValue(0);
+      Animated.parallel([
+        Animated.timing(contentAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+        Animated.spring(scaleContent, { toValue: 1, friction: 9, tension: 40, useNativeDriver: true }),
+      ]).start();
+    }
+    prevLoading.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
     loadData();
   }, [loadData]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     fetchedRef.current.clear();
+    rankFetchFailedAtRef.current.clear();
     await loadData();
     if (favLeagues.length > 0) {
       const results = await Promise.allSettled(
@@ -411,10 +448,11 @@ export default function HomeScreen({ navigation }) {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-      <ScrollView
+      <Animated.ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
         showsVerticalScrollIndicator={false}
+        style={{ opacity: contentAnim, transform: [{ scale: scaleContent }] }}
       >
         <View style={styles.header}>
           <Text style={[styles.greeting, { color: colors.textSecondary }]}>{getGreeting()}</Text>
@@ -520,7 +558,7 @@ export default function HomeScreen({ navigation }) {
         )}
 
         <View style={{ height: 20 }} />
-      </ScrollView>
+      </Animated.ScrollView>
     </SafeAreaView>
   );
 }
