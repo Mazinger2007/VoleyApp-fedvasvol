@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="assets/Logo.png" alt="Voleibol Vizcaya" width="120" />
+  <img src="assets/Logo.png" alt="Voleibol Vizcaya" width="120" style="border-radius: 12px;" />
   <h1>Voleibol Vizcaya</h1>
   <p><strong>Todo el vóley de Vizcaya, en una sola app.</strong><br />Competiciones, resultados, clasificaciones, noticias y vóley playa.</p>
 
@@ -10,18 +10,18 @@
   <h2 align="center">Un vistazo a la app</h2>
 
   <p align="center">
-    <img src="assets/screenshots/app-tour.gif" alt="Carrusel animado de pantallas de Voleibol Vizcaya" width="360" />
+    <img src="assets/screenshots/app-tour.gif" alt="Carrusel animado de pantallas de Voleibol Vizcaya" width="360" style="border-radius: 12px;" />
   </p>
 
   <p align="center"><sub>El carrusel cambia de pantalla automáticamente cada dos segundos.</sub></p>
 
   <p>
-    <img src="https://img.shields.io/badge/React_Native-0.86-61DAFB?logo=react&logoColor=white" alt="React Native" />
-    <img src="https://img.shields.io/badge/Expo-57-000020?logo=expo&logoColor=white" alt="Expo" />
-    <img src="https://img.shields.io/badge/Supabase-Auth_%26_Data-3FCF8E?logo=supabase&logoColor=white" alt="Supabase" />
-    <img src="https://img.shields.io/badge/JavaScript-ES2025-F7DF1E?logo=javascript&logoColor=111111" alt="JavaScript" />
-    <img src="https://img.shields.io/badge/EAS_Build-Mobile-4630EB?logo=expo&logoColor=white" alt="EAS Build" />
-    <img src="https://img.shields.io/badge/License-Personal-lightgrey" alt="License" />
+    <img src="https://img.shields.io/badge/React_Native-0.86-61DAFB?logo=react&logoColor=white" alt="React Native" style="border-radius: 6px;" />
+    <img src="https://img.shields.io/badge/Expo-57-000020?logo=expo&logoColor=white" alt="Expo" style="border-radius: 6px;" />
+    <img src="https://img.shields.io/badge/Supabase-Auth_%26_Data-3FCF8E?logo=supabase&logoColor=white" alt="Supabase" style="border-radius: 6px;" />
+    <img src="https://img.shields.io/badge/JavaScript-ES2025-F7DF1E?logo=javascript&logoColor=111111" alt="JavaScript" style="border-radius: 6px;" />
+    <img src="https://img.shields.io/badge/EAS_Build-Mobile-4630EB?logo=expo&logoColor=white" alt="EAS Build" style="border-radius: 6px;" />
+    <img src="https://img.shields.io/badge/License-Personal-lightgrey" alt="License" style="border-radius: 6px;" />
   </p>
 </div>
 
@@ -30,9 +30,9 @@
 <br />
 
 <p align="center">
-  <img src="assets/screenshots/Inicio.png" alt="Pantalla de inicio" width="250" />
-  <img src="assets/screenshots/Competiciones.png" alt="Listado de competiciones" width="250" />
-  <img src="assets/screenshots/Partido-detalles.png" alt="Detalle de partido" width="250" />
+  <img src="assets/screenshots/Inicio.png" alt="Pantalla de inicio" width="250" style="border-radius: 12px;" />
+  <img src="assets/screenshots/Competiciones.png" alt="Listado de competiciones" width="250" style="border-radius: 12px;" />
+  <img src="assets/screenshots/Partido-detalles.png" alt="Detalle de partido" width="250" style="border-radius: 12px;" />
 </p>
 
 ## Sobre la aplicación
@@ -53,10 +53,10 @@ Voleibol Vizcaya es una aplicación móvil para consultar competiciones, partido
 ## Galería
 
 <p align="center">
-  <img src="assets/screenshots/Noticias.png" alt="Noticias" width="220" />
-  <img src="assets/screenshots/Partido-mapa.png" alt="Mapa del partido" width="220" />
-  <img src="assets/screenshots/Partidos-voleyplaya.png" alt="Partidos de vóley playa" width="220" />
-  <img src="assets/screenshots/Ranking-voleyplaya.png" alt="Ranking de vóley playa" width="220" />
+  <img src="assets/screenshots/Noticias.png" alt="Noticias" width="220" style="border-radius: 12px;" />
+  <img src="assets/screenshots/Partido-mapa.png" alt="Mapa del partido" width="220" style="border-radius: 12px;" />
+  <img src="assets/screenshots/Partidos-voleyplaya.png" alt="Partidos de vóley playa" width="220" style="border-radius: 12px;" />
+  <img src="assets/screenshots/Ranking-voleyplaya.png" alt="Ranking de vóley playa" width="220" style="border-radius: 12px;" />
 </p>
 
 ## Stack tecnológico
@@ -130,10 +130,10 @@ npx eas-cli build --profile production
 ## Identidad visual
 
 <p>
-  <img src="https://img.shields.io/badge/Primary-%230F9F7A-0F9F7A" alt="Primary green" />
-  <img src="https://img.shields.io/badge/Primary_dark-%2308795E-08795E" alt="Primary dark green" />
-  <img src="https://img.shields.io/badge/Background-%23F6F8F7-F6F8F7?style=flat&labelColor=555555" alt="Light background" />
-  <img src="https://img.shields.io/badge/Surface-%23FFFFFF-FFFFFF?style=flat&labelColor=555555" alt="White surface" />
+  <img src="https://img.shields.io/badge/Primary-%230F9F7A-0F9F7A" alt="Primary green" style="border-radius: 6px;" />
+  <img src="https://img.shields.io/badge/Primary_dark-%2308795E-08795E" alt="Primary dark green" style="border-radius: 6px;" />
+  <img src="https://img.shields.io/badge/Background-%23F6F8F7-F6F8F7?style=flat&labelColor=555555" alt="Light background" style="border-radius: 6px;" />
+  <img src="https://img.shields.io/badge/Surface-%23FFFFFF-FFFFFF?style=flat&labelColor=555555" alt="White surface" style="border-radius: 6px;" />
 </p>
 
 El tema claro usa verde como color principal, verde oscuro para estados activos y navegación, un fondo casi blanco y superficies blancas. También existe un tema oscuro; azul, amarillo y rojo se reservan para estados informativos, avisos y resultados.
