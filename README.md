@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/Logo.png" alt="Voleibol Euskadi" width="120" />
-  <h1>Voleibol Euskadi</h1>
-  <p><strong>Todo el vóley de Euskadi, en una sola app.</strong><br />Competiciones, resultados, clasificaciones, noticias y vóley playa.</p>
+  <img src="assets/Logo.png" alt="Voleibol Vizcaya" width="120" />
+  <h1>Voleibol Vizcaya</h1>
+  <p><strong>Todo el vóley de Vizcaya, en una sola app.</strong><br />Competiciones, resultados, clasificaciones, noticias y vóley playa.</p>
 
   <p>
     <a href="README.en.md">English</a> · <a href="README.eu.md">Euskara</a>
@@ -10,7 +10,7 @@
   <h2 align="center">Un vistazo a la app</h2>
 
   <p align="center">
-    <img src="assets/screenshots/app-tour.gif" alt="Carrusel animado de pantallas de Voleibol Euskadi" width="360" />
+    <img src="assets/screenshots/app-tour.gif" alt="Carrusel animado de pantallas de Voleibol Vizcaya" width="360" />
   </p>
 
   <p align="center"><sub>El carrusel cambia de pantalla automáticamente cada dos segundos.</sub></p>
@@ -25,7 +25,7 @@
   </p>
 </div>
 
-> **Aviso importante:** Voleibol Euskadi **no es una aplicación oficial** de ninguna federación. La app obtiene la información mediante scraping de fuentes públicas, por lo que los datos, la disponibilidad y la estabilidad pueden variar o dejar de funcionar si cambia la web de origen. Se ha intentado contactar con la federación para obtener acceso a una API oficial, pero actualmente no se dispone de ella.
+> **Aviso importante:** Voleibol Vizcaya **no es una aplicación oficial** de ninguna federación. La app obtiene la información mediante scraping de fuentes públicas, por lo que los datos, la disponibilidad y la estabilidad pueden variar o dejar de funcionar si cambia la web de origen. Se ha intentado contactar con la federación para obtener acceso a una API oficial, pero actualmente no se dispone de ella.
 
 <br />
 
@@ -37,7 +37,7 @@
 
 ## Sobre la aplicación
 
-Voleibol Euskadi es una aplicación móvil para consultar competiciones, partidos, clasificaciones, noticias y vóley playa.
+Voleibol Vizcaya es una aplicación móvil para consultar competiciones, partidos, clasificaciones, noticias y vóley playa.
 
 ### Lo que puedes hacer
 

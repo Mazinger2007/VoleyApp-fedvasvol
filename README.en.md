@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/Logo.png" alt="Voleibol Euskadi" width="120" />
-  <h1>Voleibol Euskadi</h1>
-  <p><strong>All Euskadi volleyball, in one app.</strong><br />Competitions, results, standings, news and beach volleyball.</p>
+  <img src="assets/Logo.png" alt="Voleibol Vizcaya" width="120" />
+  <h1>Voleibol Vizcaya</h1>
+  <p><strong>All Bizkaia volleyball, in one app.</strong><br />Competitions, results, standings, news and beach volleyball.</p>
 
   <p>
     <a href="README.md">Español</a> · <a href="README.eu.md">Euskara</a>
@@ -10,7 +10,7 @@
   <h2 align="center">A quick look at the app</h2>
 
   <p align="center">
-    <img src="assets/screenshots/app-tour.gif" alt="Animated Voleibol Euskadi app screen carousel" width="360" />
+    <img src="assets/screenshots/app-tour.gif" alt="Animated Voleibol Vizcaya app screen carousel" width="360" />
   </p>
 
   <p align="center"><sub>The carousel changes screens automatically every two seconds.</sub></p>
@@ -25,7 +25,7 @@
   </p>
 </div>
 
-> **Important notice:** Voleibol Euskadi is **not an official application** of any federation. It retrieves information through scraping of public sources, so data, availability and stability may vary or stop working if the source website changes. The federation has been contacted to request access to an official API, but no official API is currently available.
+> **Important notice:** Voleibol Vizcaya is **not an official application** of any federation. It retrieves information through scraping of public sources, so data, availability and stability may vary or stop working if the source website changes. The federation has been contacted to request access to an official API, but no official API is currently available.
 
 <br />
 
@@ -37,7 +37,7 @@
 
 ## About the app
 
-Voleibol Euskadi is a mobile app for competitions, matches, standings, news and beach volleyball.
+Voleibol Vizcaya is a mobile app for competitions, matches, standings, news and beach volleyball.
 
 ### What you can do
 

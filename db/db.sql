@@ -1,5 +1,5 @@
 -- ============================================================
--- VOLEIBOL EUSKADI — Base de Datos Completa
+-- VOLEIBOL VIZCAYA — Base de Datos Completa
 -- ============================================================
 -- Este archivo contiene TODO el esquema de la base de datos.
 -- Ejecutar en el SQL Editor de Supabase.

@@ -1,7 +1,7 @@
 <div align="center">
-  <img src="assets/Logo.png" alt="Voleibol Euskadi" width="120" />
-  <h1>Voleibol Euskadi</h1>
-  <p><strong>Euskadiko boleibol guztia, aplikazio bakarrean.</strong><br />Lehiaketak, emaitzak, sailkapenak, albisteak eta hondartza-boleibola.</p>
+  <img src="assets/Logo.png" alt="Voleibol Vizcaya" width="120" />
+  <h1>Voleibol Vizcaya</h1>
+  <p><strong>Bizkaiko boleibol guztia, aplikazio bakarrean.</strong><br />Lehiaketak, emaitzak, sailkapenak, albisteak eta hondartza-boleibola.</p>
 
   <p>
     <a href="README.md">Español</a> · <a href="README.en.md">English</a>
@@ -10,7 +10,7 @@
   <h2 align="center">Aplikazioari begirada bat</h2>
 
   <p align="center">
-    <img src="assets/screenshots/app-tour.gif" alt="Voleibol Euskadi aplikazioaren pantaila-karrusel animatua" width="360" />
+    <img src="assets/screenshots/app-tour.gif" alt="Voleibol Vizcaya aplikazioaren pantaila-karrusel animatua" width="360" />
   </p>
 
   <p align="center"><sub>Karruselak pantaila aldatzen du automatikoki bi segundoz behin.</sub></p>
@@ -25,7 +25,7 @@
   </p>
 </div>
 
-> **Ohar garrantzitsua:** Voleibol Euskadi **ez da inongo federazioren aplikazio ofiziala**. Aplikazioak iturri publikoen scraping-a erabiltzen du; beraz, datuak, erabilgarritasuna eta egonkortasuna aldatu daitezke edo funtzionatzeari utz diezaiokete jatorrizko webgunea aldatzen bada. Federazioarekin harremanetan jartzen saiatu naiz API ofizial baterako sarbidea eskatzeko, baina une honetan ez dago API ofizialik eskuragarri.
+> **Ohar garrantzitsua:** Voleibol Vizcaya **ez da inongo federazioren aplikazio ofiziala**. Aplikazioak iturri publikoen scraping-a erabiltzen du; beraz, datuak, erabilgarritasuna eta egonkortasuna aldatu daitezke edo funtzionatzeari utz diezaiokete jatorrizko webgunea aldatzen bada. Federazioarekin harremanetan jartzen saiatu naiz API ofizial baterako sarbidea eskatzeko, baina une honetan ez dago API ofizialik eskuragarri.
 
 <br />
 
@@ -37,7 +37,7 @@
 
 ## Aplikazioari buruz
 
-Voleibol Euskadi lehiaketak, partidak, sailkapenak, albisteak eta hondartza-boleibola kontsultatzeko mugikorretarako aplikazioa da.
+Voleibol Vizcaya lehiaketak, partidak, sailkapenak, albisteak eta hondartza-boleibola kontsultatzeko mugikorretarako aplikazioa da.
 
 ### Zer egin dezakezu?
 
